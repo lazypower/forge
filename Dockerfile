@@ -1,6 +1,10 @@
 # syntax=docker/dockerfile:1
+ARG GO_IMAGE=docker.io/library/golang:1.26-alpine3.24@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468
+ARG RUNTIME_IMAGE=docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+ARG SOURCE_DATE_EPOCH=0
+
 # Build frontend on the native platform to avoid QEMU-related issues with nodejs ecosystem
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26-alpine3.24 AS frontend-build
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS frontend-build
 RUN apk --no-cache add build-base git nodejs pnpm
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -9,7 +13,7 @@ COPY --exclude=.git/ . .
 RUN make frontend
 
 # Build backend for each target platform
-FROM docker.io/library/golang:1.26-alpine3.24 AS build-env
+FROM ${GO_IMAGE} AS build-env
 
 ARG GITEA_VERSION
 ARG TAGS=""
@@ -44,7 +48,18 @@ RUN chmod 755 /tmp/local/usr/bin/entrypoint \
               /tmp/local/etc/s6/.s6-svscan/* \
               /go/src/gitea.dev/gitea
 
-FROM docker.io/library/alpine:3.24 AS gitea
+FROM ${RUNTIME_IMAGE} AS gitea
+
+ARG GITEA_UPSTREAM_VERSION=1.27.2
+ARG GITEA_UPSTREAM_COMMIT
+ARG GITEA_PATCH_REVISION
+ARG GITEA_SOURCE=https://github.com/go-gitea/gitea
+
+LABEL org.opencontainers.image.source="${GITEA_SOURCE}" \
+      org.opencontainers.image.version="${GITEA_UPSTREAM_VERSION}" \
+      org.opencontainers.image.revision="${GITEA_PATCH_REVISION}" \
+      org.opencontainers.image.base.name="gitea:${GITEA_UPSTREAM_VERSION}@${GITEA_UPSTREAM_COMMIT}" \
+      io.gitea.workload-identity.revision="${GITEA_PATCH_REVISION}"
 
 EXPOSE 22 3000
 
