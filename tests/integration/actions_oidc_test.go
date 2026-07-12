@@ -4,13 +4,19 @@
 package integration
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	auth_model "code.gitea.io/gitea/models/auth"
 	"code.gitea.io/gitea/models/unittest"
 	user_model "code.gitea.io/gitea/models/user"
+	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/test"
 	actions_service "code.gitea.io/gitea/services/actions"
 	"code.gitea.io/gitea/services/oauth2_provider"
 
@@ -22,19 +28,21 @@ import (
 
 type oidcIntegrationClaims struct {
 	jwt.RegisteredClaims
-	Repository           string `json:"repository"`
-	JobID                string `json:"job_id"`
-	WorkflowRef          string `json:"workflow_ref"`
-	WorkflowSHA          string `json:"workflow_sha"`
-	JobWorkflowRef       string `json:"job_workflow_ref"`
-	JobWorkflowSHA       string `json:"job_workflow_sha"`
-	RunnerEnvironment    string `json:"runner_environment"`
-	RepositoryVisibility string `json:"repository_visibility"`
-	Environment          string `json:"environment"`
+	Repository  string `json:"repository"`
+	Job         string `json:"job"`
+	WorkflowRef string `json:"workflow_ref"`
+	WorkflowSHA string `json:"workflow_sha"`
 }
 
 func TestActionsOIDCTokenIntegration(t *testing.T) {
 	onGiteaRun(t, func(t *testing.T, u *url.URL) {
+		defer test.MockVariableValue(&setting.Actions.WorkloadIdentityEnabled, true)()
+		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		signingKey, err := oauth2_provider.CreateJWTSigningKey("RS256", privateKey)
+		require.NoError(t, err)
+		defer test.MockVariableValue(&oauth2_provider.DefaultSigningKey, signingKey)()
+
 		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 		session := loginUser(t, user2.Name)
 		token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository, auth_model.AccessTokenScopeWriteUser)
@@ -85,7 +93,6 @@ jobs:
 		require.NotEmpty(t, tokenResp.Value)
 
 		var claims oidcIntegrationClaims
-		signingKey := oauth2_provider.DefaultSigningKey
 		parsed, err := jwt.ParseWithClaims(tokenResp.Value, &claims, func(t *jwt.Token) (any, error) {
 			if t.Method == nil || t.Method.Alg() != signingKey.SigningMethod().Alg() {
 				return nil, jwt.ErrSignatureInvalid
@@ -98,21 +105,34 @@ jobs:
 		assert.Equal(t, actions_service.OIDCIssuer(), claims.Issuer)
 		assert.Contains(t, claims.Audience, "integration-test")
 		assert.Equal(t, repo.FullName, claims.Repository)
-		assert.Equal(t, "oidc-job", claims.JobID)
-		assert.Equal(t, "self-hosted", claims.RunnerEnvironment)
-		assert.Equal(t, "public", claims.RepositoryVisibility)
-		assert.Equal(t, "production", claims.Environment)
+		assert.Equal(t, "oidc-job", claims.Job)
+		assert.WithinDuration(t, claims.IssuedAt.Time.Add(5*time.Minute), claims.ExpiresAt.Time, time.Second)
 
-		refValue, ok := contextMap["ref"].(string)
-		require.True(t, ok)
 		shaValue, ok := contextMap["sha"].(string)
 		require.True(t, ok)
-		workflowRef := repo.FullName + "/" + workflowPath + "@" + refValue
+		workflowRef := repo.FullName + "/" + workflowPath + "@" + shaValue
 		assert.Equal(t, workflowRef, claims.WorkflowRef)
 		assert.Equal(t, shaValue, claims.WorkflowSHA)
-		assert.Equal(t, workflowRef, claims.JobWorkflowRef)
-		assert.Equal(t, shaValue, claims.JobWorkflowSHA)
+
+		_, err = jwt.Parse(tokenResp.Value, func(token *jwt.Token) (any, error) { return signingKey.VerifyKey(), nil }, jwt.WithAudience("wrong"))
+		require.Error(t, err)
+		parts := strings.Split(tokenResp.Value, ".")
+		require.Len(t, parts, 3)
+		parts[1] = "e30"
+		_, err = jwt.Parse(strings.Join(parts, "."), func(token *jwt.Token) (any, error) { return signingKey.VerifyKey(), nil })
+		require.Error(t, err)
+
+		badQueryURL := *parsedURL
+		badQuery := badQueryURL.Query()
+		badQuery.Set("repository", "attacker/repository")
+		badQueryURL.RawQuery = badQuery.Encode()
+		badReq := NewRequest(t, http.MethodGet, badQueryURL.RequestURI())
+		badReq.Header.Set("Authorization", "Bearer "+requestToken)
+		MakeRequest(t, badReq, http.StatusBadRequest)
 
 		runner.execTask(t, task, &mockTaskOutcome{result: runnerv1.Result_RESULT_SUCCESS})
+		completedReq := NewRequest(t, http.MethodGet, parsedURL.RequestURI())
+		completedReq.Header.Set("Authorization", "Bearer "+requestToken)
+		MakeRequest(t, completedReq, http.StatusUnauthorized)
 	})
 }

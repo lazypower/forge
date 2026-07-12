@@ -175,9 +175,15 @@ func generateTaskContext(ctx context.Context, t *actions_model.ActionTask) (*str
 	gitCtx := GenerateGiteaContext(ctx, t.Job.Run, nil, t.Job)
 	gitCtx["token"] = t.Token
 	gitCtx["gitea_runtime_token"] = giteaRuntimeToken
-	if allowed, err := TaskAllowsOIDCToken(context.Background(), t); err == nil && allowed {
-		gitCtx["actions_id_token_request_url"] = OIDCTokenRequestURL(t)
-		gitCtx["actions_id_token_request_token"] = giteaRuntimeToken
+	if setting.Actions.WorkloadIdentityEnabled {
+		allowed, err := TaskAllowsOIDCToken(context.Background(), t)
+		if err != nil {
+			return nil, fmt.Errorf("check workload identity permission: %w", err)
+		}
+		if allowed {
+			gitCtx["actions_id_token_request_url"] = OIDCTokenRequestURL()
+			gitCtx["actions_id_token_request_token"] = t.Token
+		}
 	}
 
 	return structpb.NewStruct(gitCtx)

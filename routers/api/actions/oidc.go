@@ -6,9 +6,7 @@ package actions
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	actions_model "code.gitea.io/gitea/models/actions"
 	"code.gitea.io/gitea/modules/json"
@@ -28,82 +26,49 @@ func registerOIDCRoutes(m *web.Router) {
 	})
 }
 
+func workloadIdentityAvailable(ctx *context.Base) bool {
+	if !setting.Actions.WorkloadIdentityEnabled {
+		ctx.HTTPError(http.StatusNotFound)
+		return false
+	}
+	return true
+}
+
 func oidcWellKnown(resp http.ResponseWriter, req *http.Request) {
 	ctx := context.NewBaseContext(resp, req)
-	if !setting.OAuth2.Enabled {
-		ctx.HTTPError(http.StatusNotFound)
+	if !workloadIdentityAvailable(ctx) {
+		return
+	}
+	key := oauth2_provider.DefaultSigningKey
+	if key == nil || key.IsSymmetric() {
+		ctx.HTTPError(http.StatusInternalServerError, "OIDC signing key is not asymmetric")
 		return
 	}
 	issuer := actions_service.OIDCIssuer()
-	signingKey := oauth2_provider.DefaultSigningKey
-	if signingKey == nil {
-		ctx.HTTPError(http.StatusInternalServerError, "OIDC signing key is not initialized")
-		return
-	}
-
 	ctx.JSON(http.StatusOK, map[string]any{
-		"issuer":                                issuer,
-		"jwks_uri":                              issuer + "/jwks",
-		"token_endpoint":                        issuer + "/token",
-		"response_types_supported":              []string{"id_token"},
-		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{signingKey.SigningMethod().Alg()},
-		"claims_supported": []string{
-			"aud",
-			"exp",
-			"iat",
-			"iss",
-			"jti",
-			"sub",
-			"nbf",
-			"actor",
-			"actor_id",
-			"repository",
-			"repository_id",
-			"repository_owner",
-			"repository_owner_id",
-			"run_id",
-			"run_number",
-			"run_attempt",
-			"workflow",
-			"workflow_ref",
-			"workflow_sha",
-			"job_workflow_ref",
-			"job_workflow_sha",
-			"repository_visibility",
-			"event_name",
-			"ref",
-			"ref_type",
-			"sha",
-			"job_id",
-			"job_attempt",
-			"base_ref",
-			"head_ref",
-			"runner_environment",
-			"environment",
-		},
+		"issuer": issuer, "jwks_uri": issuer + "/jwks", "token_endpoint": issuer + "/token",
+		"response_types_supported": []string{"id_token"}, "subject_types_supported": []string{"public"},
+		"id_token_signing_alg_values_supported": []string{key.SigningMethod().Alg()},
+		"claims_supported":                      []string{"aud", "exp", "iat", "iss", "jti", "nbf", "sub", "actor", "actor_id", "repository", "repository_id", "repository_owner", "repository_owner_id", "ref", "ref_type", "sha", "workflow", "workflow_ref", "workflow_sha", "job", "event_name", "run_id", "run_number", "run_attempt"},
 	})
 }
 
 func oidcKeys(resp http.ResponseWriter, req *http.Request) {
 	ctx := context.NewBaseContext(resp, req)
-	if !setting.OAuth2.Enabled {
-		ctx.HTTPError(http.StatusNotFound)
+	if !workloadIdentityAvailable(ctx) {
 		return
 	}
-	signingKey := oauth2_provider.DefaultSigningKey
-	if signingKey == nil {
-		ctx.HTTPError(http.StatusInternalServerError, "OIDC signing key is not initialized")
+	key := oauth2_provider.DefaultSigningKey
+	if key == nil || key.IsSymmetric() {
+		ctx.HTTPError(http.StatusInternalServerError, "OIDC signing key is not asymmetric")
 		return
 	}
-
-	jwk, err := signingKey.ToJWK()
+	jwk, err := key.ToJWK()
 	if err != nil {
 		log.Error("Error converting signing key to JWK: %v", err)
 		ctx.HTTPError(http.StatusInternalServerError)
 		return
 	}
-
 	jwk["use"] = "sig"
 	ctx.Resp.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(ctx.Resp).Encode(map[string][]map[string]string{"keys": {jwk}}); err != nil {
@@ -113,86 +78,46 @@ func oidcKeys(resp http.ResponseWriter, req *http.Request) {
 
 func oidcToken(resp http.ResponseWriter, req *http.Request) {
 	ctx := context.NewBaseContext(resp, req)
-	if !setting.OAuth2.Enabled {
-		ctx.HTTPError(http.StatusNotFound)
+	if !workloadIdentityAvailable(ctx) {
 		return
 	}
-
+	audience, err := actions_service.ValidateOIDCAudience(req.URL.Query())
+	if err != nil {
+		ctx.HTTPError(http.StatusBadRequest, "invalid audience")
+		return
+	}
 	task, err := getTaskFromOIDCTokenRequest(ctx)
 	if err != nil {
-		ctx.HTTPError(http.StatusUnauthorized, err.Error())
+		ctx.HTTPError(http.StatusUnauthorized, "invalid Actions task credential")
 		return
 	}
-	if err := task.LoadAttributes(ctx); err != nil {
-		log.Error("Error runner api getting task attributes: %v", err)
-		ctx.HTTPError(http.StatusInternalServerError, "Error runner api getting task attributes")
+	if err := actions_service.ValidateOIDCTask(ctx, task); err != nil {
+		ctx.HTTPError(http.StatusForbidden, "Actions task is not eligible for workload identity")
 		return
 	}
-
-	query := req.URL.Query()
-	if runID := query.Get("run_id"); runID != "" {
-		if runID != strconv.FormatInt(task.Job.RunID, 10) {
-			ctx.HTTPError(http.StatusUnauthorized, "OIDC run_id mismatch")
-			return
-		}
-	}
-	if jobID := query.Get("job_id"); jobID != "" {
-		if jobID != strconv.FormatInt(task.Job.ID, 10) {
-			ctx.HTTPError(http.StatusUnauthorized, "OIDC job_id mismatch")
-			return
-		}
-	}
-
 	allowed, err := actions_service.TaskAllowsOIDCToken(ctx, task)
 	if err != nil {
 		log.Error("Error checking OIDC token permissions: %v", err)
-		ctx.HTTPError(http.StatusInternalServerError, "Error checking OIDC permissions")
+		ctx.HTTPError(http.StatusInternalServerError)
 		return
 	}
 	if !allowed {
-		ctx.HTTPError(http.StatusForbidden, "OIDC token permission not granted")
+		ctx.HTTPError(http.StatusForbidden, "id-token write permission not granted")
 		return
 	}
-
-	audience := query.Get("audience")
-	issuedAt := time.Now().UTC()
-	expiresAt := issuedAt.Add(actions_service.OIDCTokenExpiry())
 	token, err := actions_service.CreateOIDCToken(ctx, task, audience)
 	if err != nil {
 		log.Error("Error generating OIDC token: %v", err)
-		ctx.HTTPError(http.StatusInternalServerError, "Error generating OIDC token")
+		ctx.HTTPError(http.StatusInternalServerError)
 		return
 	}
-
-	ctx.JSON(http.StatusOK, map[string]string{
-		"value":      token,
-		"issued_at":  issuedAt.Format(time.RFC3339),
-		"expires_at": expiresAt.Format(time.RFC3339),
-	})
+	ctx.JSON(http.StatusOK, map[string]string{"value": token})
 }
 
 func getTaskFromOIDCTokenRequest(ctx *context.Base) (*actions_model.ActionTask, error) {
-	authHeader := ctx.Req.Header.Get("Authorization")
-	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		return nil, errors.New("bad authorization header")
+	parts := strings.Fields(ctx.Req.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+		return nil, errors.New("invalid authorization header")
 	}
-
-	taskID, err := actions_service.ParseAuthorizationToken(ctx.Req)
-	if err != nil {
-		log.Error("Error parsing authorization token: %v", err)
-		return nil, errors.New("invalid authorization token")
-	}
-	if taskID == 0 {
-		return nil, errors.New("invalid authorization token")
-	}
-
-	task, err := actions_model.GetTaskByID(ctx, taskID)
-	if err != nil {
-		log.Error("Error runner api getting task by ID: %v", err)
-		return nil, errors.New("error runner api getting task")
-	}
-	if task.Status != actions_model.StatusRunning {
-		return nil, errors.New("task is not running")
-	}
-	return task, nil
+	return actions_model.GetRunningTaskByToken(ctx, parts[1])
 }

@@ -61,12 +61,15 @@ func Init(ctx context.Context) error {
 		return nil
 	}
 
-	if setting.OAuth2.Enabled {
+	if setting.Actions.WorkloadIdentityEnabled {
+		if !setting.OAuth2.Enabled {
+			return errors.New("Actions workload identity requires OAuth2 to be enabled")
+		}
 		if oauth2_provider.DefaultSigningKey == nil {
-			return errors.New("OIDC signing key is not initialized")
+			return errors.New("Actions workload identity signing key is not initialized")
 		}
 		if oauth2_provider.DefaultSigningKey.IsSymmetric() {
-			return errors.New("OIDC signing key must be asymmetric")
+			return errors.New("Actions workload identity signing key must be asymmetric")
 		}
 	}
 
