@@ -1,0 +1,90 @@
+name: gitea-workload-identity
+
+services:
+  gitea:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        GITEA_VERSION: 1.26.4-workload-identity
+    environment:
+      GITEA_RUNNER_REGISTRATION_TOKEN: fixture-only-runner-registration-token-0001
+      GITEA__actions__ENABLED: "true"
+      GITEA__actions__WORKLOAD_IDENTITY_ENABLED: "true"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__database__PATH: /data/gitea/gitea.db
+      GITEA__oauth2__ENABLED: "true"
+      GITEA__oauth2__JWT_SIGNING_ALGORITHM: RS256
+      GITEA__oauth2__JWT_SIGNING_PRIVATE_KEY_FILE: jwt/workload-identity.pem
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__DOMAIN: proxy
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__ROOT_URL: http://proxy:8080/forge/
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:3000/api/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    networks: [acceptance]
+    volumes:
+      - gitea-data:/data
+
+  proxy:
+    image: docker.io/library/nginx:1.29.5-alpine
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks: [acceptance]
+    ports:
+      - "3300:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  vault:
+    image: docker.io/hashicorp/vault:1.21.4
+    cap_add: [IPC_LOCK]
+    command: server -dev -dev-root-token-id=fixture-only-vault-root
+    environment:
+      VAULT_ADDR: http://0.0.0.0:8200
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    networks: [acceptance]
+    ports:
+      - "38200:8200"
+
+  probe:
+    image: docker.io/library/python:3.14.3-alpine3.23
+    command: python /fixture/server.py
+    networks: [acceptance]
+    ports:
+      - "38080:8080"
+    volumes:
+      - ./probe.py:/fixture/server.py:ro
+
+  runner:
+    image: docker.io/gitea/runner:1.0.0
+    depends_on:
+      gitea:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+    environment:
+      CONFIG_FILE: /config.yaml
+      GITEA_INSTANCE_URL: http://proxy:8080/forge/
+      GITEA_RUNNER_LABELS: acceptance:docker://docker.io/library/alpine:3.23
+      GITEA_RUNNER_NAME: workload-identity-acceptance
+      GITEA_RUNNER_REGISTRATION_TOKEN: fixture-only-runner-registration-token-0001
+    networks: [acceptance]
+    volumes:
+      - ./runner.yaml:/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  acceptance:
+    name: gitea-workload-identity
+
+volumes:
+  gitea-data:

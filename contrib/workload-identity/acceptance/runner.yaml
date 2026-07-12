@@ -1,0 +1,10 @@
+log:
+  level: info
+
+runner:
+  capacity: 1
+  timeout: 5m
+
+container:
+  network: gitea-workload-identity
+  privileged: false

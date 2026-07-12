@@ -1,0 +1,51 @@
+name: authorized workload identity
+on: [push]
+
+permissions:
+  id-token: write
+
+defaults:
+  run:
+    shell: sh
+
+jobs:
+  vault:
+    runs-on: acceptance
+    steps:
+      - name: authenticate to Vault
+        run: |
+          apk add --no-cache curl jq
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          curl --fail --silent --show-error \
+            --data "$(jq -cn --arg url "$ACTIONS_ID_TOKEN_REQUEST_URL" --arg token "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" '{url:$url,token:$token}')" \
+            http://probe:8080/capture
+          jwt="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=vault" | jq -er .value)"
+          login="$(curl --silent --show-error \
+            --data "$(jq -cn --arg jwt "$jwt" '{role:"authorized",jwt:$jwt}')" \
+            http://vault:8200/v1/auth/jwt/login)"
+          vault_token="$(printf '%s' "$login" | jq -er .auth.client_token)"
+          test "$(printf '%s' "$login" | jq -er '.auth.lease_duration <= 120')" = true
+          test "$(curl --fail --silent --show-error -H "X-Vault-Token: $vault_token" \
+            http://vault:8200/v1/secret/data/acceptance | jq -er .data.data.result)" = accepted
+
+          wrong="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=wrong" | jq -er .value)"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --data "$(jq -cn --arg jwt "$wrong" '{role:"authorized",jwt:$jwt}')" \
+            http://vault:8200/v1/auth/jwt/login)" = 400
+
+          IFS=. read -r jwt_header jwt_payload jwt_signature <<EOF
+          $jwt
+          EOF
+          tampered="$jwt_header.e30.$jwt_signature"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --data "$(jq -cn --arg jwt "$tampered" '{role:"authorized",jwt:$jwt}')" \
+            http://vault:8200/v1/auth/jwt/login)" = 400
+
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=vault&repository_id=1")" = 400
