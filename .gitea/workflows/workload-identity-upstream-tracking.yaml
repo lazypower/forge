@@ -1,0 +1,31 @@
+name: workload identity upstream tracking
+
+on:
+  schedule:
+    - cron: "11 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workload-identity-upstream-tracking
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: docker.io/renovate/renovate:42.99.0@sha256:55257c9f54eff5382abacb0a119ba2357566cb01cdbf0a35f152e24729ab8e64
+    steps:
+      - name: Detect upstream releases and open update pull requests
+        env:
+          RENOVATE_PLATFORM: gitea
+          RENOVATE_ENDPOINT: ${{ github.server_url }}/api/v1
+          RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: required
+          GITHUB_COM_TOKEN: ${{ secrets.RENOVATE_GITHUB_TOKEN }}
+        run: renovate

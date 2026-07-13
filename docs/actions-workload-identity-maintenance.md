@@ -64,9 +64,14 @@ Run the complete gate with:
 contrib/workload-identity/ci/verify-update.sh
 ```
 
-Configure Renovate for this repository with access to GitHub release metadata
-and permission to open pull requests. Configure the Gitea Actions environment
-`workload-identity-publish` with required human approvers and registry secrets
+The scheduled upstream-tracking workflow runs pinned Renovate weekly. Configure
+the repository secret `RENOVATE_TOKEN` with a dedicated Gitea token permitted
+to read this repository, push update branches, and open pull requests. Configure
+the optional `RENOVATE_GITHUB_TOKEN` secret to avoid anonymous GitHub release
+API rate limits. The Renovate account must not merge or deploy changes.
+
+Configure the Gitea Actions environment `workload-identity-publish` with
+required human approvers and registry secrets
 `WORKLOAD_IDENTITY_REGISTRY_USERNAME` and
 `WORKLOAD_IDENTITY_REGISTRY_PASSWORD`. Only a manually dispatched run with an
 explicit repository can enter that environment. Publication pushes the exact
