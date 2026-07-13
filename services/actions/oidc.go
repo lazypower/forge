@@ -31,6 +31,7 @@ import (
 const (
 	actionsOIDCPath          = "/api/actions/oidc"
 	actionsOIDCTokenPath     = actionsOIDCPath + "/token"
+	actionsOIDCAPIVersion    = "2.0"
 	actionsOIDCTokenExpiry   = 5 * time.Minute
 	actionsOIDCClockSkew     = 30 * time.Second
 	maxOIDCAudienceByteCount = 255
@@ -61,14 +62,20 @@ type actionsOIDCClaims struct {
 
 func OIDCIssuer() string { return strings.TrimSuffix(setting.AppURL, "/") + actionsOIDCPath }
 func OIDCTokenRequestURL() string {
-	return strings.TrimSuffix(setting.AppURL, "/") + actionsOIDCTokenPath
+	return strings.TrimSuffix(setting.AppURL, "/") + actionsOIDCTokenPath + "?api-version=" + actionsOIDCAPIVersion
 }
 func OIDCTokenExpiry() time.Duration { return actionsOIDCTokenExpiry }
 
 func ValidateOIDCAudience(query url.Values) (string, error) {
 	values, ok := query["audience"]
-	if len(query) != 1 || !ok || len(values) != 1 {
+	if !ok || len(values) != 1 || len(query) < 1 || len(query) > 2 {
 		return "", ErrInvalidOIDCAudience
+	}
+	if len(query) == 2 {
+		versions, ok := query["api-version"]
+		if !ok || len(versions) != 1 || versions[0] != actionsOIDCAPIVersion {
+			return "", ErrInvalidOIDCAudience
+		}
 	}
 	audience := values[0]
 	if audience == "" || len(audience) > maxOIDCAudienceByteCount || !utf8.ValidString(audience) || strings.TrimSpace(audience) != audience {

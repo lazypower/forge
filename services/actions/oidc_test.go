@@ -30,9 +30,13 @@ func TestValidateOIDCAudience(t *testing.T) {
 		valid bool
 	}{
 		{"valid", url.Values{"audience": {"vault.example"}}, true},
+		{"valid toolkit request", url.Values{"api-version": {actionsOIDCAPIVersion}, "audience": {"vault.example"}}, true},
 		{"missing", url.Values{}, false},
+		{"compatibility parameter only", url.Values{"api-version": {actionsOIDCAPIVersion}}, false},
 		{"empty", url.Values{"audience": {""}}, false},
 		{"duplicate", url.Values{"audience": {"one", "two"}}, false},
+		{"duplicate compatibility parameter", url.Values{"api-version": {actionsOIDCAPIVersion, actionsOIDCAPIVersion}, "audience": {"vault"}}, false},
+		{"wrong compatibility version", url.Values{"api-version": {"1.0"}, "audience": {"vault"}}, false},
 		{"unknown parameter", url.Values{"audience": {"vault"}, "run_id": {"1"}}, false},
 		{"leading whitespace", url.Values{"audience": {" vault"}}, false},
 		{"control character", url.Values{"audience": {"vault\nrole"}}, false},

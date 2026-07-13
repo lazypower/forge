@@ -77,11 +77,11 @@ jobs:
 		requestToken, ok := contextMap["actions_id_token_request_token"].(string)
 		require.True(t, ok)
 
-		parsedURL, err := url.Parse(requestURL)
+		// @actions/core appends the audience with an ampersand because GitHub's request URL has a query string.
+		parsedURL, err := url.Parse(requestURL + "&audience=" + url.QueryEscape("integration-test"))
 		require.NoError(t, err)
-		query := parsedURL.Query()
-		query.Set("audience", "integration-test")
-		parsedURL.RawQuery = query.Encode()
+		assert.Equal(t, actions_service.OIDCTokenRequestURL(), requestURL)
+		assert.Equal(t, "2.0", parsedURL.Query().Get("api-version"))
 
 		req := NewRequest(t, http.MethodGet, parsedURL.RequestURI())
 		req.Header.Set("Authorization", "Bearer "+requestToken)
