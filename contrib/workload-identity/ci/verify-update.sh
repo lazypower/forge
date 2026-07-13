@@ -53,13 +53,15 @@ fi
 image_ref="$(sed -n 's/^IMAGE_REF=//p' "$build_output")"
 image_digest="$(sed -n 's/^IMAGE_DIGEST=//p' "$build_output")"
 patch_revision="$(sed -n 's/^PATCH_REVISION=//p' "$build_output")"
-test -n "$image_ref" && test -n "$image_digest" && test -n "$patch_revision"
+target_platform="$(sed -n 's/^TARGET_PLATFORM=//p' "$build_output")"
+test -n "$image_ref" && test -n "$image_digest" && test -n "$patch_revision" && test -n "$target_platform"
 
 rebuild_output="$workspace/image-rebuild.log"
 if PATCH_REVISION="$source_revision" contrib/workload-identity/image/build.sh >"$rebuild_output" 2>&1 &&
 	[ "$(sed -n 's/^IMAGE_REF=//p' "$rebuild_output")" = "$image_ref" ] &&
 	[ "$(sed -n 's/^IMAGE_DIGEST=//p' "$rebuild_output")" = "$image_digest" ] &&
-	[ "$(sed -n 's/^PATCH_REVISION=//p' "$rebuild_output")" = "$patch_revision" ]; then
+	[ "$(sed -n 's/^PATCH_REVISION=//p' "$rebuild_output")" = "$patch_revision" ] &&
+	[ "$(sed -n 's/^TARGET_PLATFORM=//p' "$rebuild_output")" = "$target_platform" ]; then
 	printf -- '- PASS reproducible image rebuild\n' >> "$report"
 else
 	cat "$rebuild_output"
@@ -76,6 +78,7 @@ run_gate 'Vault acceptance' env GITEA_IMAGE="$image_ref" SKIP_ACCEPTANCE_BUILD=1
 	printf -- '- Reference: `%s`\n' "$image_ref"
 	printf -- '- Digest: `%s`\n' "$image_digest"
 	printf -- '- Patch revision: `%s`\n' "$patch_revision"
+	printf -- '- Platform: `%s`\n' "$target_platform"
 	printf '\n## Result\n\nAll gates passed. Human approval is still required before publication or deployment.\n'
 } >> "$report"
 
@@ -83,6 +86,7 @@ run_gate 'Vault acceptance' env GITEA_IMAGE="$image_ref" SKIP_ACCEPTANCE_BUILD=1
 	printf 'IMAGE_REF=%s\n' "$image_ref"
 	printf 'IMAGE_DIGEST=%s\n' "$image_digest"
 	printf 'PATCH_REVISION=%s\n' "$patch_revision"
+	printf 'TARGET_PLATFORM=%s\n' "$target_platform"
 } > "$result_env"
 
 cat "$report"

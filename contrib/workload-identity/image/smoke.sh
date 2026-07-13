@@ -5,6 +5,7 @@
 set -eu
 
 image_ref="${IMAGE_REF:?set IMAGE_REF to the image under test}"
+target_platform="${TARGET_PLATFORM:-linux/amd64}"
 container="gitea-workload-identity-smoke-$$"
 port="${SMOKE_PORT:-3301}"
 logs="$(mktemp)"
@@ -59,7 +60,14 @@ curl --fail --silent -H 'Content-Type: application/json' --data '{}' \
 
 version="$(docker inspect "$image_ref" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 revision="$(docker inspect "$image_ref" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+platform="$(docker inspect "$image_ref" --format '{{.Os}}/{{.Architecture}}')"
+elf_machine="$(docker exec "$container" sh -c "od -An -t x1 -j 18 -N 2 /app/gitea/gitea | tr -d ' \\n'")"
 test "$version" = 1.26.4
 test -n "$revision"
+test "$platform" = "$target_platform"
+case "$target_platform:$elf_machine" in
+	linux/amd64:3e00|linux/arm64:b700) ;;
+	*) printf 'unexpected Gitea ELF machine %s for %s\n' "$elf_machine" "$target_platform" >&2; exit 1 ;;
+esac
 
-printf 'image smoke test passed: %s (%s)\n' "$image_ref" "$revision"
+printf 'image smoke test passed: %s (%s, %s)\n' "$image_ref" "$revision" "$platform"

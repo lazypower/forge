@@ -16,8 +16,10 @@ source_date_epoch="$(git show -s --format=%ct "$patch_revision")"
 created="$(git show -s --format=%cI "$patch_revision")"
 image_repository="${IMAGE_REPOSITORY:-gitea-workload-identity}"
 image_ref="${IMAGE_REF:-$image_repository:$upstream_version-wi.$patch_short}"
+target_platform="${TARGET_PLATFORM:-linux/amd64}"
 
 set -- docker buildx build \
+	--platform "$target_platform" \
 	--build-arg "GITEA_VERSION=$upstream_version-workload-identity.$patch_short" \
 	--build-arg "GITEA_UPSTREAM_VERSION=$upstream_version" \
 	--build-arg "GITEA_UPSTREAM_COMMIT=$upstream_commit" \
@@ -48,3 +50,4 @@ printf 'IMAGE_DIGEST=%s\n' "$digest"
 printf 'UPSTREAM_VERSION=%s\n' "$upstream_version"
 printf 'UPSTREAM_COMMIT=%s\n' "$upstream_commit"
 printf 'PATCH_REVISION=%s\n' "$patch_revision"
+printf 'TARGET_PLATFORM=%s\n' "$target_platform"

@@ -19,6 +19,12 @@ the stable OCI labels carry source provenance. The script prints the local or
 published digest. Set `IMAGE_REPOSITORY` or the complete `IMAGE_REF` to choose a
 registry and name.
 
+The default production platform is explicitly `linux/amd64`, matching the
+Firecracker runner and deployment hosts even when a build is initiated from an
+Arm workstation. Override `TARGET_PLATFORM` only for a separately tested
+deployment target. The smoke gate rejects an image whose actual platform does
+not match the requested target.
+
 The update gate passes the source branch's patch-tip revision into builds made
 from its temporary replay worktree. Image provenance therefore names a durable
 commit in the fork, not an ephemeral cherry-pick commit created only for CI.
