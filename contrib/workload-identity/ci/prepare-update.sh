@@ -30,6 +30,9 @@ if [ "$GITEA_PATCH_BASE_VERSION" != "$GITEA_CANDIDATE_VERSION" ] && [ "$patch_ti
 	fi
 fi
 patch_tip="$(git -C "$repo_root" rev-parse "$patch_tip^{commit}")"
+if [ -n "${PATCH_SOURCE_REVISION_FILE:-}" ]; then
+	printf '%s\n' "$patch_tip" > "$PATCH_SOURCE_REVISION_FILE"
+fi
 
 commits="$(git -C "$repo_root" rev-list --reverse "$base_tag..$patch_tip")"
 upstream_changes="$(git -C "$repo_root" diff --name-status "$base_tag..$candidate_tag")"

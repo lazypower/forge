@@ -9,6 +9,7 @@ report="${PATCH_HEALTH_REPORT:-$repo_root/patch-health.md}"
 result_env="${RESULT_ENV:-$repo_root/verified-image.env}"
 workspace="$(mktemp -d)"
 target="$workspace/gitea"
+source_revision_file="$workspace/source-revision"
 
 cleanup() {
 	git -C "$repo_root" worktree remove --force "$target" >/dev/null 2>&1 || true
@@ -16,8 +17,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-UPDATE_WORKTREE="$target" PATCH_HEALTH_REPORT="$report" \
+UPDATE_WORKTREE="$target" PATCH_HEALTH_REPORT="$report" PATCH_SOURCE_REVISION_FILE="$source_revision_file" \
 	"$repo_root/contrib/workload-identity/ci/prepare-update.sh" >/dev/null
+source_revision="$(cat "$source_revision_file")"
+test -n "$source_revision"
 
 run_gate() {
 	name="$1"
@@ -39,7 +42,7 @@ run_gate 'Gitea build' make gitea
 run_gate 'runner integration test' make 'test-sqlite#TestActionsOIDCTokenIntegration'
 
 build_output="$workspace/image-build.log"
-if contrib/workload-identity/image/build.sh >"$build_output" 2>&1; then
+if PATCH_REVISION="$source_revision" contrib/workload-identity/image/build.sh >"$build_output" 2>&1; then
 	printf -- '- PASS image build\n' >> "$report"
 else
 	cat "$build_output"
@@ -53,7 +56,7 @@ patch_revision="$(sed -n 's/^PATCH_REVISION=//p' "$build_output")"
 test -n "$image_ref" && test -n "$image_digest" && test -n "$patch_revision"
 
 rebuild_output="$workspace/image-rebuild.log"
-if contrib/workload-identity/image/build.sh >"$rebuild_output" 2>&1 &&
+if PATCH_REVISION="$source_revision" contrib/workload-identity/image/build.sh >"$rebuild_output" 2>&1 &&
 	[ "$(sed -n 's/^IMAGE_REF=//p' "$rebuild_output")" = "$image_ref" ] &&
 	[ "$(sed -n 's/^IMAGE_DIGEST=//p' "$rebuild_output")" = "$image_digest" ] &&
 	[ "$(sed -n 's/^PATCH_REVISION=//p' "$rebuild_output")" = "$patch_revision" ]; then

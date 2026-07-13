@@ -10,7 +10,7 @@ Build locally:
 contrib/workload-identity/image/build.sh
 ```
 
-The script derives the upstream `v1.26.4` commit, current patch revision, image
+The script derives the upstream `v1.26.4` commit, durable patch revision, image
 version, and `SOURCE_DATE_EPOCH` from Git. Base images are pinned by digest and
 BuildKit provenance attestations are disabled because their invocation metadata
 would make the manifest digest vary between otherwise identical builds. The
@@ -18,6 +18,10 @@ same source, platform, and builder therefore produce the same image digest;
 the stable OCI labels carry source provenance. The script prints the local or
 published digest. Set `IMAGE_REPOSITORY` or the complete `IMAGE_REF` to choose a
 registry and name.
+
+The update gate passes the source branch's patch-tip revision into builds made
+from its temporary replay worktree. Image provenance therefore names a durable
+commit in the fork, not an ephemeral cherry-pick commit created only for CI.
 
 The security gate builds the candidate twice and requires identical image
 references, digests, and patch revisions before smoke or Vault acceptance
