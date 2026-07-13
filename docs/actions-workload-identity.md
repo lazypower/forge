@@ -86,7 +86,7 @@ Identity claims are:
 | --- | --- |
 | `repository`, `repository_id` | run repository |
 | `repository_owner`, `repository_owner_id` | run repository owner |
-| `ref`, `ref_type`, `sha` | triggering ref and commit; `pull_request_target` uses the base |
+| `ref`, `ref_type`, `sha` | triggering ref and commit; pull refs have type `branch`, while `pull_request_target` uses the base branch |
 | `workflow` | repository-relative workflow path |
 | `workflow_ref` | `<owner>/<repo>/<workflow>@<workflow_sha>` |
 | `workflow_sha` | commit from which the workflow was loaded |

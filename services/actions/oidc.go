@@ -196,5 +196,10 @@ func resolveOIDCRefs(run *actions_model.ActionRun) (ref, sha, refType string) {
 	if payload, err := run.GetPullRequestEventPayload(); err == nil && payload.PullRequest != nil && payload.PullRequest.Base != nil && run.TriggerEvent == actions_module.GithubEventPullRequestTarget {
 		ref, sha = git.BranchPrefix+payload.PullRequest.Base.Name, payload.PullRequest.Base.Sha
 	}
-	return ref, sha, string(git.RefName(ref).RefType())
+	refName := git.RefName(ref)
+	refType = string(refName.RefType())
+	if refName.IsPull() {
+		refType = string(git.RefTypeBranch)
+	}
+	return ref, sha, refType
 }

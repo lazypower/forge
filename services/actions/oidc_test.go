@@ -13,8 +13,11 @@ import (
 	"code.gitea.io/gitea/models/perm"
 	repo_model "code.gitea.io/gitea/models/repo"
 	"code.gitea.io/gitea/models/unittest"
+	actions_module "code.gitea.io/gitea/modules/actions"
+	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/test"
+	webhook_module "code.gitea.io/gitea/modules/webhook"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,6 +81,28 @@ func TestValidateOIDCTask(t *testing.T) {
 			require.Error(t, ValidateOIDCTask(t.Context(), task))
 		})
 	}
+}
+
+func TestResolveOIDCRefsForUntrustedPullRequest(t *testing.T) {
+	run := &actions_model.ActionRun{
+		Ref:               "refs/pull/17/head",
+		CommitSHA:         "trigger-sha",
+		IsForkPullRequest: true,
+		Event:             webhook_module.HookEventPullRequest,
+		EventPayload:      `{"pull_request":{"base":{"label":"main","ref":"main","sha":"base-sha"}}}`,
+		TriggerEvent:      actions_module.GithubEventPullRequest,
+	}
+
+	ref, sha, refType := resolveOIDCRefs(run)
+	assert.Equal(t, "refs/pull/17/head", ref)
+	assert.Equal(t, "trigger-sha", sha)
+	assert.Equal(t, string(git.RefTypeBranch), refType)
+
+	run.TriggerEvent = actions_module.GithubEventPullRequestTarget
+	ref, sha, refType = resolveOIDCRefs(run)
+	assert.Equal(t, "refs/heads/main", ref)
+	assert.Equal(t, "base-sha", sha)
+	assert.Equal(t, string(git.RefTypeBranch), refType)
 }
 
 func TestOIDCTokenPermissionDefenseInDepth(t *testing.T) {
