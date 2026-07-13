@@ -120,3 +120,7 @@ prime/
 
 # A Makefile for custom make targets
 Makefile.local
+
+# Workload identity CI evidence
+/patch-health.md
+/verified-image.env

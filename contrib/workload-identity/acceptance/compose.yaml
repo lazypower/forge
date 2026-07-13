@@ -2,6 +2,7 @@ name: gitea-workload-identity
 
 services:
   gitea:
+    image: ${GITEA_IMAGE:-gitea-workload-identity-acceptance}
     build:
       context: ../../..
       dockerfile: Dockerfile
@@ -30,7 +31,7 @@ services:
       - gitea-data:/data
 
   proxy:
-    image: docker.io/library/nginx:1.29.5-alpine
+    image: docker.io/library/nginx:1.29.5-alpine@sha256:1eff5a5f3fcf8431a0abb7eddf5471fec24e5e1905a2581aeacdb07a4479b92b
     depends_on:
       gitea:
         condition: service_healthy
@@ -41,7 +42,7 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
   vault:
-    image: docker.io/hashicorp/vault:1.21.4
+    image: docker.io/hashicorp/vault:1.21.4@sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569
     cap_add: [IPC_LOCK]
     command: server -dev -dev-root-token-id=fixture-only-vault-root
     environment:
@@ -56,7 +57,7 @@ services:
       - "38200:8200"
 
   probe:
-    image: docker.io/library/python:3.14.3-alpine3.23
+    image: docker.io/library/python:3.14.3-alpine3.23@sha256:faee120f7885a06fcc9677922331391fa690d911c020abb9e8025ff3d908e510
     command: python /fixture/server.py
     networks: [acceptance]
     ports:
@@ -65,7 +66,7 @@ services:
       - ./probe.py:/fixture/server.py:ro
 
   runner:
-    image: docker.io/gitea/runner:1.0.0
+    image: docker.io/gitea/runner:1.0.0@sha256:2198bd3bf2d31059ecd27e845569aa4d666f26d15a0a3cc9abb85898368a0eab
     depends_on:
       gitea:
         condition: service_healthy

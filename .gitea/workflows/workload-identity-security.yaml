@@ -1,0 +1,94 @@
+name: workload identity security gate
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested image after protected-environment approval
+        required: true
+        default: false
+        type: boolean
+      image_repository:
+        description: Registry/repository, without a tag
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workload-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.event_name != 'workflow_dispatch' || inputs.publish != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Verify patch replay and security behavior
+        run: contrib/workload-identity/ci/verify-update.sh
+      - name: Preserve patch health report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workload-identity-patch-health
+          path: patch-health.md
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: workload-identity-publish
+    steps:
+      - name: Require an explicit registry repository
+        run: test -n '${{ inputs.image_repository }}'
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Verify patch replay and security behavior
+        run: contrib/workload-identity/ci/verify-update.sh
+      - name: Authenticate to the selected registry
+        env:
+          REGISTRY_USERNAME: ${{ secrets.WORKLOAD_IDENTITY_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.WORKLOAD_IDENTITY_REGISTRY_PASSWORD }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        run: |
+          registry="${IMAGE_REPOSITORY%%/*}"
+          test "$registry" != "$IMAGE_REPOSITORY"
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USERNAME" --password-stdin
+      - name: Publish the exact tested image
+        env:
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        run: |
+          . ./verified-image.env
+          tag="${IMAGE_REF##*:}"
+          published_ref="$IMAGE_REPOSITORY:$tag"
+          docker tag "$IMAGE_REF" "$published_ref"
+          docker push "$published_ref"
+          published_digest="$(docker buildx imagetools inspect "$published_ref" --format '{{.Manifest.Digest}}')"
+          printf '\n## Publication\n\n- Published: `%s`\n- Digest: `%s`\n- Deployment performed: **no**\n' \
+            "$published_ref" "$published_digest" | tee -a patch-health.md
+      - name: Preserve patch health report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workload-identity-publish-health
+          path: patch-health.md
+          if-no-files-found: error

@@ -38,6 +38,40 @@ commits and preserves the local `Assisted-by` policy.
 A clean cherry-pick is not security evidence. Mark the update high risk and
 require manual review whenever any trust-boundary file changes upstream.
 
+## Automated update gate
+
+`contrib/workload-identity/upstream.env` is the single authority for the
+deployed patch base and candidate upstream release. Renovate updates only the
+candidate value when `go-gitea/gitea` publishes a release. Its pull request is
+always labeled for manual review.
+
+The `workload identity security gate` workflow runs on every change and weekly.
+It produces `patch-health.md`, which records the old and candidate versions,
+each replayed commit, conflicts, trust-boundary changes, possible equivalent
+upstream implementations, every validation result, and the tested image digest.
+Any failed gate forbids publication.
+
+To prepare an update locally without running the full suite:
+
+```sh
+UPDATE_WORKTREE=/tmp/gitea-workload-identity-update \
+  contrib/workload-identity/ci/prepare-update.sh
+```
+
+Run the complete gate with:
+
+```sh
+contrib/workload-identity/ci/verify-update.sh
+```
+
+Configure Renovate for this repository with access to GitHub release metadata
+and permission to open pull requests. Configure the Gitea Actions environment
+`workload-identity-publish` with required human approvers and registry secrets
+`WORKLOAD_IDENTITY_REGISTRY_USERNAME` and
+`WORKLOAD_IDENTITY_REGISTRY_PASSWORD`. Only a manually dispatched run with an
+explicit repository can enter that environment. Publication pushes the exact
+locally tested image; it does not deploy it.
+
 ## Conflict rules
 
 - Permission parser changes must preserve explicit job-over-workflow precedence
