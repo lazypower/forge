@@ -23,7 +23,7 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^contrib\\/workload-identity\\/upstream\\.env$/"],
+      "fileMatch": ["^contrib/workload-identity/upstream\\.env$"],
       "matchStrings": [
         "GITEA_CANDIDATE_VERSION=(?<currentValue>[^\\s]+)",
       ],
@@ -131,6 +131,8 @@
       "semanticCommitType": "chore",
       "semanticCommitScope": "actions",
       "labels": ["workload-identity", "upstream-update", "manual-review-required"],
+      "automerge": false,
+      "platformAutomerge": false,
       "prBodyNotes": [
         "The workload-identity security gate must replay the patch and pass all tests. A clean rebase is not sufficient for approval.",
       ],

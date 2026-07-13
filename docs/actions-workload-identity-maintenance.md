@@ -64,11 +64,12 @@ Run the complete gate with:
 contrib/workload-identity/ci/verify-update.sh
 ```
 
-The scheduled upstream-tracking workflow runs pinned Renovate weekly. Configure
-the repository secret `RENOVATE_TOKEN` with a dedicated Gitea token permitted
-to read this repository, push update branches, and open pull requests. Configure
-the optional `RENOVATE_GITHUB_TOKEN` secret to avoid anonymous GitHub release
-API rate limits. The Renovate account must not merge or deploy changes.
+The existing `lab/renovate-bot` fleet service discovers repositories under
+`lab/*` and runs weekly. Host this fork in that organization so it reads the
+repository-local `renovate.json5`; no second scheduler or repository token is
+needed. The local rule disables both Renovate and platform automerge for Gitea
+upstream updates, even when fleet policy permits automerge elsewhere. Renovate
+may open an update pull request, but it cannot merge, publish, or deploy it.
 
 Configure the Gitea Actions environment `workload-identity-publish` with
 required human approvers and registry secrets
