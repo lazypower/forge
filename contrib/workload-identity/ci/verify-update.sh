@@ -52,6 +52,19 @@ image_digest="$(sed -n 's/^IMAGE_DIGEST=//p' "$build_output")"
 patch_revision="$(sed -n 's/^PATCH_REVISION=//p' "$build_output")"
 test -n "$image_ref" && test -n "$image_digest" && test -n "$patch_revision"
 
+rebuild_output="$workspace/image-rebuild.log"
+if contrib/workload-identity/image/build.sh >"$rebuild_output" 2>&1 &&
+	[ "$(sed -n 's/^IMAGE_REF=//p' "$rebuild_output")" = "$image_ref" ] &&
+	[ "$(sed -n 's/^IMAGE_DIGEST=//p' "$rebuild_output")" = "$image_digest" ] &&
+	[ "$(sed -n 's/^PATCH_REVISION=//p' "$rebuild_output")" = "$patch_revision" ]; then
+	printf -- '- PASS reproducible image rebuild\n' >> "$report"
+else
+	cat "$rebuild_output"
+	printf -- '- FAIL reproducible image rebuild\n\nPublication is forbidden.\n' >> "$report"
+	cat "$report"
+	exit 1
+fi
+
 run_gate 'image smoke test' env IMAGE_REF="$image_ref" contrib/workload-identity/image/smoke.sh
 run_gate 'Vault acceptance' env GITEA_IMAGE="$image_ref" SKIP_ACCEPTANCE_BUILD=1 contrib/workload-identity/acceptance/run.sh
 

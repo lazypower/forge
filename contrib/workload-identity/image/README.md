@@ -19,6 +19,10 @@ the stable OCI labels carry source provenance. The script prints the local or
 published digest. Set `IMAGE_REPOSITORY` or the complete `IMAGE_REF` to choose a
 registry and name.
 
+The security gate builds the candidate twice and requires identical image
+references, digests, and patch revisions before smoke or Vault acceptance
+testing can authorize publication.
+
 Publishing is an explicit operation and never deploys:
 
 ```sh
