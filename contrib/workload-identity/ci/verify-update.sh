@@ -37,6 +37,7 @@ run_gate() {
 
 cd "$target"
 run_gate 'format check' sh -c 'make fmt >/dev/null && git diff --exit-code'
+run_gate 'generated bindata' env TAGS=bindata make generate-go
 run_gate 'Go lint' make lint-go
 run_gate 'Actions service tests' go test -tags 'sqlite sqlite_unlock_notify' ./services/actions
 run_gate 'Gitea build' make gitea
