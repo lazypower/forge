@@ -122,5 +122,5 @@ prime/
 Makefile.local
 
 # Workload identity CI evidence
-/patch-health.md
+/fork-health.md
 /verified-image.env
