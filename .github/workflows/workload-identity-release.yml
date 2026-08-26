@@ -68,7 +68,6 @@ jobs:
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$release_ref" >> "$GITHUB_OUTPUT"
           jq -n \
-            --arg schema_version "1" \
             --arg release "$RELEASE_TAG" \
             --arg image "$IMAGE_NAME" \
             --arg digest "$digest" \
@@ -76,7 +75,7 @@ jobs:
             --arg upstream_commit "$(git rev-list -n 1 "v$GITEA_PATCH_BASE_VERSION")" \
             --arg patch_revision "$PATCH_REVISION" \
             --arg platform "$TARGET_PLATFORM" \
-            '{schema_version:$schema_version,release:$release,image:$image,digest:$digest,upstream_version:$upstream,upstream_commit:$upstream_commit,patch_revision:$patch_revision,platform:$platform}' \
+            '{schema_version:1,release:$release,image:$image,digest:$digest,upstream_version:$upstream,upstream_commit:$upstream_commit,patch_revision:$patch_revision,platform:$platform}' \
             > release.json
 
       - name: Generate SPDX SBOM
