@@ -37,23 +37,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Validate release identity
+      - name: Validate release tag
         run: |
           set -eu
-          . contrib/workload-identity/upstream.env
           case "$RELEASE_TAG" in
-            "wi-v$GITEA_PATCH_BASE_VERSION."[0-9]*) ;;
-            *) echo "tag $RELEASE_TAG does not release v$GITEA_PATCH_BASE_VERSION" >&2; exit 1 ;;
+            wi-v*) ;;
+            *) echo "invalid release tag: $RELEASE_TAG" >&2; exit 1 ;;
           esac
-
-      - name: Fetch pinned upstream tag
-        run: |
-          set -eu
-          . contrib/workload-identity/upstream.env
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch --no-tags "$GITEA_UPSTREAM_REPOSITORY" \
-            "refs/tags/v$GITEA_PATCH_BASE_VERSION:refs/tags/v$GITEA_PATCH_BASE_VERSION"
 
       - name: Configure BuildKit
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
@@ -66,8 +56,8 @@ jobs:
       - name: Install pinned Gitea tools
         run: make deps-tools
 
-      - name: Verify patch and exact rootless image
-        run: contrib/workload-identity/ci/verify-update.sh
+      - name: Verify the fork and exact rootless image
+        run: contrib/workload-identity/ci/verify-fork.sh
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0

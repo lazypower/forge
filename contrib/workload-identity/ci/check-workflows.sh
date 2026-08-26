@@ -5,9 +5,8 @@ repo_root=$(cd -- "$(dirname "$0")/../../.." && pwd)
 cd "$repo_root"
 
 expected=$(printf '%s\n' \
-	dependency-updates.yml \
-	workload-identity-release.yml \
-	workload-identity-verify.yml)
+	forge-verify.yml \
+	workload-identity-release.yml)
 actual=$(find .github/workflows -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)
 
 if [ "$actual" != "$expected" ]; then
