@@ -50,6 +50,8 @@ jobs:
         run: |
           set -eu
           . contrib/workload-identity/upstream.env
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch --no-tags "$GITEA_UPSTREAM_REPOSITORY" \
             "refs/tags/v$GITEA_PATCH_BASE_VERSION:refs/tags/v$GITEA_PATCH_BASE_VERSION"
 
