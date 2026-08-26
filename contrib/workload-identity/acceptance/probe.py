@@ -29,7 +29,7 @@ class Probe(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         request = urllib.request.Request(
-            captured["url"] + "?audience=vault",
+            captured["url"] + "&audience=vault",
             headers={"Authorization": "Bearer " + captured["token"]},
         )
         try:

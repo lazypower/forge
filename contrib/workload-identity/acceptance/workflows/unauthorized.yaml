@@ -14,7 +14,7 @@ jobs:
           apk add --no-cache curl
           status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
             -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=vault")"
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=vault")"
           case "$status" in
             401|403) ;;
             *) exit 1 ;;

@@ -17,7 +17,7 @@ jobs:
           apk add --no-cache curl jq
           jwt="$(curl --fail --silent --show-error \
             -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL?audience=vault" | jq -er .value)"
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=vault" | jq -er .value)"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
             --data "$(jq -cn --arg jwt "$jwt" '{role:"authorized",jwt:$jwt}')" \
             http://vault:8200/v1/auth/jwt/login)" = 400
