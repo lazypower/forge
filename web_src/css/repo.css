@@ -974,6 +974,10 @@ td .commit-summary {
   padding-bottom: 5px;
 }
 
+.repository .diff-file-box .markdown-preview.is-loading {
+  min-height: var(--height-loading);
+}
+
 .diff-file-box {
   border: 1px solid transparent;
   border-radius: var(--border-radius);

@@ -1643,6 +1643,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 			m.Post("/cleanup", context.RepoMustNotBeArchived(), repo.CleanUpPullRequest)
 			m.Group("/files", func() {
 				m.Get("", repo.SetEditorconfigIfExists, repo.SetDiffViewStyle, repo.SetWhitespaceBehavior, repo.SetShowOutdatedComments, repo.ViewPullFilesForAllCommitsOfPr)
+				m.Get("/markdown-preview", repo.RenderPullMarkdownPreview)
 				m.Get("/{shaFrom:[a-f0-9]{7,64}}..{shaTo:[a-f0-9]{7,64}}", repo.SetEditorconfigIfExists, repo.SetDiffViewStyle, repo.SetWhitespaceBehavior, repo.SetShowOutdatedComments, repo.ViewPullFilesForRange)
 				m.Group("/reviews", func() {
 					m.Get("/new_comment", repo.RenderNewCodeCommentForm)

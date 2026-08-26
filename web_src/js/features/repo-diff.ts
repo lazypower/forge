@@ -14,17 +14,46 @@ import {parseDom} from '../utils.ts';
 import {registerGlobalSelectorFunc} from '../modules/observer.ts';
 import {performFetchActionTrigger} from './common-fetch-action.ts';
 
-function initRepoDiffFileBox(el: HTMLElement) {
-  // switch between "rendered" and "source", for image and CSV files
-  queryElems(el, '.file-view-toggle', (btn) => btn.addEventListener('click', () => {
+export async function loadMarkdownPreview(preview: HTMLElement) {
+  const url = preview.getAttribute('data-markdown-preview-url');
+  if (!url || preview.getAttribute('data-markdown-preview-state') === 'loaded' || preview.getAttribute('data-markdown-preview-state') === 'loading') return;
+
+  preview.setAttribute('data-markdown-preview-state', 'loading');
+  preview.setAttribute('aria-busy', 'true');
+  preview.classList.add('is-loading');
+  try {
+    const response = await GET(url);
+    if (!response.ok) throw new Error(`Failed to render Markdown preview: ${response.status} ${response.statusText}`);
+    preview.innerHTML = await response.text();
+    preview.setAttribute('data-markdown-preview-state', 'loaded');
+  } catch (error) {
+    console.error('Error:', error);
+    preview.removeAttribute('data-markdown-preview-state');
+    const errorText = preview.getAttribute('data-markdown-preview-error')!;
+    const errorElement = document.createElement('div');
+    errorElement.classList.add('ui', 'error', 'message', 'tw-m-4');
+    errorElement.textContent = errorText;
+    preview.replaceChildren(errorElement);
+    showErrorToast(errorText);
+  } finally {
+    preview.removeAttribute('aria-busy');
+    preview.classList.remove('is-loading');
+  }
+}
+
+export function initRepoDiffFileBox(el: HTMLElement) {
+  // switch between "rendered" and "source", for images, CSV, and Markdown files
+  queryElems(el, '.file-view-toggle', (btn) => btn.addEventListener('click', async () => {
     queryElemSiblings(btn, '.file-view-toggle', (el) => el.classList.remove('active'));
     btn.classList.add('active');
 
-    const target = document.querySelector(btn.getAttribute('data-toggle-selector')!);
+    const target = document.querySelector<HTMLElement>(btn.getAttribute('data-toggle-selector')!);
     if (!target) throw new Error('Target element not found');
 
     hideElem(queryElemSiblings(target));
     showElem(target);
+
+    await loadMarkdownPreview(target);
   }));
 }
 

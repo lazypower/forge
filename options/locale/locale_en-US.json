@@ -2582,6 +2582,7 @@
   "repo.diff.too_many_files": "Some files were not shown because too many files have changed in this diff",
   "repo.diff.show_more": "Show More",
   "repo.diff.load": "Load Diff",
+  "repo.diff.markdown_preview_error": "Could not load the rendered Markdown preview.",
   "repo.diff.generated": "Generated",
   "repo.diff.vendored": "Vendored",
   "repo.diff.comment.add_line_comment": "Add line comment",
