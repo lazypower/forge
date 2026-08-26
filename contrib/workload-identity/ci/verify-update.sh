@@ -41,7 +41,7 @@ run_gate 'generated bindata' env TAGS=bindata make generate-go
 run_gate 'Go lint' make lint-go
 run_gate 'Actions service tests' go test -tags 'sqlite sqlite_unlock_notify' ./services/actions
 run_gate 'Gitea build' make gitea
-run_gate 'runner integration test' make 'test-integration#TestActionsOIDCTokenIntegration'
+run_gate 'runner integration test' env GITEA_TEST_DATABASE=sqlite make 'test-integration#TestActionsOIDCTokenIntegration'
 
 build_output="$workspace/image-build.log"
 if PATCH_REVISION="$source_revision" contrib/workload-identity/image/build.sh >"$build_output" 2>&1; then
