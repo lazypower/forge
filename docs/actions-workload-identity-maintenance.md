@@ -54,6 +54,11 @@ publishes that revision to GHCR, generates an SPDX SBOM, attests provenance and
 the SBOM, and attaches machine-readable release metadata. Deployment promotes
 the immutable tested digest rather than rebuilding it.
 
+Forge release tags use the `v1.27.2.N` form. The historical `wi-v1.27.2.N` tags
+remain intact as provenance, and the tag allocator counts them so the first
+Forge-native release continues the existing sequence rather than reusing a
+release number.
+
 There is no update or patch-replay command. A clean replay onto a later Gitea
 release is not a supported Forge operation.
 

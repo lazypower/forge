@@ -20,12 +20,14 @@ test "$PATCH_REVISION" = "$(git rev-parse HEAD)" || {
 	exit 1
 }
 
-prefix="wi-v$GITEA_LINEAGE_VERSION."
+prefix="v$GITEA_LINEAGE_VERSION."
+legacy_prefix="wi-$prefix"
 revision=1
-while git rev-parse --verify --quiet "refs/tags/$prefix$revision" >/dev/null; do
+while git rev-parse --verify --quiet "refs/tags/$prefix$revision" >/dev/null ||
+	git rev-parse --verify --quiet "refs/tags/$legacy_prefix$revision" >/dev/null; do
 	revision=$((revision + 1))
 done
 tag="$prefix$revision"
-git tag --annotate "$tag" --message "Forge lineage $GITEA_LINEAGE_VERSION release $revision"
+git tag --annotate "$tag" --message "Forge release $tag"
 git push "$remote" HEAD "refs/tags/$tag"
 printf 'published source tag %s; GitHub Actions now builds and attests the GHCR image\n' "$tag"
