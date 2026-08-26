@@ -190,7 +190,7 @@ Run focused tests and the real acceptance environment:
 ```sh
 go test -tags 'sqlite sqlite_unlock_notify' ./services/actions
 make gitea
-make 'test-sqlite#TestActionsOIDCTokenIntegration'
+make 'test-integration#TestActionsOIDCTokenIntegration'
 contrib/workload-identity/acceptance/run.sh
 ```
 
