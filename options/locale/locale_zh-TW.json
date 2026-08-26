@@ -175,7 +175,7 @@
   "editor.buttons.enable_monospace_font": "啟用等寬字型",
   "editor.buttons.disable_monospace_font": "停用等寬字型",
   "error.occurred": "發生錯誤",
-  "error.report_message": "如果你確定這是一個 Gitea 的 bug，請去 <a href=\"https://github.com/go-gitea/gitea/issues\"> GitHub</a> 搜尋相關的問題，如果有需要你也可以開一個新的問題",
+  "error.report_message": "如果你確定這是一個 Gitea 的 bug，請去 <a href=\"%s\"> GitHub</a> 搜尋相關的問題，如果有需要你也可以開一個新的問題",
   "error.not_found": "找不到目標。",
   "error.network_error": "網路錯誤",
   "startpage.app_desc": "一套極易架設的 Git 服務",

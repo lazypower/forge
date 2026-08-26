@@ -177,7 +177,7 @@
   "editor.buttons.enable_monospace_font": "Увімкнути моноширинний шрифт",
   "editor.buttons.disable_monospace_font": "Вимкнути моноширинний шрифт",
   "error.occurred": "Сталася помилка",
-  "error.report_message": "Якщо ви вважаєте, що це помилка Gitea, будь ласка, спробуйте відшукати відповідну проблему на <a href=\"https://github.com/go-gitea/gitea/issues\">GitHub</a> або створіть нову, якщо необхідно.",
+  "error.report_message": "Якщо ви вважаєте, що це помилка Gitea, будь ласка, спробуйте відшукати відповідну проблему на <a href=\"%s\">GitHub</a> або створіть нову, якщо необхідно.",
   "error.not_found": "Ціль не знайдено.",
   "error.network_error": "Помилка мережі",
   "startpage.app_desc": "Зручний власний сервіс хостингу репозиторіїв Git",

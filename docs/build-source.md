@@ -1,13 +1,12 @@
-# Prepare build environment
+# Build Forge from source
 
-Complete the steps in [build-setup.md](build-setup.md) to prepare your environment for building Gitea from source.
+Complete [build-setup.md](build-setup.md) before building Forge.
 
 ## Choose a branch
 
-By default, the cloned repository is on main branch (the current development branch for next major release, aka: main nightly).
-
-You can switch to a versioned branch (the branch for the next minor stable release, aka: stable nightly )
-or a versioned tag (matches the official releases with version numbers)
+Use the repository's default branch for current development or a Forge release
+tag when reproducing a published build. Forge does not use Gitea's branch or
+release schedule.
 
 To test a Pull Request, you can fetch its code by its Pull Request number (take `PR #123456` as example):
 
@@ -17,8 +16,8 @@ git fetch origin pull/123456/head:pr-123456
 
 # Build
 
-Various [make tasks](https://github.com/go-gitea/gitea/blob/main/Makefile)
-are provided to keep the build process as simple as possible.
+The repository [Makefile](../Makefile) provides tasks for building and checking
+Forge.
 
 Depending on requirements, the following build tags can be included.
 
@@ -76,6 +75,7 @@ GOOS=linux GOARCH=arm64 TAGS="bindata" make build
 ### Adding shell autocompletion
 
 Shell completion can be generated directly from binary with:
+
 ```sh
 gitea completion <shell>
 ```

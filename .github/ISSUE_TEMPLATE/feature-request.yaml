@@ -1,20 +1,27 @@
 name: Feature Request
-description: Suggest an idea for Gitea.
+description: Propose a change to Forge.
 labels: ["type/proposal"]
 body:
   - type: markdown
     attributes:
       value: |
-        Search [existing issues](https://github.com/go-gitea/gitea/issues?q=is%3Aissue) first.
+        Search existing issues before filing a duplicate. Forge does not track Gitea's roadmap or preserve compatibility with later Gitea releases.
   - type: textarea
     id: problem
     attributes:
       label: What problem would this solve?
+      description: Describe the concrete human, agent, or operational need.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: What do you propose?
+      description: Describe the desired behavior and the important invariants or tradeoffs.
     validations:
       required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note existing workflows or smaller changes that could address the problem.

@@ -1,198 +1,130 @@
-# Workload identity maintenance runbook
+# Workload identity maintenance
 
-This runbook applies to the private workload-identity patch based on Gitea
-`v1.27.2`. Its patch lineage is:
+Forge carries an Actions workload-identity implementation on its immutable
+Gitea 1.27.2 foundation. Its lineage is:
 
 1. Gitea issue #26383 and the earlier PR #25664;
 2. maintainer-authored draft PR #36988, commit `f24e180a3a4f` by Lunny Xiao;
-3. the attribution-preserving import on this branch; and
-4. private hardening, acceptance, documentation, and packaging commits.
+3. the attribution-preserving import into this repository; and
+4. Forge-specific hardening, acceptance, documentation, and packaging commits.
 
-Do not rewrite the imported author's commit. New maintenance work uses normal
-commits and preserves the local `Assisted-by` policy.
+Do not rewrite the imported author's commit or its attribution. New work uses
+normal commits and the repository's `Assisted-by` policy.
+
+## Fixed lineage
+
+`contrib/workload-identity/lineage.env` is the single authority for the inherited
+foundation:
+
+```text
+GITEA_LINEAGE_VERSION=1.27.2
+GITEA_LINEAGE_COMMIT=1dac1bb2f8593d4319125fa6bca9283000a2ddc2
+```
+
+Those values are provenance, not update inputs. Forge does not fetch, replay,
+merge, or rebase onto later Gitea releases. A security or correctness remedy for
+retained code is implemented and reviewed as a Forge change.
 
 ## Routine operation
 
-There is one supported path:
+There is one supported release path:
 
 ```sh
-git clone git@github.com:lazypower/gitea-workload-identity.git
-cd gitea-workload-identity
 just status
-just update 1.27.3
 just test
 just push
 ```
 
-`just update` fetches the exact upstream tag, creates a new branch, replays the
-ordered patch series, and updates the single version authority. It stops at the
-first conflict. Before testing, read that Gitea release's notes and review the
-trust-boundary changes reported by the gate. A capable local model can perform
-that bounded review; it must not waive a failed test or silently drop a patch.
+`just status` prints the inherited lineage, current Forge revision, branch, image
+repository, and most recently verified revision.
 
-`just test` replays the patch in a clean worktree, formats, lints, runs focused
-unit and integration tests, builds the rootless linux/amd64 image twice, checks
-its runtime and restart contract, and executes the Vault acceptance fixture.
+`just test` formats and lints the code, runs focused unit and integration tests,
+builds the rootless Linux image twice, verifies reproducibility and runtime
+behavior, and executes the Vault acceptance fixture. It writes `fork-health.md`
+and binds `verified-image.env` to the exact tested revision.
 
-`just push` refuses dirty or stale results. It creates the next `wi-v…` tag and
-pushes it to GitHub. GitHub Actions repeats the gate, publishes the exact tested
-revision to public GHCR, generates an SPDX SBOM, attests provenance and SBOM,
-and attaches a machine-readable `release.json`. Source Forge adopts only the
-immutable digest from that file after its Magus/FCOS test passes.
+`just push` refuses dirty or stale results. It creates the next release tag for
+the fixed 1.27.2 lineage and pushes the exact verified revision. GitHub Actions
+publishes that revision to GHCR, generates an SPDX SBOM, attests provenance and
+the SBOM, and attaches machine-readable release metadata. Deployment promotes
+the immutable tested digest rather than rebuilding it.
 
-No scheduled rebuild exists. Update for a relevant Gitea security release,
-material workload-identity dependency change, or an intentional maintenance
-window. CVE review uses the retained SBOM and exact deployed digest.
+There is no update or patch-replay command. A clean replay onto a later Gitea
+release is not a supported Forge operation.
 
-## Detailed upgrade procedure
+## Release gate
 
-1. Record the deployed image digest, upstream version, patch revision, and
-   database backup identifier.
-2. Fetch the candidate upstream release tag. Read its release notes and inspect
-   every trust-boundary path below, even if Git reports no conflict.
-3. Create an update branch from the candidate tag.
-4. Replay the ordered patch commits with `git cherry-pick`. Record every commit
-   result and conflict path. Never force-push or silently drop a hunk.
-5. Compare upstream for an equivalent Actions OIDC implementation. If one
-   exists, stop the mechanical rebase and perform the convergence review below.
-6. Resolve conflicts according to the owning invariant, not by choosing “ours”
-   or “theirs” wholesale.
-7. Run formatting, unit tests, the official SQLite integration test, image
-   smoke test, and Vault acceptance fixture.
-8. Build the candidate image once, record its immutable digest and provenance,
-   and promote that same digest after human review. Do not rebuild between test
-   and promotion.
-9. Back up the database and signing key, deploy to a canary if available, then
-   verify discovery, JWKS, a denied unauthenticated request, one authorized
-   Vault exchange, and normal Actions execution.
-10. Retain the previous image digest and backup until the observation window is
-    complete.
+The release gate must pass all of the following:
 
-A clean cherry-pick is not security evidence. Mark the update high risk and
-require manual review whenever any trust-boundary file changes upstream.
+- formatting without a resulting diff;
+- generated bindata;
+- Go lint;
+- focused Actions service tests;
+- a complete Forge build;
+- the SQLite runner integration test;
+- two byte-identical rootless image builds;
+- the image smoke test; and
+- the Vault workload-identity acceptance fixture.
 
-## Update gate internals
-
-`contrib/workload-identity/upstream.env` is the single authority for the patch
-base. The gate produces `patch-health.md`, recording each replayed commit,
-conflicts, trust-boundary changes, possible equivalent upstream implementations,
-every validation result, and the tested image identity. Any failure forbids
-publication.
-
-To prepare an update locally without running the full suite:
-
-```sh
-UPDATE_WORKTREE=/tmp/gitea-workload-identity-update \
-  contrib/workload-identity/ci/prepare-update.sh
-```
-
-Run the complete gate with `just test`.
-
-```sh
-contrib/workload-identity/ci/verify-update.sh
-```
-
-## Conflict rules
-
-- Permission parser changes must preserve explicit job-over-workflow precedence
-  and `id-token: write`; absence, `none`, and `read` deny.
-- Task credential changes must still resolve one exact credential in constant
-  time and reload current server state. Never trust IDs from the request.
-- Attempt/rerun changes must identify the newest running task and reject old,
-  superseded, cancelling, cancelled, and completed work.
-- Workflow model changes must preserve the distinct run repository, workflow
-  source repository, and source commit authorities. Reusable workflow jobs
-  must continue to fail closed until their caller ancestry is explicit in the
-  token contract and covered by negative tests.
-- OAuth signer changes must retain an asymmetric public key, stable `kid`, and
-  JWKS verification. Review rotation semantics.
-- URL/router changes must preserve the distinct path issuer derived from
-  canonical `ROOT_URL`, including subpath installations.
-- Runner context changes must keep the request credential secret-masked and
-  must not replace the exact-task authentication check with a caller identity.
-
-After resolving a semantic conflict, add or update a negative test that would
-fail under the incorrect resolution.
+Any failure forbids publication. A passing gate is evidence, not release
+authority; human approval is still required.
 
 ## Trust-boundary inventory
 
-Patch-owned or directly modified upstream files:
+Files directly responsible for workload identity include:
 
-| File | Dependency/invariant |
+| File | Invariant |
 | --- | --- |
-| `models/actions/config.go` | owner permission defaults and maximum ceiling |
-| `models/repo/repo_unit_actions.go` | repository permission persistence and clamp |
-| `services/actions/permission_parser.go` | workflow/job YAML precedence and `id-token` parsing |
-| `services/actions/permission_parser_test.go` | permission regression evidence |
-| `services/actions/task.go` | sole task-context assembly and request credential transport |
-| `services/actions/oidc.go` | task eligibility, audience, claims, subject, lifetime, signing |
-| `services/actions/oidc_test.go` | lifecycle and authorization adversarial coverage |
-| `services/actions/init.go` | default-off/asymmetric startup invariant |
-| `routers/api/actions/actions.go` | workload route registration |
-| `routers/api/actions/oidc.go` | discovery, JWKS, HTTP authentication and response boundary |
-| `tests/integration/actions_oidc_test.go` | real runner-task HTTP contract |
-| `modules/setting/actions.go` | administrator enable switch |
-| `custom/conf/app.example.ini` | documented secure default |
+| `models/actions/config.go` | Owner permission defaults and maximum ceiling |
+| `models/repo/repo_unit_actions.go` | Repository permission persistence and clamp |
+| `services/actions/permission_parser.go` | Workflow/job precedence and `id-token` parsing |
+| `services/actions/task.go` | Sole task-context assembly and request credential transport |
+| `services/actions/oidc.go` | Eligibility, audience, claims, subject, lifetime, and signing |
+| `services/actions/init.go` | Default-off and asymmetric-key startup requirements |
+| `routers/api/actions/actions.go` | Workload route registration |
+| `routers/api/actions/oidc.go` | Discovery, JWKS, authentication, and response boundary |
+| `tests/integration/actions_oidc_test.go` | Real runner-task HTTP contract |
+| `modules/setting/actions.go` | Administrator enable switch |
+| `custom/conf/app.example.ini` | Documented secure default |
 
-Semantically depended-on upstream authorities, even when not modified:
+The implementation also depends on inherited authorities for task credentials,
+attempt state, cancellation, workflow commits, OAuth signing keys, and canonical
+application URLs. Changes in those areas require manual review even when the
+workload-identity files themselves do not change.
 
-| File/area | Question it owns |
-| --- | --- |
-| `models/actions/task.go` | Which raw credential maps to a running task? |
-| `models/actions/run_job.go` | Which task and attempt are current for the job? |
-| `models/actions/run.go` | What run, ref, SHA, event, actor, and status are authoritative? |
-| `services/actions/run.go`, `services/actions/job_emitter.go` | How are permissions persisted and attempts scheduled? |
-| `services/actions/rerun.go` | How are old jobs/tasks superseded? |
-| `models/actions/run.go:CancelJobs`, `models/actions/task.go:StopTask` | When does cancellation become non-running? |
-| `modules/actions/workflows.go` | Which workflow directory/path exists at the run commit? |
-| `modules/git`, `modules/gitrepo` | How is the immutable workflow commit resolved? |
-| `services/oauth2_provider/jwtsigningkey.go` | Which key signs and which JWK/algorithm is published? |
-| `modules/setting/server.go`, application URL settings | What canonical `ROOT_URL` produces issuer URLs? |
-| Gitea Runner task-context mapping | How are request URL/token exported and masked? |
+Conflict or refactoring decisions must preserve these rules:
 
-Changes in Actions permissions, task tokens, status transitions, attempts,
-reruns, cancellation, workflow directories, reusable/scoped workflows, OAuth
-signing, routing, or canonical URL handling require manual review.
+- Job permissions override workflow permissions; only `id-token: write` allows
+  issuance.
+- A request credential resolves one exact, currently running task.
+- Old, superseded, cancelling, cancelled, and completed attempts fail closed.
+- Run repository, workflow source repository, and workflow source commit remain
+  distinct authorities.
+- Reusable workflow jobs fail closed until caller ancestry is explicit in the
+  token contract and covered by negative tests.
+- Signing remains asymmetric with a stable `kid` and verifiable JWKS.
+- The issuer derives from the canonical `ROOT_URL`, including subpath installs.
+- Runner request credentials remain secret-masked.
+
+Every semantic change to this boundary needs a negative test that fails under
+the unsafe behavior.
 
 ## Rollback
 
-The patch adds no database table or column. `id-token` is stored in existing
-JSON and stock Gitea ignores the extra JSON field, so rollback to a known-good
-`v1.27.2` image is schema-safe. Rolling back to 1.26.x also crosses upstream
-database migrations and requires the corresponding database rollback or backup.
+The workload-identity feature adds no database table or column. Its `id-token`
+permission uses existing JSON storage, so a rollback within the Forge 1.27.2
+lineage is schema-safe.
 
-1. Disable `[actions] WORKLOAD_IDENTITY_ENABLED` and restart if immediate
-   issuance shutdown is needed.
-2. Revoke or disable the Vault JWT role so already issued JWTs cannot obtain new
-   Vault credentials. Revoke existing Vault leases if the incident requires it.
-3. Wait five minutes for workload JWT expiry when practical.
-4. Restore the prior image by immutable digest. Do not move a mutable tag.
-5. If the candidate ran migrations from a newer upstream release, follow that
-   release's supported database rollback procedure or restore the pre-upgrade
-   backup; the workload patch itself has no migration.
-6. Verify Gitea health, migrations, login, repository access, and ordinary
-   Actions. Workflows requesting identity should now fail closed.
-7. Preserve candidate logs and digest for diagnosis.
+1. Disable `[actions] WORKLOAD_IDENTITY_ENABLED` and restart if issuance must
+   stop immediately.
+2. Disable the relying party's JWT role so existing tokens cannot obtain new
+   credentials; revoke issued leases when necessary.
+3. Wait for the five-minute workload JWT lifetime when practical.
+4. Restore the previous Forge image by immutable digest.
+5. Verify application health, migrations, login, repository access, and ordinary
+   Actions execution. Workflows requesting identity must fail closed.
+6. Preserve the rejected candidate's logs, source revision, and image digest for
+   diagnosis.
 
-Do not delete or rotate the shared OAuth signing key merely to disable workload
-identity; that also affects human OAuth/OIDC tokens.
-
-## Upstream convergence
-
-For every update, check whether upstream provides a workload issuer, compatible
-token request contract, explicit permission gating, exact live-task checks,
-the required claims, a short audience-bound token, and Vault-compatible JWKS.
-
-If it does:
-
-1. run both implementations against the same acceptance fixture;
-2. compare issuer, subject, claim types, audience, lifetime, task lifecycle, and
-   runner behavior;
-3. update Vault roles to the upstream contract and test denial cases;
-4. deploy stock Gitea with workload identity still gated;
-5. remove the imported and private patch commits plus their now-obsolete build
-   automation; and
-6. retain only migration/operational history.
-
-Do not preserve private compatibility aliases without an explicit need. The
-preferred end state is a stock image with no carried patch.
+Do not rotate the shared OAuth signing key merely to disable workload identity;
+that would also affect human OAuth and OIDC tokens.

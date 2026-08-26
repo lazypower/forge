@@ -5,7 +5,7 @@ This document covers expectations for refactoring work. For the general workflow
 
 ## Background
 
-Gitea is a large, long-lived project. Over time the codebase has accumulated
+Forge inherited a large, long-lived codebase. Over time that codebase accumulated
 outdated mechanisms, mixed frameworks, and legacy code that can cause bugs or slow
 down new features. Refactoring keeps the codebase maintainable, but it needs to be
 done carefully so it improves things without introducing regressions.
@@ -23,15 +23,14 @@ done carefully so it improves things without introducing regressions.
 - Include tests that verify the behavior stays correct.
 - Prefer scheduling non-bugfix refactoring early in a milestone, so any issues
   surface well before a release.
-- If there is disagreement about a refactor, escalate to the Technical Oversight
-  Committee (TOC) for a decision.
+- If there is disagreement about a refactor, ask the Forge maintainer for a
+  decision.
 
 ## Reviewing and merging
 
 - Keep refactoring PRs short-lived (typically no more than 7 days) with quick review
   cycles, and merge them promptly so they do not block on unrelated work.
-- A non-author core member may approve and merge a refactoring PR after 7 days if the
-  TOC has raised no objection.
+- The Forge maintainer decides when a refactoring change is ready to merge.
 - Accept imperfect intermediate implementations as long as the final result improves
   the codebase.
 - A temporary regression caused by a necessary refactor is acceptable if it is fixed
