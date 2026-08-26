@@ -1,8 +1,8 @@
-name: gitea-workload-identity
+name: forge-workload-identity
 
 services:
   gitea:
-    image: ${GITEA_IMAGE:-gitea-workload-identity-acceptance}
+    image: ${GITEA_IMAGE:-forge-acceptance}
     platform: ${TARGET_PLATFORM:-linux/amd64}
     build:
       context: ../../..
@@ -91,7 +91,7 @@ services:
 
 networks:
   acceptance:
-    name: gitea-workload-identity
+    name: forge-workload-identity
 
 volumes:
   gitea-data:

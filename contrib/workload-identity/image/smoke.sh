@@ -7,7 +7,7 @@ set -eu
 image_ref="${IMAGE_REF:?set IMAGE_REF to the image under test}"
 target_platform="${TARGET_PLATFORM:-linux/amd64}"
 upstream_version="${UPSTREAM_VERSION:?set UPSTREAM_VERSION to the expected Gitea version}"
-container="gitea-workload-identity-smoke-$$"
+container="forge-workload-identity-smoke-$$"
 port="${SMOKE_PORT:-3301}"
 logs="$(mktemp)"
 

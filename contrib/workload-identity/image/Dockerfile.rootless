@@ -41,8 +41,8 @@ ARG SOURCE_DATE_EPOCH
 
 LABEL org.opencontainers.image.title="Gitea with Actions workload identity" \
       org.opencontainers.image.description="Rootless Gitea with OIDC workload identity for Actions" \
-      org.opencontainers.image.source="https://github.com/lazypower/gitea-workload-identity" \
-      org.opencontainers.image.url="https://github.com/lazypower/gitea-workload-identity" \
+      org.opencontainers.image.source="https://github.com/lazypower/forge" \
+      org.opencontainers.image.url="https://github.com/lazypower/forge" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="$GITEA_UPSTREAM_VERSION" \
       org.opencontainers.image.revision="$GITEA_PATCH_REVISION" \

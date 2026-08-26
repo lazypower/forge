@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   verify:
-    if: github.repository == 'lazypower/gitea-workload-identity' && (github.event_name != 'push' || github.actor != 'dependabot[bot]')
+    if: github.repository == 'lazypower/forge' && (github.event_name != 'push' || github.actor != 'dependabot[bot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

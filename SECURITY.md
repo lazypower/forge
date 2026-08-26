@@ -15,10 +15,9 @@ supported.
 Do not disclose a suspected vulnerability, exploit, secret, or sensitive log in
 a public issue or pull request.
 
-Forge is establishing a private reporting channel. Until one is published here,
-open a public issue containing only the title `Private security contact
-requested`. Include no vulnerability details. The maintainer will arrange a
-private channel before requesting technical information.
+Report vulnerabilities through [GitHub's private vulnerability reporting
+channel](https://github.com/lazypower/forge/security/advisories/new). Do not use
+that channel for ordinary bugs or support requests.
 
 A useful private report includes the affected version or commit, impact,
 reproduction steps, and any suggested mitigation. Reports may be acknowledged

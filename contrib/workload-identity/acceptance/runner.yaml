@@ -6,5 +6,5 @@ runner:
   timeout: 5m
 
 container:
-  network: gitea-workload-identity
+  network: forge-workload-identity
   privileged: false

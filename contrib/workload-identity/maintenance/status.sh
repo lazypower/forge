@@ -11,7 +11,7 @@ cd "$repo_root"
 printf 'lineage:  v%s (%s)\n' "$GITEA_LINEAGE_VERSION" "$GITEA_LINEAGE_COMMIT"
 printf 'fork:     %s\n' "$(git rev-parse HEAD)"
 printf 'branch:   %s\n' "$(git branch --show-current)"
-printf 'image:    ghcr.io/lazypower/gitea-workload-identity\n'
+printf 'image:    ghcr.io/lazypower/forge\n'
 if [ -f verified-image.env ]; then
 	. ./verified-image.env
 	printf 'verified: %s (%s)\n' "$IMAGE_REF" "$PATCH_REVISION"

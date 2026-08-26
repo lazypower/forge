@@ -32,7 +32,7 @@ to run `pnpm` commands directly.
 
 ### Make
 
-Gitea uses [Make](https://www.gnu.org/software/make/) to drive builds, linting, and
+Forge uses [Make](https://www.gnu.org/software/make/) to drive builds, linting, and
 tests. On Windows it can be installed via [MSYS2](https://www.msys2.org/) or
 [Chocolatey](https://chocolatey.org/packages/make).
 
@@ -52,7 +52,7 @@ The integration tests require [Git LFS](https://git-lfs.com/) to be installed.
 Clone the repository:
 
 ```bash
-git clone https://github.com/lazypower/gitea-workload-identity
+git clone https://github.com/lazypower/forge
 ```
 
 To contribute changes, create a branch in your clone or fork the Forge repository

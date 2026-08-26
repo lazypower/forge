@@ -42,14 +42,14 @@ just push
 ```
 
 GitHub Actions rebuilds and verifies the tagged revision, publishes it to the
-public `ghcr.io/lazypower/gitea-workload-identity` package using its ephemeral
+public `ghcr.io/lazypower/forge` package using its ephemeral
 workflow token, emits an SPDX SBOM and release manifest, and creates GitHub and
 OCI attestations. Deploy the digest from `release.json`, never the tag.
 
 Smoke-test a built or pulled image:
 
 ```sh
-IMAGE_REF=gitea-workload-identity:1.27.2-wi.<revision> UPSTREAM_VERSION=1.27.2 \
+IMAGE_REF=forge:1.27.2-wi.<revision> UPSTREAM_VERSION=1.27.2 \
 contrib/workload-identity/image/smoke.sh
 ```
 

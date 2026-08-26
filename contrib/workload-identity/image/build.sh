@@ -16,7 +16,7 @@ git cat-file -e "$patch_revision^{commit}"
 patch_short="$(printf '%.12s' "$patch_revision")"
 source_date_epoch="$(git show -s --format=%ct "$patch_revision")"
 created="$(git show -s --format=%cI "$patch_revision")"
-image_repository="${IMAGE_REPOSITORY:-gitea-workload-identity}"
+image_repository="${IMAGE_REPOSITORY:-forge}"
 image_ref="${IMAGE_REF:-$image_repository:$lineage_version-wi.$patch_short}"
 target_platform="${TARGET_PLATFORM:-linux/amd64}"
 

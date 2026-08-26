@@ -1,5 +1,5 @@
 # This site is running Forge, an independent derivative of Gitea 1.27.2.
-Contact: https://github.com/lazypower/gitea-workload-identity/blob/HEAD/SECURITY.md
-Policy: https://github.com/lazypower/gitea-workload-identity/blob/HEAD/SECURITY.md
+Contact: https://github.com/lazypower/forge/security/advisories/new
+Policy: https://github.com/lazypower/forge/blob/HEAD/SECURITY.md
 Expires: 2027-08-26T00:00:00Z
 Preferred-Languages: en

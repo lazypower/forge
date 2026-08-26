@@ -1,4 +1,4 @@
-name: workload identity release
+name: Forge release
 
 on:
   push:
@@ -12,7 +12,7 @@ on:
         type: string
 
 concurrency:
-  group: workload-identity-release-${{ github.ref }}
+  group: forge-release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -23,12 +23,12 @@ permissions:
   artifact-metadata: write
 
 env:
-  IMAGE_NAME: ghcr.io/lazypower/gitea-workload-identity
+  IMAGE_NAME: ghcr.io/lazypower/forge
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
 jobs:
   release:
-    if: github.repository == 'lazypower/gitea-workload-identity'
+    if: github.repository == 'lazypower/forge'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out the tagged patch set
@@ -94,7 +94,7 @@ jobs:
         with:
           image: ${{ env.IMAGE_NAME }}@${{ steps.publish.outputs.digest }}
           format: spdx-json
-          output-file: gitea-workload-identity.spdx.json
+          output-file: forge.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
@@ -112,7 +112,7 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.publish.outputs.digest }}
-          sbom-path: gitea-workload-identity.spdx.json
+          sbom-path: forge.spdx.json
           push-to-registry: true
           create-storage-record: false
 
@@ -122,7 +122,7 @@ jobs:
           IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
         run: |
           gh release create "$RELEASE_TAG" \
-            release.json gitea-workload-identity.spdx.json \
+            release.json forge.spdx.json \
             --verify-tag \
-            --title "Gitea workload identity $RELEASE_TAG" \
+            --title "Forge $RELEASE_TAG" \
             --notes "Rootless linux/amd64 image: \`$IMAGE_NAME@$IMAGE_DIGEST\`"
