@@ -71,7 +71,7 @@ jobs:
         run: |
           set -eu
           . ./verified-image.env
-          . contrib/workload-identity/upstream.env
+          . contrib/workload-identity/lineage.env
           release_ref="$IMAGE_NAME:$RELEASE_TAG"
           docker tag "$IMAGE_REF" "$release_ref"
           docker push "$release_ref"
@@ -82,8 +82,8 @@ jobs:
             --arg release "$RELEASE_TAG" \
             --arg image "$IMAGE_NAME" \
             --arg digest "$digest" \
-            --arg upstream "$GITEA_PATCH_BASE_VERSION" \
-            --arg upstream_commit "$(git rev-list -n 1 "v$GITEA_PATCH_BASE_VERSION")" \
+            --arg upstream "$GITEA_LINEAGE_VERSION" \
+            --arg upstream_commit "$GITEA_LINEAGE_COMMIT" \
             --arg patch_revision "$PATCH_REVISION" \
             --arg platform "$TARGET_PLATFORM" \
             '{schema_version:1,release:$release,image:$image,digest:$digest,upstream_version:$upstream,upstream_commit:$upstream_commit,patch_revision:$patch_revision,platform:$platform}' \

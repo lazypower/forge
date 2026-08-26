@@ -13,7 +13,6 @@ import (
 	"gitea.dev/modules/git/gitcmd"
 	issue_indexer "gitea.dev/modules/indexer/issues"
 	"gitea.dev/modules/setting"
-	"gitea.dev/modules/updatechecker"
 	asymkey_service "gitea.dev/services/asymkey"
 	repo_service "gitea.dev/services/repository"
 	archiver_service "gitea.dev/services/repository/archiver"
@@ -139,24 +138,6 @@ func registerDeleteOldActions() {
 	})
 }
 
-func registerUpdateGiteaChecker() {
-	type UpdateCheckerConfig struct {
-		BaseConfig
-		HTTPEndpoint string
-	}
-	RegisterTaskFatal("update_checker", &UpdateCheckerConfig{
-		BaseConfig: BaseConfig{
-			Enabled:    true,
-			RunAtStart: false,
-			Schedule:   "@every 168h",
-		},
-		HTTPEndpoint: "https://dl.gitea.com/gitea/version.json",
-	}, func(ctx context.Context, _ *user_model.User, config Config) error {
-		updateCheckerConfig := config.(*UpdateCheckerConfig)
-		return updatechecker.GiteaUpdateChecker(updateCheckerConfig.HTTPEndpoint)
-	})
-}
-
 func registerDeleteOldSystemNotices() {
 	RegisterTaskFatal("delete_old_system_notices", &OlderThanConfig{
 		BaseConfig: BaseConfig{
@@ -235,7 +216,6 @@ func initExtendedTasks() {
 	registerDeleteMissingRepositories()
 	registerRemoveRandomAvatars()
 	registerDeleteOldActions()
-	registerUpdateGiteaChecker()
 	registerDeleteOldSystemNotices()
 	registerGCLFS()
 	registerRebuildIssueIndexer()

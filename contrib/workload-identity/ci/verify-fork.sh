@@ -5,7 +5,7 @@
 set -eu
 
 repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
-. "$repo_root/contrib/workload-identity/upstream.env"
+. "$repo_root/contrib/workload-identity/lineage.env"
 report="${FORK_HEALTH_REPORT:-$repo_root/fork-health.md}"
 result_env="${RESULT_ENV:-$repo_root/verified-image.env}"
 workspace="$(mktemp -d)"
@@ -30,7 +30,7 @@ run_gate() {
 
 {
 	printf '# Forge release health\n\n'
-	printf -- '- Inherited Gitea lineage: `%s`\n' "$GITEA_PATCH_BASE_VERSION"
+	printf -- '- Inherited Gitea lineage: `%s` (`%s`)\n' "$GITEA_LINEAGE_VERSION" "$GITEA_LINEAGE_COMMIT"
 	printf -- '- Fork revision: `%s`\n\n' "$source_revision"
 	printf '## Validation gates\n\n'
 } > "$report"
@@ -72,7 +72,7 @@ else
 	exit 1
 fi
 
-run_gate 'image smoke test' env IMAGE_REF="$image_ref" UPSTREAM_VERSION="$GITEA_PATCH_BASE_VERSION" contrib/workload-identity/image/smoke.sh
+run_gate 'image smoke test' env IMAGE_REF="$image_ref" UPSTREAM_VERSION="$GITEA_LINEAGE_VERSION" contrib/workload-identity/image/smoke.sh
 run_gate 'Vault acceptance' env GITEA_IMAGE="$image_ref" SKIP_ACCEPTANCE_BUILD=1 contrib/workload-identity/acceptance/run.sh
 
 {

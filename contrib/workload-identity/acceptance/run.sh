@@ -6,9 +6,9 @@ set -eu
 
 repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
 cd "$repo_root"
-. contrib/workload-identity/upstream.env
-export GITEA_UPSTREAM_VERSION="${UPSTREAM_VERSION:-$GITEA_PATCH_BASE_VERSION}"
-export GITEA_UPSTREAM_COMMIT="$(git rev-list -n 1 "v$GITEA_UPSTREAM_VERSION")"
+. contrib/workload-identity/lineage.env
+export GITEA_UPSTREAM_VERSION="$GITEA_LINEAGE_VERSION"
+export GITEA_UPSTREAM_COMMIT="$GITEA_LINEAGE_COMMIT"
 export GITEA_PATCH_REVISION="${PATCH_REVISION:-$(git rev-parse HEAD)}"
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITEA_PATCH_REVISION")"
 cd contrib/workload-identity/acceptance

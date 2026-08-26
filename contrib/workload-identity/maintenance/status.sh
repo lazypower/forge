@@ -6,10 +6,10 @@ set -eu
 
 repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
 cd "$repo_root"
-. contrib/workload-identity/upstream.env
+. contrib/workload-identity/lineage.env
 
-printf 'upstream: v%s\n' "$GITEA_PATCH_BASE_VERSION"
-printf 'patch:    %s\n' "$(git rev-parse HEAD)"
+printf 'lineage:  v%s (%s)\n' "$GITEA_LINEAGE_VERSION" "$GITEA_LINEAGE_COMMIT"
+printf 'fork:     %s\n' "$(git rev-parse HEAD)"
 printf 'branch:   %s\n' "$(git branch --show-current)"
 printf 'image:    ghcr.io/lazypower/gitea-workload-identity\n'
 if [ -f verified-image.env ]; then
