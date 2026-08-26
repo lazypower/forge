@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
-	auth_model "code.gitea.io/gitea/models/auth"
-	"code.gitea.io/gitea/models/unittest"
-	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/test"
-	actions_service "code.gitea.io/gitea/services/actions"
-	"code.gitea.io/gitea/services/oauth2_provider"
+	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
+	auth_model "gitea.dev/models/auth"
+	"gitea.dev/models/unittest"
+	user_model "gitea.dev/models/user"
+	"gitea.dev/modules/setting"
+	"gitea.dev/modules/test"
+	actions_service "gitea.dev/services/actions"
+	"gitea.dev/services/oauth2_provider"
 
-	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,10 +28,12 @@ import (
 
 type oidcIntegrationClaims struct {
 	jwt.RegisteredClaims
-	Repository  string `json:"repository"`
-	Job         string `json:"job"`
-	WorkflowRef string `json:"workflow_ref"`
-	WorkflowSHA string `json:"workflow_sha"`
+	Repository           string `json:"repository"`
+	Job                  string `json:"job"`
+	WorkflowRef          string `json:"workflow_ref"`
+	WorkflowSHA          string `json:"workflow_sha"`
+	WorkflowRepository   string `json:"workflow_repository"`
+	WorkflowRepositoryID int64  `json:"workflow_repository_id"`
 }
 
 func TestActionsOIDCTokenIntegration(t *testing.T) {
@@ -113,6 +115,8 @@ jobs:
 		workflowRef := repo.FullName + "/" + workflowPath + "@" + shaValue
 		assert.Equal(t, workflowRef, claims.WorkflowRef)
 		assert.Equal(t, shaValue, claims.WorkflowSHA)
+		assert.Equal(t, repo.FullName, claims.WorkflowRepository)
+		assert.Equal(t, repo.ID, claims.WorkflowRepositoryID)
 
 		_, err = jwt.Parse(tokenResp.Value, func(token *jwt.Token) (any, error) { return signingKey.VerifyKey(), nil }, jwt.WithAudience("wrong"))
 		require.Error(t, err)

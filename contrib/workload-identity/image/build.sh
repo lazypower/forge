@@ -4,10 +4,10 @@
 
 set -eu
 
-repo_root="$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)"
+repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
 cd "$repo_root"
 
-upstream_version="${UPSTREAM_VERSION:-1.26.4}"
+upstream_version="${UPSTREAM_VERSION:-1.27.2}"
 upstream_commit="$(git rev-list -n 1 "v$upstream_version")"
 patch_revision="${PATCH_REVISION:-$(git rev-parse HEAD)}"
 git cat-file -e "$patch_revision^{commit}"

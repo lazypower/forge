@@ -7,7 +7,7 @@ services:
       context: ../../..
       dockerfile: Dockerfile
       args:
-        GITEA_VERSION: 1.26.4-workload-identity
+        GITEA_VERSION: 1.27.2-workload-identity
     environment:
       GITEA_RUNNER_REGISTRATION_TOKEN: fixture-only-runner-registration-token-0001
       GITEA__actions__ENABLED: "true"

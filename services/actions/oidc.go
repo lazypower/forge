@@ -14,15 +14,15 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	"code.gitea.io/gitea/models/perm"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unit"
-	actions_module "code.gitea.io/gitea/modules/actions"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/gitrepo"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/services/oauth2_provider"
+	actions_model "gitea.dev/models/actions"
+	"gitea.dev/models/perm"
+	repo_model "gitea.dev/models/repo"
+	"gitea.dev/models/unit"
+	actions_module "gitea.dev/modules/actions"
+	"gitea.dev/modules/git"
+	"gitea.dev/modules/gitrepo"
+	"gitea.dev/modules/setting"
+	"gitea.dev/services/oauth2_provider"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -41,23 +41,25 @@ var ErrInvalidOIDCAudience = errors.New("invalid OIDC audience")
 
 type actionsOIDCClaims struct {
 	jwt.RegisteredClaims
-	Actor             string `json:"actor"`
-	ActorID           int64  `json:"actor_id"`
-	Repository        string `json:"repository"`
-	RepositoryID      int64  `json:"repository_id"`
-	RepositoryOwner   string `json:"repository_owner"`
-	RepositoryOwnerID int64  `json:"repository_owner_id"`
-	RunID             int64  `json:"run_id"`
-	RunNumber         int64  `json:"run_number"`
-	RunAttempt        int64  `json:"run_attempt"`
-	Workflow          string `json:"workflow"`
-	WorkflowRef       string `json:"workflow_ref"`
-	WorkflowSHA       string `json:"workflow_sha"`
-	EventName         string `json:"event_name"`
-	Ref               string `json:"ref"`
-	RefType           string `json:"ref_type"`
-	SHA               string `json:"sha"`
-	Job               string `json:"job"`
+	Actor                string `json:"actor"`
+	ActorID              int64  `json:"actor_id"`
+	Repository           string `json:"repository"`
+	RepositoryID         int64  `json:"repository_id"`
+	RepositoryOwner      string `json:"repository_owner"`
+	RepositoryOwnerID    int64  `json:"repository_owner_id"`
+	RunID                int64  `json:"run_id"`
+	RunNumber            int64  `json:"run_number"`
+	RunAttempt           int64  `json:"run_attempt"`
+	Workflow             string `json:"workflow"`
+	WorkflowRef          string `json:"workflow_ref"`
+	WorkflowSHA          string `json:"workflow_sha"`
+	WorkflowRepository   string `json:"workflow_repository"`
+	WorkflowRepositoryID int64  `json:"workflow_repository_id"`
+	EventName            string `json:"event_name"`
+	Ref                  string `json:"ref"`
+	RefType              string `json:"ref_type"`
+	SHA                  string `json:"sha"`
+	Job                  string `json:"job"`
 }
 
 func OIDCIssuer() string { return strings.TrimSuffix(setting.AppURL, "/") + actionsOIDCPath }
@@ -160,7 +162,7 @@ func CreateOIDCToken(ctx context.Context, task *actions_model.ActionTask, audien
 		return "", err
 	}
 	ref, sha, refType := resolveOIDCRefs(run)
-	workflowPath, workflowSHA, err := resolveOIDCWorkflow(ctx, run)
+	workflowRepository, workflowPath, workflowSHA, err := resolveOIDCWorkflow(ctx, run, task.Job)
 	if err != nil {
 		return "", err
 	}
@@ -168,7 +170,8 @@ func CreateOIDCToken(ctx context.Context, task *actions_model.ActionTask, audien
 	claims := &actionsOIDCClaims{
 		RegisteredClaims: jwt.RegisteredClaims{Issuer: OIDCIssuer(), Subject: fmt.Sprintf("repo:%d/%d:ref:%s", run.Repo.OwnerID, run.Repo.ID, url.PathEscape(ref)), Audience: jwt.ClaimStrings{validatedAudience}, ExpiresAt: jwt.NewNumericDate(now.Add(actionsOIDCTokenExpiry)), NotBefore: jwt.NewNumericDate(now.Add(-actionsOIDCClockSkew)), IssuedAt: jwt.NewNumericDate(now), ID: uuid.NewString()},
 		Actor:            run.TriggerUser.Name, ActorID: run.TriggerUser.ID, Repository: run.Repo.FullName(), RepositoryID: run.Repo.ID, RepositoryOwner: run.Repo.OwnerName, RepositoryOwnerID: run.Repo.OwnerID,
-		RunID: run.ID, RunNumber: run.Index, RunAttempt: task.Attempt, Workflow: workflowPath, WorkflowRef: fmt.Sprintf("%s/%s@%s", run.Repo.FullName(), workflowPath, workflowSHA), WorkflowSHA: workflowSHA,
+		RunID: run.ID, RunNumber: run.Index, RunAttempt: task.Attempt, Workflow: workflowPath, WorkflowRef: fmt.Sprintf("%s/%s@%s", workflowRepository.FullName(), workflowPath, workflowSHA), WorkflowSHA: workflowSHA,
+		WorkflowRepository: workflowRepository.FullName(), WorkflowRepositoryID: workflowRepository.ID,
 		EventName: run.TriggerEvent, Ref: ref, RefType: refType, SHA: sha, Job: task.Job.JobID,
 	}
 	token := jwt.NewWithClaims(signingKey.SigningMethod(), claims)
@@ -176,26 +179,45 @@ func CreateOIDCToken(ctx context.Context, task *actions_model.ActionTask, audien
 	return token.SignedString(signingKey.SignKey())
 }
 
-func resolveOIDCWorkflow(ctx context.Context, run *actions_model.ActionRun) (string, string, error) {
-	gitRepo, err := gitrepo.OpenRepository(ctx, run.Repo)
+func resolveOIDCWorkflow(ctx context.Context, run *actions_model.ActionRun, job *actions_model.ActionRunJob) (*repo_model.Repository, string, string, error) {
+	if run.WorkflowRepoID <= 0 || run.WorkflowCommitSHA == "" {
+		return nil, "", "", errors.New("Actions run has no authoritative workflow source")
+	}
+	if job.ParentJobID != 0 || job.WorkflowSourceRepoID != run.WorkflowRepoID || job.WorkflowSourceCommitSHA != run.WorkflowCommitSHA {
+		return nil, "", "", errors.New("Actions workload identity does not support reusable workflow jobs")
+	}
+	workflowRepository, err := repo_model.GetRepositoryByID(ctx, run.WorkflowRepoID)
 	if err != nil {
-		return "", "", err
+		return nil, "", "", err
+	}
+	if err := workflowRepository.LoadOwner(ctx); err != nil {
+		return nil, "", "", err
+	}
+	gitRepo, err := gitrepo.OpenRepository(ctx, workflowRepository)
+	if err != nil {
+		return nil, "", "", err
 	}
 	defer gitRepo.Close()
-	commit, err := gitRepo.GetCommit(run.CommitSHA)
+	commit, err := gitRepo.GetCommit(run.WorkflowCommitSHA)
 	if err != nil {
-		return "", "", err
+		return nil, "", "", err
 	}
-	workflowDir, entries, err := actions_module.ListWorkflows(commit)
+	var workflowDir string
+	var entries git.Entries
+	if run.IsScopedRun {
+		workflowDir, entries, err = actions_module.ListScopedWorkflows(commit)
+	} else {
+		workflowDir, entries, err = actions_module.ListWorkflows(commit)
+	}
 	if err != nil {
-		return "", "", err
+		return nil, "", "", err
 	}
 	for _, entry := range entries {
 		if entry.Name() == run.WorkflowID {
-			return path.Join(workflowDir, run.WorkflowID), run.CommitSHA, nil
+			return workflowRepository, path.Join(workflowDir, run.WorkflowID), run.WorkflowCommitSHA, nil
 		}
 	}
-	return "", "", fmt.Errorf("workflow %q not found at commit %s", run.WorkflowID, run.CommitSHA)
+	return nil, "", "", fmt.Errorf("workflow %q not found in source repository %d at commit %s", run.WorkflowID, run.WorkflowRepoID, run.WorkflowCommitSHA)
 }
 
 func resolveOIDCRefs(run *actions_model.ActionRun) (ref, sha, refType string) {

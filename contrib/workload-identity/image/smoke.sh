@@ -62,7 +62,7 @@ version="$(docker inspect "$image_ref" --format '{{index .Config.Labels "org.ope
 revision="$(docker inspect "$image_ref" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 platform="$(docker inspect "$image_ref" --format '{{.Os}}/{{.Architecture}}')"
 elf_machine="$(docker exec "$container" sh -c "od -An -t x1 -j 18 -N 2 /app/gitea/gitea | tr -d ' \\n'")"
-test "$version" = 1.26.4
+test "$version" = 1.27.2
 test -n "$revision"
 test "$platform" = "$target_platform"
 case "$target_platform:$elf_machine" in

@@ -8,16 +8,16 @@ import (
 	"strings"
 	"testing"
 
-	actions_model "code.gitea.io/gitea/models/actions"
-	"code.gitea.io/gitea/models/db"
-	"code.gitea.io/gitea/models/perm"
-	repo_model "code.gitea.io/gitea/models/repo"
-	"code.gitea.io/gitea/models/unittest"
-	actions_module "code.gitea.io/gitea/modules/actions"
-	"code.gitea.io/gitea/modules/git"
-	"code.gitea.io/gitea/modules/setting"
-	"code.gitea.io/gitea/modules/test"
-	webhook_module "code.gitea.io/gitea/modules/webhook"
+	actions_model "gitea.dev/models/actions"
+	"gitea.dev/models/db"
+	"gitea.dev/models/perm"
+	repo_model "gitea.dev/models/repo"
+	"gitea.dev/models/unittest"
+	actions_module "gitea.dev/modules/actions"
+	"gitea.dev/modules/git"
+	"gitea.dev/modules/setting"
+	"gitea.dev/modules/test"
+	webhook_module "gitea.dev/modules/webhook"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,6 +109,23 @@ func TestResolveOIDCRefsForUntrustedPullRequest(t *testing.T) {
 	assert.Equal(t, string(git.RefTypeBranch), refType)
 }
 
+func TestResolveOIDCWorkflowRejectsMissingSourceAndReusableJobs(t *testing.T) {
+	run := &actions_model.ActionRun{WorkflowRepoID: 2, WorkflowCommitSHA: "workflow-sha"}
+
+	_, _, _, err := resolveOIDCWorkflow(t.Context(), &actions_model.ActionRun{}, &actions_model.ActionRunJob{})
+	require.ErrorContains(t, err, "no authoritative workflow source")
+
+	jobs := []*actions_model.ActionRunJob{
+		{ParentJobID: 1, WorkflowSourceRepoID: 2, WorkflowSourceCommitSHA: "workflow-sha"},
+		{WorkflowSourceRepoID: 3, WorkflowSourceCommitSHA: "workflow-sha"},
+		{WorkflowSourceRepoID: 2, WorkflowSourceCommitSHA: "other-sha"},
+	}
+	for _, job := range jobs {
+		_, _, _, err := resolveOIDCWorkflow(t.Context(), run, job)
+		require.ErrorContains(t, err, "does not support reusable workflow jobs")
+	}
+}
+
 func TestOIDCTokenPermissionDefenseInDepth(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 	defer test.MockVariableValue(&setting.Actions.WorkloadIdentityEnabled, true)()
@@ -124,7 +141,7 @@ func TestOIDCTokenPermissionDefenseInDepth(t *testing.T) {
 	require.ErrorContains(t, err, "lacks id-token write permission")
 
 	task.Token = strings.Repeat("a", 40)
-	jobContext, err := generateTaskContext(task)
+	jobContext, err := generateTaskContext(t.Context(), task)
 	require.NoError(t, err)
 	assert.NotContains(t, jobContext.AsMap(), "actions_id_token_request_url")
 	assert.NotContains(t, jobContext.AsMap(), "actions_id_token_request_token")
@@ -132,7 +149,7 @@ func TestOIDCTokenPermissionDefenseInDepth(t *testing.T) {
 	task.Job.TokenPermissions = &permissions
 	_, err = db.GetEngine(t.Context()).ID(task.Job.ID).Cols("token_permissions").Update(task.Job)
 	require.NoError(t, err)
-	jobContext, err = generateTaskContext(task)
+	jobContext, err = generateTaskContext(t.Context(), task)
 	require.NoError(t, err)
 	assert.Equal(t, OIDCTokenRequestURL(), jobContext.AsMap()["actions_id_token_request_url"])
 	assert.Equal(t, task.Token, jobContext.AsMap()["actions_id_token_request_token"])

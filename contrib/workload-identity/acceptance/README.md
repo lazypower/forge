@@ -1,6 +1,6 @@
 # Vault workload identity acceptance
 
-This fixture starts the patched Gitea 1.26.4 image, Gitea Runner 1.0.0,
+This fixture starts the patched Gitea 1.27.2 image, Gitea Runner 1.0.0,
 Vault, and an nginx reverse proxy. Gitea is served from the canonical
 `http://proxy:8080/forge/` URL so discovery, JWKS, and token issuance are
 tested through a subpath.

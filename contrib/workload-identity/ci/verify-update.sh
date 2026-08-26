@@ -4,7 +4,7 @@
 
 set -eu
 
-repo_root="$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)"
+repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
 report="${PATCH_HEALTH_REPORT:-$repo_root/patch-health.md}"
 result_env="${RESULT_ENV:-$repo_root/verified-image.env}"
 workspace="$(mktemp -d)"

@@ -10,7 +10,7 @@ Build locally:
 contrib/workload-identity/image/build.sh
 ```
 
-The script derives the upstream `v1.26.4` commit, durable patch revision, image
+The script derives the upstream `v1.27.2` commit, durable patch revision, image
 version, and `SOURCE_DATE_EPOCH` from Git. Base images are pinned by digest and
 BuildKit provenance attestations are disabled because their invocation metadata
 would make the manifest digest vary between otherwise identical builds. The
@@ -47,7 +47,7 @@ reported digest, not the mutable tag.
 Smoke-test a built or pulled image:
 
 ```sh
-IMAGE_REF=gitea-workload-identity:1.26.4-wi.<revision> \
+IMAGE_REF=gitea-workload-identity:1.27.2-wi.<revision> \
 contrib/workload-identity/image/smoke.sh
 ```
 

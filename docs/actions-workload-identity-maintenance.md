@@ -1,7 +1,7 @@
 # Workload identity maintenance runbook
 
 This runbook applies to the private workload-identity patch based on Gitea
-`v1.26.4`. Its patch lineage is:
+`v1.27.2`. Its patch lineage is:
 
 1. Gitea issue #26383 and the earlier PR #25664;
 2. maintainer-authored draft PR #36988, commit `f24e180a3a4f` by Lunny Xiao;
@@ -86,9 +86,10 @@ locally tested image; it does not deploy it.
   time and reload current server state. Never trust IDs from the request.
 - Attempt/rerun changes must identify the newest running task and reject old,
   superseded, cancelling, cancelled, and completed work.
-- Workflow model changes must derive source repository, source commit, and
-  reusable ancestry explicitly. Do not keep the 1.26.4 same-repository
-  assumption after reusable/scoped workflows appear.
+- Workflow model changes must preserve the distinct run repository, workflow
+  source repository, and source commit authorities. Reusable workflow jobs
+  must continue to fail closed until their caller ancestry is explicit in the
+  token contract and covered by negative tests.
 - OAuth signer changes must retain an asymmetric public key, stable `kid`, and
   JWKS verification. Review rotation semantics.
 - URL/router changes must preserve the distinct path issuer derived from
@@ -142,8 +143,9 @@ signing, routing, or canonical URL handling require manual review.
 ## Rollback
 
 The patch adds no database table or column. `id-token` is stored in existing
-JSON and stock Gitea ignores the extra JSON field, so rollback to the prior
-known-good `v1.26.4` image is schema-safe.
+JSON and stock Gitea ignores the extra JSON field, so rollback to a known-good
+`v1.27.2` image is schema-safe. Rolling back to 1.26.x also crosses upstream
+database migrations and requires the corresponding database rollback or backup.
 
 1. Disable `[actions] WORKLOAD_IDENTITY_ENABLED` and restart if immediate
    issuance shutdown is needed.

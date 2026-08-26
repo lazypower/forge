@@ -4,7 +4,7 @@
 
 set -eu
 
-repo_root="$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)"
+repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
 report="${PATCH_HEALTH_REPORT:-$repo_root/patch-health.md}"
 target="${UPDATE_WORKTREE:?set UPDATE_WORKTREE to an unused directory}"
 
@@ -42,6 +42,7 @@ if [ -n "$upstream_changes" ]; then
 		[ -n "$path" ] || continue
 		while IFS= read -r pattern; do
 			case "$pattern" in ''|'#'*) continue ;; esac
+			# shellcheck disable=SC2254 # trust-boundary entries are glob patterns
 			case "$path" in $pattern) boundary_changes="${boundary_changes}${status}\t${path}\n"; break ;; esac
 		done < "$repo_root/contrib/workload-identity/ci/trust-boundary.paths"
 	done <<EOF

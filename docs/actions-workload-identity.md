@@ -2,7 +2,7 @@
 
 This private patch lets an explicitly authorized Gitea Actions job exchange its
 live task identity for a short-lived JWT suitable for Vault's JWT auth method.
-It is based on Gitea `v1.26.4` and is disabled by default.
+It is based on Gitea `v1.27.2` and is disabled by default.
 
 ## Security contract
 
@@ -87,9 +87,10 @@ Identity claims are:
 | `repository`, `repository_id` | run repository |
 | `repository_owner`, `repository_owner_id` | run repository owner |
 | `ref`, `ref_type`, `sha` | triggering ref and commit; pull refs have type `branch`, while `pull_request_target` uses the base branch |
-| `workflow` | repository-relative workflow path |
+| `workflow` | workflow-source-repository-relative path |
 | `workflow_ref` | `<owner>/<repo>/<workflow>@<workflow_sha>` |
 | `workflow_sha` | commit from which the workflow was loaded |
+| `workflow_repository`, `workflow_repository_id` | repository containing the top-level workflow |
 | `job` | workflow job key |
 | `event_name` | run trigger event |
 | `actor`, `actor_id` | triggering user |
@@ -104,12 +105,13 @@ repo:<owner_id>/<repository_id>:ref:<path-escaped-ref>
 Names aid diagnostics. Vault policy should bind immutable numeric IDs and then
 add ref or workflow restrictions appropriate to the secret.
 
-Gitea 1.26.4 does not implement reusable or owner-scoped workflows and does not
-store a separate workflow-source repository. For every workflow it supports,
-the run repository is the workflow source repository; the patch resolves the
-actual workflow path at the immutable run commit. Reusable-workflow support
-must not be backported without adding explicit source-repository and ancestry
-claims, tests, and Vault policy review.
+Gitea 1.27.2 records the top-level workflow's source repository and immutable
+commit separately from the repository whose event started the run. The patch
+uses that source authority for repository and scoped workflows, and exposes its
+name and numeric ID explicitly. Workload identity currently fails closed for
+jobs inside reusable workflows because their caller ancestry is not yet part of
+the token contract. Supporting those jobs requires explicit ancestry claims,
+negative tests, and Vault policy review.
 
 ## Vault configuration
 
