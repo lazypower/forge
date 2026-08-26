@@ -1,0 +1,52 @@
+name: workload identity verification
+
+on:
+  push:
+    branches:
+      - "**"
+    tags-ignore:
+      - "wi-v*"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: workload-identity-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.repository == 'lazypower/gitea-workload-identity'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the patch set
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Enforce repository workflow policy
+        run: contrib/workload-identity/ci/check-workflows.sh
+
+      - name: Fetch pinned upstream tag
+        run: |
+          set -eu
+          . contrib/workload-identity/upstream.env
+          git fetch --no-tags "$GITEA_UPSTREAM_REPOSITORY" \
+            "refs/tags/v$GITEA_PATCH_BASE_VERSION:refs/tags/v$GITEA_PATCH_BASE_VERSION"
+
+      - name: Configure BuildKit
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Configure Gitea Go toolchain
+        uses: ./.github/actions/go-setup
+        with:
+          lint-cache: "true"
+
+      - name: Install pinned Gitea tools
+        run: make deps-tools
+
+      - name: Verify patch and exact rootless image
+        run: contrib/workload-identity/ci/verify-update.sh

@@ -1,0 +1,36 @@
+name: dependency updates
+
+on:
+  schedule:
+    - cron: "23 7 * * 1" # Mondays at 07:23 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-updates
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  RENOVATE_VERSION: 43.141.5 # renovate: datasource=docker depName=ghcr.io/renovatebot/renovate
+
+jobs:
+  renovate:
+    if: github.repository == 'lazypower/gitea-workload-identity'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Enforce repository workflow policy
+        run: contrib/workload-identity/ci/check-workflows.sh
+
+      - uses: renovatebot/github-action@6d859fc95779be83a0335ca704879b47e5d79641 # v46.1.16
+        with:
+          renovate-version: ${{ env.RENOVATE_VERSION }}
+          configurationFile: renovate.json5
+          token: ${{ github.token }}
+        env:
+          RENOVATE_REPOSITORIES: '["lazypower/gitea-workload-identity"]'
