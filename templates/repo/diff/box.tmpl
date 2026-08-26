@@ -78,7 +78,10 @@
 					{{$sniffedTypeHead := call $.GetSniffedTypeForBlob $blobHead}}
 					{{$isImage:= or (call $.IsSniffedTypeAnImage $sniffedTypeBase) (call $.IsSniffedTypeAnImage $sniffedTypeHead)}}
 					{{$isCsv := (call $.IsCsvFile $file)}}
-					{{$showFileViewToggle := or $isImage (and (not $file.IsIncomplete) $isCsv)}}
+					{{$markdownPreviewLink := call $.MarkdownPreviewLink $file $blobBase $blobHead}}
+					{{$isMarkdownPreview := ne $markdownPreviewLink ""}}
+					{{$showFileViewToggle := or $isImage $isMarkdownPreview (and (not $file.IsIncomplete) $isCsv)}}
+					{{$showRenderedByDefault := and $showFileViewToggle (not $isMarkdownPreview)}}
 					{{$isExpandable := or (gt $file.Addition 0) (gt $file.Deletion 0) $file.IsBin}}
 					{{$isReviewFile := and $.IsSigned $.PageIsPullFiles (not $.Repository.IsArchived) $.IsShowingAllCommits}}
 					<div class="diff-file-box file-content {{TabSizeClass $.Editorconfig $file.Name}} tw-mt-0" id="diff-{{$file.NameHash}}" data-old-filename="{{$file.OldName}}" data-new-filename="{{$file.Name}}" {{if or ($file.ShouldBeHidden) (not $isExpandable)}}data-folded="true"{{end}}>
@@ -120,8 +123,8 @@
 
 								{{if $showFileViewToggle}}
 									<div class="ui compact icon buttons">
-										<button class="ui tiny basic button file-view-toggle" data-toggle-selector="#diff-source-{{$file.NameHash}}" data-tooltip-content="{{ctx.Locale.Tr "repo.file_view_source"}}">{{svg "octicon-code"}}</button>
-										<button class="ui tiny basic button file-view-toggle active" data-toggle-selector="#diff-rendered-{{$file.NameHash}}" data-tooltip-content="{{ctx.Locale.Tr "repo.file_view_rendered"}}">{{svg "octicon-file"}}</button>
+										<button class="ui tiny basic button file-view-toggle {{if not $showRenderedByDefault}}active{{end}}" data-toggle-selector="#diff-source-{{$file.NameHash}}" data-tooltip-content="{{ctx.Locale.Tr "repo.file_view_source"}}">{{svg "octicon-code"}}</button>
+										<button class="ui tiny basic button file-view-toggle {{if $showRenderedByDefault}}active{{end}}" data-toggle-selector="#diff-rendered-{{$file.NameHash}}" data-tooltip-content="{{ctx.Locale.Tr "repo.file_view_rendered"}}">{{svg "octicon-file"}}</button>
 									</div>
 								{{end}}
 								{{if $file.IsProtected}}
@@ -158,7 +161,7 @@
 							</div>
 						</div>
 						<div class="diff-file-body ui attached unstackable table segment" {{if and $file.IsViewed $.IsShowingAllCommits}}data-folded="true"{{end}}>
-							<div id="diff-source-{{$file.NameHash}}" class="file-body file-code unicode-escaped code-diff{{if $.IsSplitStyle}} code-diff-split{{else}} code-diff-unified{{end}}{{if $showFileViewToggle}} tw-hidden{{end}}">
+							<div id="diff-source-{{$file.NameHash}}" class="file-body file-code unicode-escaped code-diff{{if $.IsSplitStyle}} code-diff-split{{else}} code-diff-unified{{end}}{{if $showRenderedByDefault}} tw-hidden{{end}}">
 								{{if or $file.IsIncomplete $file.IsBin}}
 									<div class="diff-file-body binary">
 										{{if $file.IsIncomplete}}
@@ -195,14 +198,18 @@
 							</div>
 							{{if $showFileViewToggle}}
 								{{/* for image or CSV, it can have a horizontal scroll bar, there won't be review comment context menu (position absolute) which would be clipped by "overflow" */}}
-								<div id="diff-rendered-{{$file.NameHash}}" class="file-body file-code {{if $.IsSplitStyle}}code-diff-split{{else}}code-diff-unified{{end}} tw-overflow-x-scroll">
-									<table class="chroma tw-w-full">
-										{{if $isImage}}
-											{{template "repo/diff/image_diff" dict "file" . "root" $ "blobBase" $blobBase "blobHead" $blobHead "sniffedTypeBase" $sniffedTypeBase "sniffedTypeHead" $sniffedTypeHead}}
-										{{else}}
-											{{template "repo/diff/csv_diff" dict "file" . "root" $ "blobBase" $blobBase "blobHead" $blobHead "sniffedTypeBase" $sniffedTypeBase "sniffedTypeHead" $sniffedTypeHead}}
-										{{end}}
-									</table>
+								<div id="diff-rendered-{{$file.NameHash}}" class="file-body {{if $isMarkdownPreview}}markdown-preview{{else}}file-code {{if $.IsSplitStyle}}code-diff-split{{else}}code-diff-unified{{end}} tw-overflow-x-scroll{{end}}{{if not $showRenderedByDefault}} tw-hidden{{end}}"{{if $isMarkdownPreview}} data-markdown-preview-url="{{$markdownPreviewLink}}" data-markdown-preview-error="{{ctx.Locale.Tr "repo.diff.markdown_preview_error"}}"{{end}}>
+									{{if $isMarkdownPreview}}
+										<div class="markdown-preview-loading tw-p-4">{{ctx.Locale.Tr "loading"}}</div>
+									{{else}}
+										<table class="chroma tw-w-full">
+											{{if $isImage}}
+												{{template "repo/diff/image_diff" dict "file" . "root" $ "blobBase" $blobBase "blobHead" $blobHead "sniffedTypeBase" $sniffedTypeBase "sniffedTypeHead" $sniffedTypeHead}}
+											{{else}}
+												{{template "repo/diff/csv_diff" dict "file" . "root" $ "blobBase" $blobBase "blobHead" $blobHead "sniffedTypeBase" $sniffedTypeBase "sniffedTypeHead" $sniffedTypeHead}}
+											{{end}}
+										</table>
+									{{end}}
 								</div>
 							{{end}}
 						</div>

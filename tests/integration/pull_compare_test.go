@@ -61,7 +61,7 @@ func TestPullCompare(t *testing.T) {
 		session := loginUser(t, "user1")
 		testRepoFork(t, session, "user2", "repo1", "user1", "repo1", "")
 		testCreateBranch(t, session, "user1", "repo1", "branch/master", "master1", http.StatusSeeOther)
-		testEditFile(t, session, "user1", "repo1", "master1", "README.md", "Hello, World (Edited)\n")
+		testEditFile(t, session, "user1", "repo1", "master1", "README.md", "# Hello, Preview\n\n[Guide](docs/guide.md)\n\n<script>alert('unsafe')</script>\n")
 		testPullCreate(t, session, "user1", "repo1", false, "master", "master1", "This is a pull title")
 
 		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{OwnerName: "user2", Name: "repo1"})
@@ -72,6 +72,25 @@ func TestPullCompare(t *testing.T) {
 		doc := NewHTMLParser(t, resp.Body)
 		editButtonCount := doc.doc.Find(".diff-file-header-actions a[href*='/_edit/']").Length()
 		assert.Positive(t, editButtonCount, "Expected to find a button to edit a file in the PR diff view but there were none")
+
+		readmeDiff := doc.doc.Find(".diff-file-box[data-new-filename=\"README.md\"]")
+		assert.True(t, readmeDiff.Find(".file-view-toggle[data-toggle-selector^=\"#diff-source-\"]").HasClass("active"))
+		assert.False(t, readmeDiff.Find(".file-view-toggle[data-toggle-selector^=\"#diff-rendered-\"]").HasClass("active"))
+		previewURL, exists := readmeDiff.Find("[data-markdown-preview-url]").Attr("data-markdown-preview-url")
+		assert.True(t, exists)
+
+		resp = session.MakeRequest(t, NewRequest(t, "GET", previewURL), http.StatusOK)
+		previewDoc := NewHTMLParser(t, resp.Body)
+		assert.Equal(t, "Hello, Preview", previewDoc.doc.Find(".markup.markdown h1").Text())
+		assert.Contains(t, previewDoc.doc.Find(".markup.markdown a").AttrOr("href", ""), "/user2/repo1/src/commit/")
+		assert.Equal(t, 0, previewDoc.doc.Find("script").Length())
+
+		invalidPreviewURL, parseErr := url.Parse(previewURL)
+		assert.NoError(t, parseErr)
+		invalidPreviewQuery := invalidPreviewURL.Query()
+		invalidPreviewQuery.Set("new-path", "not-in-this-pull.md")
+		invalidPreviewURL.RawQuery = invalidPreviewQuery.Encode()
+		session.MakeRequest(t, NewRequest(t, "GET", invalidPreviewURL.String()), http.StatusNotFound)
 
 		repoForked := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{OwnerName: "user1", Name: "repo1"})
 

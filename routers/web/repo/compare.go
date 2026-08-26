@@ -31,6 +31,7 @@ import (
 	"gitea.dev/modules/gitrepo"
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/markup"
+	"gitea.dev/modules/markup/markdown"
 	"gitea.dev/modules/optional"
 	"gitea.dev/modules/setting"
 	api "gitea.dev/modules/structs"
@@ -86,6 +87,7 @@ func setCompareContext(ctx *context.Context, before, head *git.Commit, headOwner
 	setPathsCompareContext(ctx, before, head, headOwner, headName)
 	setImageCompareContext(ctx)
 	setCsvCompareContext(ctx)
+	setMarkdownCompareContext(ctx, before, head)
 }
 
 // SourceCommitURL creates a relative URL for a commit in the given repository
@@ -112,6 +114,40 @@ func setPathsCompareContext(ctx *context.Context, base, head *git.Commit, headOw
 func setImageCompareContext(ctx *context.Context) {
 	ctx.Data["IsSniffedTypeAnImage"] = func(st typesniffer.SniffedType) bool {
 		return st.IsImage() && (setting.UI.SVG.Enabled || !st.IsSvgImage())
+	}
+}
+
+func setMarkdownCompareContext(ctx *context.Context, before, head *git.Commit) {
+	ctx.Data["MarkdownPreviewLink"] = func(diffFile *gitdiff.DiffFile, baseBlob, headBlob *git.Blob) string {
+		pageIsPullFiles, _ := ctx.Data["PageIsPullFiles"].(bool)
+		if !pageIsPullFiles || diffFile == nil || before == nil || head == nil || diffFile.IsIncomplete || diffFile.IsBin || diffFile.IsLFSFile || diffFile.IsSubmodule {
+			return ""
+		}
+
+		treePath, blob := diffFile.Name, headBlob
+		if diffFile.IsDeleted {
+			treePath, blob = diffFile.OldName, baseBlob
+		}
+		if blob == nil || blob.Size() >= setting.UI.MaxDisplayFileSize {
+			return ""
+		}
+
+		renderer := markup.DetectRendererTypeByFilename(treePath)
+		if renderer == nil || renderer.Name() != markdown.MarkupName {
+			return ""
+		}
+
+		issue, ok := ctx.Data["Issue"].(*issues_model.Issue)
+		if !ok {
+			return ""
+		}
+		query := url.Values{
+			"before":   {before.ID.String()},
+			"after":    {head.ID.String()},
+			"old-path": {diffFile.OldName},
+			"new-path": {diffFile.Name},
+		}
+		return issue.Link() + "/files/markdown-preview?" + query.Encode()
 	}
 }
 
