@@ -1,13 +1,13 @@
 # Workload identity image
 
-The image uses Gitea's normal root `Dockerfile`. The only packaging additions
-are pinned build/runtime base digests and OCI labels identifying the upstream
-version/commit and the workload-identity patch revision.
+The image uses the patch-owned rootless Dockerfile in this directory. Its build
+and runtime bases are pinned by digest, it runs as `1000:1000`, and its OCI
+labels identify the upstream version/commit and workload-identity revision.
 
 Build locally:
 
 ```sh
-contrib/workload-identity/image/build.sh
+just build
 ```
 
 The script derives the upstream `v1.27.2` commit, durable patch revision, image
@@ -33,25 +33,28 @@ The security gate builds the candidate twice and requires identical image
 references, digests, and patch revisions before smoke or Vault acceptance
 testing can authorize publication.
 
-Publishing is an explicit operation and never deploys:
+Publishing is an explicit operation and never deploys. Run the full gate, then
+push an annotated release tag:
 
 ```sh
-IMAGE_REPOSITORY=registry.example.net/forge/gitea-workload-identity \
-PUSH=1 contrib/workload-identity/image/build.sh
+just test
+just push
 ```
 
-Authenticate Docker to the registry first. CI must publish only after all test
-gates pass and a human approves the protected publish environment. Deploy the
-reported digest, not the mutable tag.
+GitHub Actions rebuilds and verifies the tagged revision, publishes it to the
+public `ghcr.io/lazypower/gitea-workload-identity` package using its ephemeral
+workflow token, emits an SPDX SBOM and release manifest, and creates GitHub and
+OCI attestations. Deploy the digest from `release.json`, never the tag.
 
 Smoke-test a built or pulled image:
 
 ```sh
-IMAGE_REF=gitea-workload-identity:1.27.2-wi.<revision> \
+IMAGE_REF=gitea-workload-identity:1.27.2-wi.<revision> UPSTREAM_VERSION=1.27.2 \
 contrib/workload-identity/image/smoke.sh
 ```
 
 The smoke test starts an empty SQLite instance and proves migrations, health,
 Actions runner protocol availability, workload discovery/JWKS, unauthorized
-issuance denial, and image provenance labels. The Vault acceptance fixture
+issuance denial, rootless ownership, durable volume declarations, restart
+persistence, and image provenance labels. The Vault acceptance fixture
 separately executes complete authorized and unauthorized Actions jobs.

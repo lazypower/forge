@@ -6,6 +6,7 @@ set -eu
 
 image_ref="${IMAGE_REF:?set IMAGE_REF to the image under test}"
 target_platform="${TARGET_PLATFORM:-linux/amd64}"
+upstream_version="${UPSTREAM_VERSION:?set UPSTREAM_VERSION to the expected Gitea version}"
 container="gitea-workload-identity-smoke-$$"
 port="${SMOKE_PORT:-3301}"
 logs="$(mktemp)"
@@ -16,12 +17,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-docker run --detach --name "$container" --publish "$port:3000" \
+test "$(docker inspect "$image_ref" --format '{{.Config.User}}')" = 1000:1000
+test "$(docker inspect "$image_ref" --format '{{index .Config.Labels "io.gitea.image.variant"}}')" = rootless
+docker inspect "$image_ref" --format '{{json .Config.Volumes}}' |
+	jq -e 'has("/var/lib/gitea") and has("/etc/gitea")' >/dev/null
+
+docker run --detach --platform "$target_platform" --name "$container" --publish "$port:3000" \
 	-e GITEA_RUNNER_REGISTRATION_TOKEN=fixture-only-smoke-runner-token-000001 \
 	-e GITEA__actions__ENABLED=true \
 	-e GITEA__actions__WORKLOAD_IDENTITY_ENABLED=true \
 	-e GITEA__database__DB_TYPE=sqlite3 \
-	-e GITEA__database__PATH=/data/gitea/gitea.db \
+	-e GITEA__database__PATH=/var/lib/gitea/data/gitea.db \
 	-e GITEA__oauth2__ENABLED=true \
 	-e GITEA__oauth2__JWT_SIGNING_ALGORITHM=RS256 \
 	-e GITEA__oauth2__JWT_SIGNING_PRIVATE_KEY_FILE=jwt/workload-identity.pem \
@@ -58,11 +64,25 @@ test "$status" = 401
 curl --fail --silent -H 'Content-Type: application/json' --data '{}' \
 	"http://localhost:$port/api/actions/ping.v1.PingService/Ping" >/dev/null
 
+# The generated signing key and migrated database must survive a service restart.
+docker restart "$container" >/dev/null
+attempt=0
+until curl --fail --silent "http://localhost:$port/api/healthz" >/dev/null 2>&1; do
+	attempt=$((attempt + 1))
+	if [ "$attempt" -ge 120 ]; then
+		docker logs "$container" >&2
+		exit 1
+	fi
+	sleep 1
+done
+curl --fail --silent "http://localhost:$port/api/actions/oidc/jwks" |
+	jq -e '.keys | length == 1 and .[0].kty != "oct" and .[0].use == "sig"' >/dev/null
+
 version="$(docker inspect "$image_ref" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 revision="$(docker inspect "$image_ref" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 platform="$(docker inspect "$image_ref" --format '{{.Os}}/{{.Architecture}}')"
 elf_machine="$(docker exec "$container" sh -c "od -An -t x1 -j 18 -N 2 /app/gitea/gitea | tr -d ' \\n'")"
-test "$version" = 1.27.2
+test "$version" = "$upstream_version"
 test -n "$revision"
 test "$platform" = "$target_platform"
 case "$target_platform:$elf_machine" in

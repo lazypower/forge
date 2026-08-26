@@ -5,6 +5,7 @@
 set -eu
 
 repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
+. "$repo_root/contrib/workload-identity/upstream.env"
 report="${PATCH_HEALTH_REPORT:-$repo_root/patch-health.md}"
 result_env="${RESULT_ENV:-$repo_root/verified-image.env}"
 workspace="$(mktemp -d)"
@@ -70,7 +71,7 @@ else
 	exit 1
 fi
 
-run_gate 'image smoke test' env IMAGE_REF="$image_ref" contrib/workload-identity/image/smoke.sh
+run_gate 'image smoke test' env IMAGE_REF="$image_ref" UPSTREAM_VERSION="$GITEA_PATCH_BASE_VERSION" contrib/workload-identity/image/smoke.sh
 run_gate 'Vault acceptance' env GITEA_IMAGE="$image_ref" SKIP_ACCEPTANCE_BUILD=1 contrib/workload-identity/acceptance/run.sh
 
 {

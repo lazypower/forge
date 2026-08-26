@@ -11,7 +11,40 @@ This runbook applies to the private workload-identity patch based on Gitea
 Do not rewrite the imported author's commit. New maintenance work uses normal
 commits and preserves the local `Assisted-by` policy.
 
-## Upgrade procedure
+## Routine operation
+
+There is one supported path:
+
+```sh
+git clone git@github.com:lazypower/gitea-workload-identity.git
+cd gitea-workload-identity
+just status
+just update 1.27.3
+just test
+just push
+```
+
+`just update` fetches the exact upstream tag, creates a new branch, replays the
+ordered patch series, and updates the single version authority. It stops at the
+first conflict. Before testing, read that Gitea release's notes and review the
+trust-boundary changes reported by the gate. A capable local model can perform
+that bounded review; it must not waive a failed test or silently drop a patch.
+
+`just test` replays the patch in a clean worktree, formats, lints, runs focused
+unit and integration tests, builds the rootless linux/amd64 image twice, checks
+its runtime and restart contract, and executes the Vault acceptance fixture.
+
+`just push` refuses dirty or stale results. It creates the next `wi-v…` tag and
+pushes it to GitHub. GitHub Actions repeats the gate, publishes the exact tested
+revision to public GHCR, generates an SPDX SBOM, attests provenance and SBOM,
+and attaches a machine-readable `release.json`. Source Forge adopts only the
+immutable digest from that file after its Magus/FCOS test passes.
+
+No scheduled rebuild exists. Update for a relevant Gitea security release,
+material workload-identity dependency change, or an intentional maintenance
+window. CVE review uses the retained SBOM and exact deployed digest.
+
+## Detailed upgrade procedure
 
 1. Record the deployed image digest, upstream version, patch revision, and
    database backup identifier.
@@ -38,18 +71,13 @@ commits and preserves the local `Assisted-by` policy.
 A clean cherry-pick is not security evidence. Mark the update high risk and
 require manual review whenever any trust-boundary file changes upstream.
 
-## Automated update gate
+## Update gate internals
 
-`contrib/workload-identity/upstream.env` is the single authority for the
-deployed patch base and candidate upstream release. Renovate updates only the
-candidate value when `go-gitea/gitea` publishes a release. Its pull request is
-always labeled for manual review.
-
-The `workload identity security gate` workflow runs on every change and weekly.
-It produces `patch-health.md`, which records the old and candidate versions,
-each replayed commit, conflicts, trust-boundary changes, possible equivalent
-upstream implementations, every validation result, and the tested image digest.
-Any failed gate forbids publication.
+`contrib/workload-identity/upstream.env` is the single authority for the patch
+base. The gate produces `patch-health.md`, recording each replayed commit,
+conflicts, trust-boundary changes, possible equivalent upstream implementations,
+every validation result, and the tested image identity. Any failure forbids
+publication.
 
 To prepare an update locally without running the full suite:
 
@@ -58,25 +86,11 @@ UPDATE_WORKTREE=/tmp/gitea-workload-identity-update \
   contrib/workload-identity/ci/prepare-update.sh
 ```
 
-Run the complete gate with:
+Run the complete gate with `just test`.
 
 ```sh
 contrib/workload-identity/ci/verify-update.sh
 ```
-
-The existing `lab/renovate-bot` fleet service discovers repositories under
-`lab/*` and runs weekly. Host this fork in that organization so it reads the
-repository-local `renovate.json5`; no second scheduler or repository token is
-needed. The local rule disables both Renovate and platform automerge for Gitea
-upstream updates, even when fleet policy permits automerge elsewhere. Renovate
-may open an update pull request, but it cannot merge, publish, or deploy it.
-
-Configure the Gitea Actions environment `workload-identity-publish` with
-required human approvers and registry secrets
-`WORKLOAD_IDENTITY_REGISTRY_USERNAME` and
-`WORKLOAD_IDENTITY_REGISTRY_PASSWORD`. Only a manually dispatched run with an
-explicit repository can enter that environment. Publication pushes the exact
-locally tested image; it does not deploy it.
 
 ## Conflict rules
 

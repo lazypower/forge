@@ -6,8 +6,9 @@ set -eu
 
 repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../../.." && pwd)"
 cd "$repo_root"
+. contrib/workload-identity/upstream.env
 
-upstream_version="${UPSTREAM_VERSION:-1.27.2}"
+upstream_version="${UPSTREAM_VERSION:-$GITEA_PATCH_BASE_VERSION}"
 upstream_commit="$(git rev-list -n 1 "v$upstream_version")"
 patch_revision="${PATCH_REVISION:-$(git rev-parse HEAD)}"
 git cat-file -e "$patch_revision^{commit}"
@@ -20,6 +21,7 @@ target_platform="${TARGET_PLATFORM:-linux/amd64}"
 
 set -- docker buildx build \
 	--platform "$target_platform" \
+	--file contrib/workload-identity/image/Dockerfile.rootless \
 	--build-arg "GITEA_VERSION=$upstream_version-workload-identity.$patch_short" \
 	--build-arg "GITEA_UPSTREAM_VERSION=$upstream_version" \
 	--build-arg "GITEA_UPSTREAM_COMMIT=$upstream_commit" \

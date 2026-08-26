@@ -19,7 +19,7 @@ base_tag="v$GITEA_PATCH_BASE_VERSION"
 candidate_tag="v$GITEA_CANDIDATE_VERSION"
 git -C "$repo_root" rev-parse --verify "$base_tag^{commit}" >/dev/null
 if ! git -C "$repo_root" rev-parse --verify "$candidate_tag^{commit}" >/dev/null 2>&1; then
-	git -C "$repo_root" fetch --no-tags origin "refs/tags/$candidate_tag:refs/tags/$candidate_tag"
+	git -C "$repo_root" fetch --no-tags "$GITEA_UPSTREAM_REPOSITORY" "refs/tags/$candidate_tag:refs/tags/$candidate_tag"
 fi
 
 patch_tip="${PATCH_TIP:-HEAD}"

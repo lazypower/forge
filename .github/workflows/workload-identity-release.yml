@@ -1,0 +1,119 @@
+name: workload identity release
+
+on:
+  push:
+    tags:
+      - "wi-v*"
+
+concurrency:
+  group: workload-identity-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+env:
+  IMAGE_NAME: ghcr.io/lazypower/gitea-workload-identity
+
+jobs:
+  release:
+    if: github.repository == 'lazypower/gitea-workload-identity'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the tagged patch set
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate release identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          . contrib/workload-identity/upstream.env
+          case "$RELEASE_TAG" in
+            "wi-v$GITEA_PATCH_BASE_VERSION."[0-9]*) ;;
+            *) echo "tag $RELEASE_TAG does not release v$GITEA_PATCH_BASE_VERSION" >&2; exit 1 ;;
+          esac
+
+      - name: Configure BuildKit
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Verify patch and exact rootless image
+        run: contrib/workload-identity/ci/verify-update.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the verified image
+        id: publish
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          . ./verified-image.env
+          . contrib/workload-identity/upstream.env
+          release_ref="$IMAGE_NAME:$RELEASE_TAG"
+          docker tag "$IMAGE_REF" "$release_ref"
+          docker push "$release_ref"
+          digest="$(docker buildx imagetools inspect "$release_ref" --format '{{.Manifest.Digest}}')"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'reference=%s\n' "$release_ref" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg schema_version "1" \
+            --arg release "$RELEASE_TAG" \
+            --arg image "$IMAGE_NAME" \
+            --arg digest "$digest" \
+            --arg upstream "$GITEA_PATCH_BASE_VERSION" \
+            --arg upstream_commit "$(git rev-list -n 1 "v$GITEA_PATCH_BASE_VERSION")" \
+            --arg patch_revision "$PATCH_REVISION" \
+            --arg platform "$TARGET_PLATFORM" \
+            '{schema_version:$schema_version,release:$release,image:$image,digest:$digest,upstream_version:$upstream,upstream_commit:$upstream_commit,patch_revision:$patch_revision,platform:$platform}' \
+            > release.json
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.IMAGE_NAME }}@${{ steps.publish.outputs.digest }}
+          format: spdx-json
+          output-file: gitea-workload-identity.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          subject-version: ${{ github.ref_name }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          sbom-path: gitea-workload-identity.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            release.json gitea-workload-identity.spdx.json \
+            --verify-tag \
+            --title "Gitea workload identity $RELEASE_TAG" \
+            --notes "Rootless linux/amd64 image: \`$IMAGE_NAME@$IMAGE_DIGEST\`"

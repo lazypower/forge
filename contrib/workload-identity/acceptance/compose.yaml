@@ -5,9 +5,13 @@ services:
     image: ${GITEA_IMAGE:-gitea-workload-identity-acceptance}
     build:
       context: ../../..
-      dockerfile: Dockerfile
+      dockerfile: contrib/workload-identity/image/Dockerfile.rootless
       args:
-        GITEA_VERSION: 1.27.2-workload-identity
+        GITEA_VERSION: ${GITEA_UPSTREAM_VERSION}-workload-identity
+        GITEA_UPSTREAM_VERSION: ${GITEA_UPSTREAM_VERSION}
+        GITEA_UPSTREAM_COMMIT: ${GITEA_UPSTREAM_COMMIT}
+        GITEA_PATCH_REVISION: ${GITEA_PATCH_REVISION}
+        SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}
     environment:
       GITEA_RUNNER_REGISTRATION_TOKEN: fixture-only-runner-registration-token-0001
       GITEA__actions__ENABLED: "true"
@@ -28,7 +32,8 @@ services:
       retries: 60
     networks: [acceptance]
     volumes:
-      - gitea-data:/data
+      - gitea-data:/var/lib/gitea
+      - gitea-config:/etc/gitea
 
   proxy:
     image: docker.io/library/nginx:1.29.5-alpine@sha256:1eff5a5f3fcf8431a0abb7eddf5471fec24e5e1905a2581aeacdb07a4479b92b
@@ -89,3 +94,4 @@ networks:
 
 volumes:
   gitea-data:
+  gitea-config:
