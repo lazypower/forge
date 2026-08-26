@@ -3,6 +3,7 @@ name: gitea-workload-identity
 services:
   gitea:
     image: ${GITEA_IMAGE:-gitea-workload-identity-acceptance}
+    platform: ${TARGET_PLATFORM:-linux/amd64}
     build:
       context: ../../..
       dockerfile: contrib/workload-identity/image/Dockerfile.rootless
@@ -17,7 +18,7 @@ services:
       GITEA__actions__ENABLED: "true"
       GITEA__actions__WORKLOAD_IDENTITY_ENABLED: "true"
       GITEA__database__DB_TYPE: sqlite3
-      GITEA__database__PATH: /data/gitea/gitea.db
+      GITEA__database__PATH: /var/lib/gitea/data/gitea.db
       GITEA__oauth2__ENABLED: "true"
       GITEA__oauth2__JWT_SIGNING_ALGORITHM: RS256
       GITEA__oauth2__JWT_SIGNING_PRIVATE_KEY_FILE: jwt/workload-identity.pem
