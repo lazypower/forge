@@ -31,7 +31,7 @@ jobs:
     if: github.repository == 'lazypower/forge'
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out the tagged patch set
+      - name: Check out the tagged Forge revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
@@ -53,10 +53,10 @@ jobs:
         with:
           lint-cache: "true"
 
-      - name: Install pinned Gitea tools
+      - name: Install pinned tools
         run: make deps-tools
 
-      - name: Verify the fork and exact rootless image
+      - name: Certify the Forge release image
         run: contrib/workload-identity/ci/verify-fork.sh
 
       - name: Log in to GHCR
