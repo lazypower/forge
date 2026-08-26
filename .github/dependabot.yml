@@ -12,6 +12,8 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: gomod
     directory: /
@@ -27,6 +29,8 @@ updates:
       go-dependencies:
         patterns: ["*"]
         update-types: [minor, patch]
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: npm
     directory: /
@@ -42,6 +46,8 @@ updates:
       frontend-dependencies:
         patterns: ["*"]
         update-types: [minor, patch]
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: docker
     directory: /contrib/workload-identity/image
@@ -55,3 +61,5 @@ updates:
       image-bases:
         patterns: ["*"]
         update-types: [minor, patch]
+    cooldown:
+      default-days: 7
