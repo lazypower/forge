@@ -67,9 +67,10 @@ credential residue before cleanup.
    check state, and evaluated policy. The pull request was not ready: one
    required context and one approval were missing. No product fallback was
    needed.
-2. **Confirm change intent and scope.** MCP supplied bounded file and diff
-   content, but not the pull request description. One REST read confirmed that
-   the synthetic description was present.
+2. **Confirm change intent and scope.** At the tested `f234b56f0f` revision,
+   MCP supplied bounded file and diff content, but not the pull request
+   description. One REST read confirmed that the synthetic description was
+   present.
 3. **Audit commit structure.** MCP supplied the aggregate diff but not commit
    provenance. One REST read found seven fixture commits for the seven-file
    change.
@@ -85,7 +86,7 @@ credential residue before cleanup.
 | Runtime and fixture setup | Build the exact revision; create the private PR, check, and policy | Docker/OrbStack and 12 Forge REST mutations | 1 run | `bootstrap/infrastructure only` |
 | Runtime verification | Prove revision, HTTPS, configuration, PAT scopes, and cleanup | Shell, Docker inspection, curl, and local database inspection | 1 run | `bootstrap/infrastructure only` |
 | Assess merge readiness | Frozen changes, checks, and evaluated policy | None | 0 | `candidate semantic gap` not observed |
-| Confirm change intent | Pull request description | Forge REST pull request read | 1 | `candidate semantic gap` |
+| Confirm change intent at `f234b56f0f` | Pull request description | Forge REST pull request read | 1 | `candidate semantic gap` |
 | Audit commit structure | Ordered pull request commits | Forge REST commit read | 1 | `candidate semantic gap` |
 | Triage review discussion | Review records | Forge REST review read | 1 | `candidate semantic gap` |
 | Triage review discussion | Issue comments and their permission boundary | Forge REST issue-comment read; exact PAT denied, REST-only PAT succeeded | 2 | `candidate semantic gap` |
@@ -96,12 +97,28 @@ product-workflow fallbacks. The product workflow made four successful REST
 reads and one denied REST attempt because `pull_request.inspect` could not
 answer the requested facts.
 
+## Post-dogfood disposition
+
+This evidence remains bound to the tested `f234b56f0f` revision, so its initial
+description fallback remains historical fact. After the run, product direction
+selected that candidate gap for closure within the existing operation. Commit
+`b6418847e98a461b46b32dd5c3b1dd9a0db15a6a` added the repository-authored pull
+request description to `pull_request.inspect` as raw Markdown bounded to 32 KiB,
+with an explicit `descriptionTruncated` signal. Forge does not render the
+description to HTML. Clients at that revision no longer need the recorded REST
+fallback for this fact, and no second semantic operation was introduced.
+
+The commit-provenance and review/discussion observations remain recorded.
+Reviews and comments are explicit non-goals of the current read-only slice, as
+documented in the MCP operator guidance; their appearance in the ledger does not
+implicitly select them for implementation.
+
 ## Conclusion
 
-This run does not justify proposing another semantic operation. Narrative,
-commit provenance, and discussion are three distinct gaps. Review triage caused
-multiple REST calls, but the evidence comes from one synthetic pull request in
-one repository and does not yet show repeated demand across real engineering
-contexts. The review/discussion cluster is a candidate for further dogfood, not
-a tool proposal. Mutating reviews, comments, and merges remain intentional
-escape hatches and non-goals for this read-only slice.
+Step 4 records candidate gaps; it is neither a veto nor a numerical threshold
+for product evolution. Product direction selects which future operations or
+extensions Forge should pursue, informed by this evidence and other product
+context. The description gap was selected and closed within the existing
+operation. Commit provenance and review/discussion remain observations, while
+reviews, comments, and their mutations remain current-slice non-goals. This PR
+adds no further semantic operation.
