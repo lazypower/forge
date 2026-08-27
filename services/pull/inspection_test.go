@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"gitea.dev/models/db"
 	git_model "gitea.dev/models/git"
@@ -41,6 +42,7 @@ func TestValidatePullRequestInspectionRequestBudget(t *testing.T) {
 	}{
 		{name: "default diff", request: InspectionRequest{Index: 1, Diff: &InspectionDiffRequest{}}},
 		{name: "checks and policy", request: InspectionRequest{Index: 1, Checks: true, Policy: true}},
+		{name: "description reserve with default selections", request: InspectionRequest{Index: 1, ChangedFiles: &InspectionPageRequest{Limit: 1}, Checks: true, Policy: true}},
 		{name: "large line in narrow page", request: InspectionRequest{Index: 1, Diff: &InspectionDiffRequest{FileLimit: 1, LinesPerFile: 1, MaxLineCharacters: MaxPullRequestInspectionLineBytes}}},
 		{name: "unsafe maximum diff", request: InspectionRequest{Index: 1, Diff: &InspectionDiffRequest{
 			FileLimit: MaxPullRequestInspectionDiffFiles, LinesPerFile: MaxPullRequestInspectionDiffLines, MaxLineCharacters: MaxPullRequestInspectionLineBytes,
@@ -55,6 +57,37 @@ func TestValidatePullRequestInspectionRequestBudget(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestPullRequestInspectionMetadataDescription(t *testing.T) {
+	tests := []struct {
+		name          string
+		description   string
+		want          string
+		wantTruncated bool
+	}{
+		{name: "absent"},
+		{name: "short raw markdown", description: "# Heading\n\n<script>raw</script>", want: "# Heading\n\n<script>raw</script>"},
+		{name: "short multibyte", description: "Résumé 界", want: "Résumé 界"},
+		{
+			name: "oversized", description: strings.Repeat("x", MaxPullRequestInspectionDescriptionBytes+1),
+			want: strings.Repeat("x", MaxPullRequestInspectionDescriptionBytes), wantTruncated: true,
+		},
+		{
+			name: "multibyte boundary", description: strings.Repeat("a", MaxPullRequestInspectionDescriptionBytes-1) + "界tail",
+			want: strings.Repeat("a", MaxPullRequestInspectionDescriptionBytes-1), wantTruncated: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := pullRequestInspectionMetadata(&issues_model.PullRequest{Issue: &issues_model.Issue{Content: test.description}})
+
+			assert.Equal(t, test.want, metadata.Description)
+			assert.Equal(t, test.wantTruncated, metadata.DescriptionTruncated)
+			assert.True(t, utf8.ValidString(metadata.Description))
+			assert.LessOrEqual(t, len(metadata.Description), MaxPullRequestInspectionDescriptionBytes)
 		})
 	}
 }

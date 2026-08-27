@@ -34,17 +34,18 @@ import (
 )
 
 const (
-	DefaultPullRequestInspectionFileLimit = 25
-	MaxPullRequestInspectionFileLimit     = 100
-	DefaultPullRequestInspectionDiffFiles = 10
-	MaxPullRequestInspectionDiffFiles     = 25
-	DefaultPullRequestInspectionDiffLines = 250
-	MaxPullRequestInspectionDiffLines     = 1000
-	DefaultPullRequestInspectionLineBytes = 128
-	MaxPullRequestInspectionLineBytes     = 10_000
-	MaxPullRequestInspectionStatuses      = 100
-	MaxPullRequestInspectionStatusText    = 2_000
-	MaxPullRequestInspectionTitleBytes    = 255
+	DefaultPullRequestInspectionFileLimit    = 25
+	MaxPullRequestInspectionFileLimit        = 100
+	DefaultPullRequestInspectionDiffFiles    = 10
+	MaxPullRequestInspectionDiffFiles        = 25
+	DefaultPullRequestInspectionDiffLines    = 250
+	MaxPullRequestInspectionDiffLines        = 1000
+	DefaultPullRequestInspectionLineBytes    = 128
+	MaxPullRequestInspectionLineBytes        = 10_000
+	MaxPullRequestInspectionStatuses         = 100
+	MaxPullRequestInspectionStatusText       = 2_000
+	MaxPullRequestInspectionTitleBytes       = 255
+	MaxPullRequestInspectionDescriptionBytes = 32 << 10
 	// MaxPullRequestInspectionResponseBytes includes the structured document and small semantic MCP result envelope, but not JSON-RPC or HTTP framing.
 	MaxPullRequestInspectionResponseBytes = 1 << 20
 	// MaxPullRequestInspectionDocumentBytes reserves response capacity for that envelope.
@@ -110,19 +111,21 @@ type InspectionRepository struct {
 }
 
 type InspectionMetadata struct {
-	ID         int64
-	Index      int64
-	Title      string
-	Author     string
-	State      string
-	IsDraft    bool
-	IsLocked   bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	ClosedAt   *time.Time
-	MergedAt   *time.Time
-	BaseBranch string
-	HeadBranch string
+	ID                   int64
+	Index                int64
+	Title                string
+	Description          string
+	DescriptionTruncated bool
+	Author               string
+	State                string
+	IsDraft              bool
+	IsLocked             bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ClosedAt             *time.Time
+	MergedAt             *time.Time
+	BaseBranch           string
+	HeadBranch           string
 }
 
 type InspectionRevisions struct {
@@ -703,7 +706,7 @@ func validatePullRequestInspectionRequest(req InspectionRequest) error {
 			return fmt.Errorf("diff: %w", ErrPullRequestInspectionLimit)
 		}
 	}
-	budget := int64(pullRequestInspectionBaseBudgetBytes)
+	budget := int64(pullRequestInspectionBaseBudgetBytes + MaxPullRequestInspectionDescriptionBytes)
 	if req.ChangedFiles != nil {
 		limit := req.ChangedFiles.Limit
 		if limit == 0 {
@@ -763,8 +766,10 @@ func pullRequestInspectionMetadata(pr *issues_model.PullRequest) InspectionMetad
 		state = "closed"
 	}
 	title, _ := truncatePullRequestInspectionText(pr.Issue.Title, MaxPullRequestInspectionTitleBytes)
+	description, descriptionTruncated := truncatePullRequestInspectionText(pr.Issue.Content, MaxPullRequestInspectionDescriptionBytes)
 	metadata := InspectionMetadata{
-		ID: pr.ID, Index: pr.Index, Title: title, State: state, IsDraft: issues_model.HasWorkInProgressPrefix(pr.Issue.Title), IsLocked: pr.Issue.IsLocked,
+		ID: pr.ID, Index: pr.Index, Title: title, Description: description, DescriptionTruncated: descriptionTruncated,
+		State: state, IsDraft: issues_model.HasWorkInProgressPrefix(pr.Issue.Title), IsLocked: pr.Issue.IsLocked,
 		CreatedAt: pr.Issue.CreatedUnix.AsTime(), UpdatedAt: pr.Issue.UpdatedUnix.AsTime(), BaseBranch: pr.BaseBranch, HeadBranch: pr.HeadBranch,
 	}
 	if pr.Issue.Poster != nil {

@@ -199,6 +199,12 @@ func TestMCPRealPATWithOfficialClient(t *testing.T) {
 	structured, ok := result.StructuredContent.(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "available", structured["status"])
+	inspection, ok := structured["inspection"].(map[string]any)
+	require.True(t, ok)
+	metadata, ok := inspection["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, issueBefore.Content, metadata["description"])
+	assert.Equal(t, false, metadata["descriptionTruncated"])
 
 	patAfter, err := auth_model.GetAccessTokenBySHA(t.Context(), token)
 	require.NoError(t, err)

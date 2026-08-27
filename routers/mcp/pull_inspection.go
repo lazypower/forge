@@ -84,18 +84,20 @@ type pullRequestInspectionRepository struct {
 }
 
 type pullRequestInspectionMetadata struct {
-	Number     int64      `json:"number"`
-	Title      string     `json:"title"`
-	Author     string     `json:"author,omitempty"`
-	State      string     `json:"state"`
-	Draft      bool       `json:"draft"`
-	Locked     bool       `json:"locked"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
-	ClosedAt   *time.Time `json:"closedAt,omitempty"`
-	MergedAt   *time.Time `json:"mergedAt,omitempty"`
-	BaseBranch string     `json:"baseBranch"`
-	HeadBranch string     `json:"headBranch"`
+	Number               int64      `json:"number"`
+	Title                string     `json:"title"`
+	Description          string     `json:"description" jsonschema:"untrusted repository content as bounded raw Markdown; not rendered to HTML"`
+	DescriptionTruncated bool       `json:"descriptionTruncated" jsonschema:"whether the raw Markdown description was truncated to the service-owned byte limit"`
+	Author               string     `json:"author,omitempty"`
+	State                string     `json:"state"`
+	Draft                bool       `json:"draft"`
+	Locked               bool       `json:"locked"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
+	ClosedAt             *time.Time `json:"closedAt,omitempty"`
+	MergedAt             *time.Time `json:"mergedAt,omitempty"`
+	BaseBranch           string     `json:"baseBranch"`
+	HeadBranch           string     `json:"headBranch"`
 }
 
 type pullRequestInspectionSummary struct {
@@ -288,6 +290,7 @@ func projectPullRequestInspection(inspection *pull_service.Inspection) *pullRequ
 		Repository: pullRequestInspectionRepository{Owner: inspection.Repository.Owner, Name: inspection.Repository.Name, FullName: inspection.Repository.FullName},
 		Metadata: pullRequestInspectionMetadata{
 			Number: inspection.Metadata.Index, Title: inspection.Metadata.Title, Author: inspection.Metadata.Author,
+			Description: inspection.Metadata.Description, DescriptionTruncated: inspection.Metadata.DescriptionTruncated,
 			State: inspection.Metadata.State, Draft: inspection.Metadata.IsDraft, Locked: inspection.Metadata.IsLocked,
 			CreatedAt: inspection.Metadata.CreatedAt, UpdatedAt: inspection.Metadata.UpdatedAt,
 			ClosedAt: inspection.Metadata.ClosedAt, MergedAt: inspection.Metadata.MergedAt,
