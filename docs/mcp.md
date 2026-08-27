@@ -67,3 +67,6 @@ The endpoint is stateless and cross-origin protected. The current experimental
 profile relies on an operator-managed reverse proxy as the request-rate-limit
 authority. Do not expose it publicly without an explicit, tested proxy rate
 limit.
+
+The [ADR 0002 Step 4 dogfood evidence](architecture/evidence/0002-native-semantic-mcp-dogfood.md)
+records the first official-client workflow and its fallback ledger.
