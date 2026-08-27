@@ -144,6 +144,7 @@ type AuthorizationForm struct {
 	RedirectURI  string
 	State        string
 	Scope        string
+	Resource     string
 	Nonce        string
 
 	// PKCE support
@@ -164,6 +165,7 @@ type GrantApplicationForm struct {
 	RedirectURI string
 	State       string
 	Scope       string
+	Resource    string
 	Nonce       string
 }
 
@@ -181,6 +183,7 @@ type AccessTokenForm struct {
 	RedirectURI  string `json:"redirect_uri"`
 	Code         string `json:"code"`
 	RefreshToken string `json:"refresh_token"`
+	Resource     string `json:"resource"`
 
 	// PKCE support
 	CodeVerifier string `json:"code_verifier"`

@@ -23,6 +23,7 @@ var ErrInvalidAccessToken = errors.New("invalid OAuth access token")
 // VerifiedAccessToken is an OAuth access token bound to its current Forge principal and grant.
 type VerifiedAccessToken struct {
 	Principal *user_model.User
+	Grant     *auth_model.OAuth2Grant
 	Scope     auth_model.AccessTokenScope
 	ExpiresAt time.Time
 	Resource  string
@@ -92,6 +93,7 @@ func verifyAccessToken(ctx context.Context, tokenValue, expectedResource string,
 
 	return &VerifiedAccessToken{
 		Principal: principal,
+		Grant:     grant,
 		Scope:     GrantAdditionalScopes(grant.Scope),
 		ExpiresAt: token.ExpiresAt.Time,
 		Resource:  resource,
