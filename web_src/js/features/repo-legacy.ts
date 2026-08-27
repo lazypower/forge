@@ -18,6 +18,7 @@ import {initRepoNew} from './repo-new.ts';
 import {createApp} from 'vue';
 import RepoBranchTagSelector from '../components/RepoBranchTagSelector.vue';
 import {initRepoPullMergeBox, initRepoPullRequestUpdate} from './repo-issue-pull.ts';
+import {initRepoIssueTimelineRefresh} from './repo-issue-timeline.ts';
 
 function initRepoBranchTagSelector() {
   registerGlobalInitFunc('initRepoBranchTagSelector', async (elRoot: HTMLInputElement) => {
@@ -65,6 +66,7 @@ export function initRepository() {
     initRepoIssueTitleEdit();
     initRepoIssueWipToggle();
     initRepoIssueComments();
+    initRepoIssueTimelineRefresh();
 
     initRepoIssueReferenceIssue();
 
