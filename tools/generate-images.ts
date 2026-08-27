@@ -2,7 +2,11 @@
 import {initWasm, Resvg} from '@resvg/resvg-wasm';
 import {optimize} from 'svgo';
 import {readFile, writeFile} from 'node:fs/promises';
-import {argv, exit} from 'node:process';
+import {exit} from 'node:process';
+
+function embedPng(png: Buffer, size: number) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}"><image width="${size}" height="${size}" href="data:image/png;base64,${png.toString('base64')}"/></svg>`;
+}
 
 async function generate(svg: string, path: string, {size, bg}: {size: number, bg?: boolean}) {
   const outputFile = new URL(path, import.meta.url);
@@ -37,19 +41,19 @@ async function generate(svg: string, path: string, {size, bg}: {size: number, bg
 }
 
 async function main() {
-  const gitea = argv.slice(2).includes('gitea');
-  const logoSvg = await readFile(new URL('../assets/logo.svg', import.meta.url), 'utf8');
-  const faviconSvg = await readFile(new URL('../assets/favicon.svg', import.meta.url), 'utf8');
+  const logoPng = await readFile(new URL('../assets/logo.png', import.meta.url));
+  const faviconPng = await readFile(new URL('../assets/favicon.png', import.meta.url));
+  const logoSvg = embedPng(logoPng, 512);
+  const faviconSvg = embedPng(faviconPng, 180);
   await initWasm(await readFile(new URL(import.meta.resolve('@resvg/resvg-wasm/index_bg.wasm'))));
 
   await Promise.all([
     generate(logoSvg, '../public/assets/img/logo.svg', {size: 32}),
-    generate(logoSvg, '../public/assets/img/logo.png', {size: 512}),
+    writeFile(new URL('../public/assets/img/logo.png', import.meta.url), logoPng),
     generate(faviconSvg, '../public/assets/img/favicon.svg', {size: 32}),
-    generate(faviconSvg, '../public/assets/img/favicon.png', {size: 180}),
+    writeFile(new URL('../public/assets/img/favicon.png', import.meta.url), faviconPng),
     generate(logoSvg, '../public/assets/img/avatar_default.png', {size: 200}),
     generate(logoSvg, '../public/assets/img/apple-touch-icon.png', {size: 180, bg: true}),
-    gitea && generate(logoSvg, '../public/assets/img/gitea.svg', {size: 32}),
   ]);
 }
 
