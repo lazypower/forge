@@ -19,10 +19,38 @@ signal for Dependabot pull requests.
 The gate does not merge anything. It establishes the evidence that a later
 automerge mechanism can consume without duplicating dependency policy.
 
+Every verdict names the ecosystem and update class, the matched policy rule,
+the reason for the decision, the risk being controlled, the changed files, and
+the scrutiny required to clear a hold. The pull request title is displayed as
+context but is not trusted as policy input.
+
+The gate compares the current base with GitHub's proposed merge commit and runs
+candidate checks against that merged result. A dependency branch that predates
+new commits on `main` therefore does not inherit unrelated changes in its diff.
+
+## Policy map
+
+The branch rule comes from `.github/dependabot.yml`; the classifier in
+`tools/dependency-verdict.sh` is the executable authority for these decisions.
+
+| Dependabot rule | Classification | Result and reason |
+| --- | --- | --- |
+| `automerge-actions-patches` | Actions patch | Candidate only when every change is a SHA-pinned `uses:` substitution. |
+| `automerge-go-patches` | Direct Go patch | Candidate only when the merge changes `go.mod` and `go.sum`. |
+| `automerge-frontend-patches` | Direct npm patch | Candidate only when the merge changes `package.json` and `pnpm-lock.yaml`. |
+| `review-actions-minors` | Actions minor | Hold because runner behavior, runtimes, inputs, outputs, or permissions may change. |
+| `review-go-minors` | Direct Go minor | Hold because APIs, defaults, generated behavior, transitive dependencies, or platforms may change. |
+| `review-frontend-minors` | Direct npm minor | Hold because browser behavior, build output, plugin contracts, defaults, or transitive packages may change. |
+| `review-image-updates` | Container patch or minor | Hold because the operating-system graph, entrypoint, architecture support, or runtime behavior may change. |
+| Any ungrouped update | Unproven scope | Hold because its branch does not prove patch-only eligibility; this includes major and security-specific updates. |
+
+Any candidate that changes files beyond its allowed dependency surface becomes
+a hold, with the unexpected files named in the annotation and summary.
+
 ## Runner budget
 
-Every Dependabot pull request pays first for one checkout and a diff-only risk
-classification. Held updates stop there.
+Every Dependabot pull request pays first for one checkout, a sub-second policy
+self-test, and a diff-only risk classification. Held updates stop there.
 
 | Candidate | Checks that pay rent |
 | --- | --- |
