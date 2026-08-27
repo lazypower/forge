@@ -24,7 +24,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.10.0
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.37
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
 	github.com/aws/aws-sdk-go-v2/service/codecommit v1.34.4
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb
 	github.com/blevesearch/bleve/v2 v2.6.0
@@ -44,13 +44,13 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getkin/kin-openapi v0.140.0
 	github.com/gliderlabs/ssh v0.3.8
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/go-co-op/gocron/v2 v2.21.2
 	github.com/go-enry/go-enry/v2 v2.9.6
-	github.com/go-git/go-billy/v5 v5.9.1
-	github.com/go-git/go-git/v5 v5.19.2
-	github.com/go-ldap/ldap/v3 v3.4.14
+	github.com/go-git/go-billy/v5 v5.9.0
+	github.com/go-git/go-git/v5 v5.19.1
+	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/go-redsync/redsync/v4 v4.16.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/go-webauthn/webauthn v0.17.4
@@ -72,8 +72,8 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0
 	github.com/lib/pq v1.12.3
 	github.com/markbates/goth v1.82.0
-	github.com/mattn/go-isatty v0.0.24
-	github.com/mattn/go-sqlite3 v1.14.50
+	github.com/mattn/go-isatty v0.0.22
+	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/meilisearch/meilisearch-go v0.36.3
 	github.com/mholt/archives v0.1.5
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -89,31 +89,31 @@ require (
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rhysd/actionlint v1.7.12
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/sassoftware/go-rpmutils v0.4.0
 	github.com/sergi/go-diff v1.4.0
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.0
 	github.com/tstranex/u2f v1.0.0
-	github.com/ulikunitz/xz v0.5.16
+	github.com/ulikunitz/xz v0.5.15
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.10.0
 	github.com/wneessen/go-mail v0.7.3
 	github.com/yohcop/openid-go v1.0.1
-	github.com/yuin/goldmark v1.8.5
+	github.com/yuin/goldmark v1.8.2
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	gitlab.com/gitlab-org/api/client-go/v2 v2.42.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.5
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.53.0
 	golang.org/x/image v0.43.0
 	golang.org/x/mod v0.37.0
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.56.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.40.0
+	golang.org/x/sync v0.21.0
+	golang.org/x/sys v0.46.0
+	golang.org/x/text v0.38.0
 	google.golang.org/grpc v1.81.1
-	google.golang.org/protobuf v1.36.12
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/ini.v1 v1.67.3
 	modernc.org/sqlite v1.53.0
 	mvdan.cc/xurls/v2 v2.6.0
@@ -134,10 +134,10 @@ require (
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
-	github.com/aws/aws-sdk-go-v2 v1.43.7 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
-	github.com/aws/smithy-go v1.27.8 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.42.0 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.29 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.29 // indirect
+	github.com/aws/smithy-go v1.27.2 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.5 // indirect
@@ -182,7 +182,7 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/git-lfs/pktline v0.0.0-20230103162542-ca444d533ef1 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-openapi/jsonpointer v0.23.1 // indirect
@@ -269,7 +269,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
