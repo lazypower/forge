@@ -3,14 +3,14 @@ import type {ActionsStatus} from './gitea-actions.ts';
 import {svgParseOuterInner} from '../svg.ts';
 import {html, htmlRaw} from '../utils/html.ts';
 
-const {svgOuter, svgInnerHtml: giteaFaviconInner} = svgParseOuterInner('gitea-favicon');
+const {svgOuter, svgInnerHtml: forgeFaviconInner} = svgParseOuterInner('forge-favicon');
 const faviconViewBox = svgOuter.getAttribute('viewBox')!;
 const [, , faviconViewBoxWidth, faviconViewBoxHeight] = faviconViewBox.split(/\s+/).map(Number);
 
 // the status badge is rendered in the bottom-right corner, following GitHub Actions favicon proportions
 const badgeIconSize = 16;
 const badgeSizeRatio = 340 / 640;
-const badgeMargin = 6;
+const badgeMargin = faviconViewBoxWidth * 6 / 640;
 const badgeDrawSize = faviconViewBoxWidth * badgeSizeRatio;
 const badgeX = faviconViewBoxWidth - badgeDrawSize - badgeMargin;
 const badgeY = faviconViewBoxHeight - badgeDrawSize - badgeMargin;
@@ -52,7 +52,7 @@ function buildStatusIconMarkup(status: ActionsStatus): string {
 }
 
 export function buildStatusFaviconSvg(status: ActionsStatus): string {
-  return html`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${faviconViewBox}">${htmlRaw(giteaFaviconInner)}${htmlRaw(buildStatusIconMarkup(status))}</svg>`;
+  return html`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${faviconViewBox}">${htmlRaw(forgeFaviconInner)}${htmlRaw(buildStatusIconMarkup(status))}</svg>`;
 }
 
 function buildStatusFaviconDataUrl(status: ActionsStatus): string {
