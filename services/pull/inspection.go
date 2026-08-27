@@ -40,10 +40,21 @@ const (
 	MaxPullRequestInspectionDiffFiles     = 25
 	DefaultPullRequestInspectionDiffLines = 250
 	MaxPullRequestInspectionDiffLines     = 1000
+	DefaultPullRequestInspectionLineBytes = 128
 	MaxPullRequestInspectionLineBytes     = 10_000
 	MaxPullRequestInspectionStatuses      = 100
 	MaxPullRequestInspectionStatusText    = 2_000
 	MaxPullRequestInspectionTitleBytes    = 255
+	// MaxPullRequestInspectionResponseBytes includes the structured document and small semantic MCP result envelope, but not JSON-RPC or HTTP framing.
+	MaxPullRequestInspectionResponseBytes = 1 << 20
+	// MaxPullRequestInspectionDocumentBytes reserves response capacity for that envelope.
+	MaxPullRequestInspectionDocumentBytes = 3 << 18
+
+	pullRequestInspectionBaseBudgetBytes     = 32 << 10
+	pullRequestInspectionFileBudgetBytes     = 4 << 10
+	pullRequestInspectionDiffLineBudgetBytes = 64
+	pullRequestInspectionCheckBudgetBytes    = 3*MaxPullRequestInspectionStatusText + 256
+	pullRequestInspectionPolicyBudgetBytes   = 64 << 10
 
 	pullRequestInspectionCursorVersion = 1
 )
@@ -382,7 +393,23 @@ func inspectPermittedPullRequest(ctx context.Context, doer *user_model.User, rep
 	if !req.Checks {
 		result.Checks = nil
 	}
+	if err := ValidatePullRequestInspectionDocument(result); err != nil {
+		return nil, err
+	}
 	return result, inspectionErr
+}
+
+// ValidatePullRequestInspectionDocument enforces the product-owned structured
+// document bound before a transport adds its small semantic-result envelope.
+func ValidatePullRequestInspectionDocument(document any) error {
+	output, err := json.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("marshal pull request inspection: %w", err)
+	}
+	if len(output) > MaxPullRequestInspectionDocumentBytes {
+		return fmt.Errorf("output: %w", ErrPullRequestInspectionLimit)
+	}
+	return nil
 }
 
 func resolvePullRequestInspectionRevisions(ctx context.Context, pr *issues_model.PullRequest, baseGitRepo *git.Repository, resolveLiveSource, includeCommits bool) (*pullRequestRevisionInspection, error) {
@@ -624,7 +651,7 @@ func inspectPullRequestDiff(ctx context.Context, repo *repo_model.Repository, pr
 	}
 	maxLineCharacters := page.MaxLineCharacters
 	if maxLineCharacters == 0 {
-		maxLineCharacters = MaxPullRequestInspectionLineBytes
+		maxLineCharacters = DefaultPullRequestInspectionLineBytes
 	}
 	skipTo, err := decodePullRequestInspectionCursor(page.Cursor, "diff", repo.ID, pr.ID, revisions)
 	if err != nil {
@@ -676,6 +703,55 @@ func validatePullRequestInspectionRequest(req InspectionRequest) error {
 			return fmt.Errorf("diff: %w", ErrPullRequestInspectionLimit)
 		}
 	}
+	budget := int64(pullRequestInspectionBaseBudgetBytes)
+	if req.ChangedFiles != nil {
+		limit := req.ChangedFiles.Limit
+		if limit == 0 {
+			limit = DefaultPullRequestInspectionFileLimit
+		}
+		if err := reservePullRequestInspectionBudget(&budget, int64(limit), pullRequestInspectionFileBudgetBytes); err != nil {
+			return fmt.Errorf("changed files: %w", err)
+		}
+	}
+	if req.Diff != nil {
+		fileLimit := req.Diff.FileLimit
+		if fileLimit == 0 {
+			fileLimit = DefaultPullRequestInspectionDiffFiles
+		}
+		linesPerFile := req.Diff.LinesPerFile
+		if linesPerFile == 0 {
+			linesPerFile = DefaultPullRequestInspectionDiffLines
+		}
+		maxLineCharacters := req.Diff.MaxLineCharacters
+		if maxLineCharacters == 0 {
+			maxLineCharacters = DefaultPullRequestInspectionLineBytes
+		}
+		if err := reservePullRequestInspectionBudget(&budget, int64(fileLimit), pullRequestInspectionFileBudgetBytes); err != nil {
+			return fmt.Errorf("diff files: %w", err)
+		}
+		if err := reservePullRequestInspectionBudget(&budget, int64(fileLimit)*int64(linesPerFile), int64(maxLineCharacters+pullRequestInspectionDiffLineBudgetBytes)); err != nil {
+			return fmt.Errorf("diff content: %w", err)
+		}
+	}
+	if req.Checks || req.Policy {
+		if err := reservePullRequestInspectionBudget(&budget, MaxPullRequestInspectionStatuses, pullRequestInspectionCheckBudgetBytes); err != nil {
+			return fmt.Errorf("checks: %w", err)
+		}
+	}
+	if req.Policy {
+		if err := reservePullRequestInspectionBudget(&budget, 1, pullRequestInspectionPolicyBudgetBytes); err != nil {
+			return fmt.Errorf("policy: %w", err)
+		}
+	}
+	return nil
+}
+
+func reservePullRequestInspectionBudget(used *int64, count, bytesEach int64) error {
+	amount := count * bytesEach
+	if amount > MaxPullRequestInspectionDocumentBytes-*used {
+		return ErrPullRequestInspectionLimit
+	}
+	*used += amount
 	return nil
 }
 

@@ -11,8 +11,11 @@ import (
 	"testing"
 	"time"
 
+	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/setting"
+	pull_service "gitea.dev/services/pull"
 
+	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +25,28 @@ const (
 	testProtocolVersion = "2026-07-28"
 	testDiscoverBody    = `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}`
 )
+
+type testAuthorizationTransport struct {
+	base http.RoundTripper
+}
+
+func (transport testAuthorizationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	request := req.Clone(req.Context())
+	request.Header.Set("Authorization", "Bearer valid")
+	return transport.base.RoundTrip(request)
+}
+
+func testAuthenticatedEndpoint(server *mcpsdk.Server, maxRequestBodyBytes int64) http.Handler {
+	verifier := func(context.Context, string, *http.Request) (*mcpauth.TokenInfo, error) {
+		return &mcpauth.TokenInfo{Scopes: []string{string(readRepositoryScope)}}, nil
+	}
+	return newAuthenticatedEndpoint(server, maxRequestBodyBytes, verifier)
+}
+
+func authorizeTestRequest(req *http.Request) *http.Request {
+	req.Header.Set("Authorization", "Bearer valid")
+	return req
+}
 
 func newDiscoverRequest(ctx context.Context, t *testing.T, body string) *http.Request {
 	t.Helper()
@@ -39,13 +64,22 @@ func TestEndpointDiscovery(t *testing.T) {
 	setting.AppVer = "compatibility-spike"
 	defer func() { setting.AppVer = originalVersion }()
 
-	httpServer := httptest.NewServer(NewEndpoint())
+	tool := newPullRequestInspectionTool(1, time.Second,
+		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
+			return nil, pull_service.ErrPullRequestInspectionUnavailable
+		},
+		func(context.Context) (*user_model.User, error) { return &user_model.User{ID: 1, IsActive: true}, nil },
+	)
+	httpServer := httptest.NewServer(testAuthenticatedEndpoint(newServer(tool), 1024))
 	defer httpServer.Close()
 
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	session, err := client.Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	session, err := client.Connect(ctx, &mcpsdk.StreamableClientTransport{
+		Endpoint:   httpServer.URL,
+		HTTPClient: &http.Client{Transport: testAuthorizationTransport{base: http.DefaultTransport}},
+	}, nil)
 	require.NoError(t, err)
 	defer session.Close()
 
@@ -54,11 +88,14 @@ func TestEndpointDiscovery(t *testing.T) {
 	require.NotNil(t, result.ServerInfo)
 	assert.Equal(t, "forge", result.ServerInfo.Name)
 	assert.Equal(t, "compatibility-spike", result.ServerInfo.Version)
-	assert.Nil(t, result.Capabilities.Tools)
+	require.NotNil(t, result.Capabilities.Tools)
 
 	tools, err := session.ListTools(ctx, nil)
 	require.NoError(t, err)
-	assert.Empty(t, tools.Tools)
+	require.Len(t, tools.Tools, 1)
+	assert.Equal(t, pullRequestInspectToolName, tools.Tools[0].Name)
+	require.NotNil(t, tools.Tools[0].Annotations)
+	assert.True(t, tools.Tools[0].Annotations.ReadOnlyHint)
 }
 
 func TestEndpointHTTPRules(t *testing.T) {
@@ -131,11 +168,25 @@ func TestEndpointHTTPRules(t *testing.T) {
 			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "forge", Version: "test"}, nil)
 			resp := httptest.NewRecorder()
 
-			newEndpoint(server, test.bodyLimit).ServeHTTP(resp, test.request(t))
+			testAuthenticatedEndpoint(server, test.bodyLimit).ServeHTTP(resp, authorizeTestRequest(test.request(t)))
 
 			assert.Equal(t, test.wantStatus, resp.Code)
 			assert.Equal(t, test.wantAllow, resp.Header().Get("Allow"))
 		})
+	}
+}
+
+func TestEndpointAuthenticatesBeforeTransport(t *testing.T) {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "forge", Version: "test"}, nil)
+	endpoint := testAuthenticatedEndpoint(server, 1)
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "https://forge.example/mcp", nil),
+		newDiscoverRequest(t.Context(), t, testDiscoverBody),
+	} {
+		resp := httptest.NewRecorder()
+		endpoint.ServeHTTP(resp, req)
+		assert.Equal(t, http.StatusUnauthorized, resp.Code)
+		assert.Equal(t, "invalid bearer token\n", resp.Body.String())
 	}
 }
 
@@ -151,9 +202,9 @@ func TestEndpointPropagatesRequestCancellation(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	})
-	endpoint := newEndpoint(server, 1024)
+	endpoint := testAuthenticatedEndpoint(server, 1024)
 	ctx, cancel := context.WithCancel(t.Context())
-	req := newDiscoverRequest(ctx, t, testDiscoverBody)
+	req := authorizeTestRequest(newDiscoverRequest(ctx, t, testDiscoverBody))
 	done := make(chan struct{})
 	resp := httptest.NewRecorder()
 	go func() {

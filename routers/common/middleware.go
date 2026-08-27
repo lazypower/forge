@@ -16,6 +16,7 @@ import (
 	"gitea.dev/modules/reqctx"
 	"gitea.dev/modules/setting"
 	"gitea.dev/modules/web/routing"
+	mcp_router "gitea.dev/routers/mcp"
 	"gitea.dev/services/context"
 
 	"gitea.com/go-chi/session"
@@ -26,6 +27,7 @@ import (
 // ProtocolMiddlewares returns HTTP protocol related middlewares, and it provides a global panic recovery
 func ProtocolMiddlewares() (handlers []any) {
 	// the order is important
+	handlers = append(handlers, mcp_router.QueryCredentialBoundary)
 	handlers = append(handlers, ChiRoutePathHandler())   // make sure chi has correct paths
 	handlers = append(handlers, RequestContextHandler()) //	prepare the context and panic recovery
 	handlers = append(handlers, SecurityHeadersHandler())

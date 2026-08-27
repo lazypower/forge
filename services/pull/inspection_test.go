@@ -26,6 +26,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidatePullRequestInspectionDocument(t *testing.T) {
+	assert.NoError(t, ValidatePullRequestInspectionDocument(&Inspection{Metadata: InspectionMetadata{Title: "bounded"}}))
+	assert.ErrorIs(t, ValidatePullRequestInspectionDocument(&Inspection{
+		Diff: &InspectionDiffPage{Files: []InspectionDiffFile{{Sections: []InspectionDiffSection{{Lines: []InspectionDiffLine{{Content: strings.Repeat("x", MaxPullRequestInspectionDocumentBytes)}}}}}}},
+	}), ErrPullRequestInspectionLimit)
+}
+
+func TestValidatePullRequestInspectionRequestBudget(t *testing.T) {
+	tests := []struct {
+		name    string
+		request InspectionRequest
+		wantErr bool
+	}{
+		{name: "default diff", request: InspectionRequest{Index: 1, Diff: &InspectionDiffRequest{}}},
+		{name: "checks and policy", request: InspectionRequest{Index: 1, Checks: true, Policy: true}},
+		{name: "large line in narrow page", request: InspectionRequest{Index: 1, Diff: &InspectionDiffRequest{FileLimit: 1, LinesPerFile: 1, MaxLineCharacters: MaxPullRequestInspectionLineBytes}}},
+		{name: "unsafe maximum diff", request: InspectionRequest{Index: 1, Diff: &InspectionDiffRequest{
+			FileLimit: MaxPullRequestInspectionDiffFiles, LinesPerFile: MaxPullRequestInspectionDiffLines, MaxLineCharacters: MaxPullRequestInspectionLineBytes,
+		}}, wantErr: true},
+		{name: "unsafe combined selections", request: InspectionRequest{Index: 1, Checks: true, Diff: &InspectionDiffRequest{}}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePullRequestInspectionRequest(test.request)
+			if test.wantErr {
+				assert.ErrorIs(t, err, ErrPullRequestInspectionLimit)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestInspectPullRequestUnavailableDoesNotDisclose(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 
