@@ -112,16 +112,20 @@ func NewJwtRegisteredClaimsFromUser(clientID string, grantUserID int64, exp *jwt
 	// to retrieve the configuration information. This MUST also be identical to the "iss" Claim value in ID Tokens issued from this Issuer.
 	// * https://accounts.google.com/.well-known/openid-configuration
 	// * https://github.com/login/oauth/.well-known/openid-configuration
-	issuer := setting.OAuth2.JWTClaimIssuer
-	if issuer == "" {
-		issuer = strings.TrimSuffix(setting.AppURL, "/")
-	}
 	return jwt.RegisteredClaims{
-		Issuer:    issuer,
+		Issuer:    TokenIssuer(),
 		Audience:  []string{clientID},
 		Subject:   strconv.FormatInt(grantUserID, 10),
 		ExpiresAt: exp,
 	}
+}
+
+// TokenIssuer returns the configured Forge OAuth token issuer.
+func TokenIssuer() string {
+	if setting.OAuth2.JWTClaimIssuer != "" {
+		return setting.OAuth2.JWTClaimIssuer
+	}
+	return strings.TrimSuffix(setting.AppURL, "/")
 }
 
 func NewAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {

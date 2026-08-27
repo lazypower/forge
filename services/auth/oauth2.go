@@ -9,7 +9,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	actions_model "gitea.dev/models/actions"
 	auth_model "gitea.dev/models/auth"
@@ -27,33 +26,28 @@ var _ Method = &OAuth2{}
 
 // GetOAuthAccessTokenScopeAndUserID returns access token scope and user id
 func GetOAuthAccessTokenScopeAndUserID(ctx context.Context, accessToken string) (auth_model.AccessTokenScope, int64) {
-	var accessTokenScope auth_model.AccessTokenScope
+	verified := verifyOAuthAccessToken(ctx, accessToken)
+	if verified == nil {
+		return "", 0
+	}
+	return verified.Scope, verified.Principal.ID
+}
+
+func verifyOAuthAccessToken(ctx context.Context, accessToken string) *oauth2_provider.VerifiedAccessToken {
 	if !setting.OAuth2.Enabled {
-		return accessTokenScope, 0
+		return nil
 	}
 
 	// JWT tokens require a ".", if the token isn't like that, return early
 	if !strings.Contains(accessToken, ".") {
-		return accessTokenScope, 0
+		return nil
 	}
 
-	token, err := oauth2_provider.ParseToken(accessToken, oauth2_provider.DefaultSigningKey)
+	verified, err := oauth2_provider.VerifyAccessToken(ctx, accessToken, "", oauth2_provider.DefaultSigningKey)
 	if err != nil {
-		log.Trace("oauth2.ParseToken: %v", err)
-		return accessTokenScope, 0
+		return nil
 	}
-	var grant *auth_model.OAuth2Grant
-	if grant, err = auth_model.GetOAuth2GrantByID(ctx, token.GrantID); err != nil || grant == nil {
-		return accessTokenScope, 0
-	}
-	if token.Kind != oauth2_provider.KindAccessToken {
-		return accessTokenScope, 0
-	}
-	if token.ExpiresAt.Before(time.Now()) || token.IssuedAt.After(time.Now()) {
-		return accessTokenScope, 0
-	}
-	accessTokenScope = oauth2_provider.GrantAdditionalScopes(grant.Scope)
-	return accessTokenScope, grant.UserID
+	return verified
 }
 
 // CheckTaskIsRunning verifies that the TaskID corresponds to a running task
@@ -119,12 +113,13 @@ func (o *OAuth2) userFromToken(ctx context.Context, tokenSHA string, store DataS
 		}
 
 		// Otherwise, check if this is an OAuth access token
-		accessTokenScope, uid := GetOAuthAccessTokenScopeAndUserID(ctx, tokenSHA)
-		if uid != 0 {
+		verified := verifyOAuthAccessToken(ctx, tokenSHA)
+		if verified != nil {
 			store.GetData()["IsApiToken"] = true
-			store.GetData()["ApiTokenScope"] = accessTokenScope
+			store.GetData()["ApiTokenScope"] = verified.Scope
+			return verified.Principal, nil
 		}
-		return user_model.GetUserByID(ctx, uid)
+		return user_model.GetUserByID(ctx, 0)
 	}
 	t, err := auth_model.GetAccessTokenBySHA(ctx, tokenSHA)
 	if err != nil {
