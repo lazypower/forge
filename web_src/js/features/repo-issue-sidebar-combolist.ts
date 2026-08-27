@@ -4,37 +4,7 @@ import {showErrorToast} from '../modules/toast.ts';
 import {addDelegatedEventListener, queryElemChildren, queryElems, toggleElem} from '../utils/dom.ts';
 import {errorMessage} from '../modules/errors.ts';
 import {parseDom} from '../utils.ts';
-
-export function syncIssueMainContentTimelineItems(oldMainContent: Element, newMainContent: Element) {
-  // find the end of comments timeline by "id=timeline-comments-end" in current main content, and insert new items before it
-  const timelineEnd = oldMainContent.querySelector('.timeline-item[id="timeline-comments-end"]');
-  if (!timelineEnd) return;
-
-  const oldTimelineItems = oldMainContent.querySelectorAll(`.timeline-item[id]`);
-  for (const oldItem of oldTimelineItems) {
-    const oldItemId = oldItem.getAttribute('id')!;
-    const newItem = newMainContent.querySelector(`.timeline-item[id="${CSS.escape(oldItemId)}"]`);
-    if (oldItem.classList.contains('event') && !newItem) {
-      // if the item is not in new content, we want to remove it from old content only if it's an event item, otherwise we keep it
-      oldItem.remove();
-    }
-  }
-
-  const newTimelineItems = newMainContent.querySelectorAll(`.timeline-item[id]`);
-  for (const newItem of newTimelineItems) {
-    const newItemId = newItem.getAttribute('id')!;
-    const oldItem = oldMainContent.querySelector(`.timeline-item[id="${CSS.escape(newItemId)}"]`);
-    if (oldItem) {
-      if (oldItem.classList.contains('event')) {
-        // for event item (e.g.: "add & remove labels"), we want to replace the existing one if exists
-        // because the label operations can be merged into one event item, so the new item might be different from the old one
-        oldItem.replaceWith(newItem);
-      }
-      continue;
-    }
-    timelineEnd.insertAdjacentElement('beforebegin', newItem);
-  }
-}
+import {syncIssueTimelineItems} from './repo-issue-timeline.ts';
 
 export class IssueSidebarComboList {
   updateUrl: string;
@@ -94,7 +64,7 @@ export class IssueSidebarComboList {
 
     // for the main content (left side), at the moment we only support handling known timeline items
     const newMainContent = doc.querySelector('.issue-content-left')!;
-    syncIssueMainContentTimelineItems(this.elIssueMainContent, newMainContent);
+    syncIssueTimelineItems(this.elIssueMainContent, newMainContent);
   }
 
   async sendRequestToBackend(changedValues: Array<string>): Promise<Response | null> {
