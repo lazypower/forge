@@ -5,6 +5,7 @@ package setting
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,8 @@ func TestLoadMCPFrom(t *testing.T) {
 
 		assert.False(t, MCP.Enabled)
 		assert.EqualValues(t, defaultMCPMaxRequestBodyBytes, MCP.MaxRequestBodyBytes)
+		assert.Equal(t, defaultMCPMaxInFlightRequests, MCP.MaxInFlightRequests)
+		assert.Equal(t, defaultMCPExecutionTimeout, MCP.ExecutionTimeout)
 	})
 
 	t.Run("configured", func(t *testing.T) {
@@ -37,6 +40,8 @@ func TestLoadMCPFrom(t *testing.T) {
 [mcp]
 ENABLED = true
 MAX_REQUEST_BODY_BYTES = 2048
+MAX_IN_FLIGHT_REQUESTS = 4
+EXECUTION_TIMEOUT = 15s
 `)
 		require.NoError(t, err)
 
@@ -44,6 +49,8 @@ MAX_REQUEST_BODY_BYTES = 2048
 
 		assert.True(t, MCP.Enabled)
 		assert.EqualValues(t, 2048, MCP.MaxRequestBodyBytes)
+		assert.Equal(t, 4, MCP.MaxInFlightRequests)
+		assert.Equal(t, 15*time.Second, MCP.ExecutionTimeout)
 	})
 
 	t.Run("non-positive body limit", func(t *testing.T) {
@@ -52,12 +59,16 @@ MAX_REQUEST_BODY_BYTES = 2048
 		cfg, err := NewConfigProviderFromData(`
 [mcp]
 MAX_REQUEST_BODY_BYTES = -1
+MAX_IN_FLIGHT_REQUESTS = -1
+EXECUTION_TIMEOUT = -1s
 `)
 		require.NoError(t, err)
 
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.EqualValues(t, defaultMCPMaxRequestBodyBytes, MCP.MaxRequestBodyBytes)
+		assert.Equal(t, defaultMCPMaxInFlightRequests, MCP.MaxInFlightRequests)
+		assert.Equal(t, defaultMCPExecutionTimeout, MCP.ExecutionTimeout)
 	})
 
 	t.Run("requires HTTPS", func(t *testing.T) {

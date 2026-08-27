@@ -114,6 +114,16 @@ func TestEndpointHTTPRules(t *testing.T) {
 			bodyLimit:  1024,
 			wantStatus: http.StatusForbidden,
 		},
+		{
+			name: "cross-site fetch metadata",
+			request: func(t *testing.T) *http.Request {
+				req := newDiscoverRequest(t.Context(), t, testDiscoverBody)
+				req.Header.Set("Sec-Fetch-Site", "cross-site")
+				return req
+			},
+			bodyLimit:  1024,
+			wantStatus: http.StatusForbidden,
+		},
 	}
 
 	for _, test := range tests {
