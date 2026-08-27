@@ -36,9 +36,11 @@ just push
 ```
 
 Ordinary pushes and pull requests are not release-certified and do not run this
-gate. Contributors and agents report the specific checks they ran. The full gate
-runs only when a human explicitly prepares a release, and GitHub repeats it for
-the tagged revision before publication.
+gate. Dependabot pull requests run the narrow, non-certifying dependency gate
+documented in `docs/dependency-updates.md`. Contributors and agents report the
+specific checks they ran. The full release gate runs only when a human explicitly
+prepares a release, and GitHub repeats it for the tagged revision before
+publication.
 
 `just status` prints the inherited lineage, current Forge revision, branch, image
 repository, and most recently verified revision.

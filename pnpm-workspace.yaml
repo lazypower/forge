@@ -1,7 +1,11 @@
 savePrefix: ''
 dedupePeerDependents: false
 updateNotifier: false
-minimumReleaseAge: 0
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  - material-icon-theme@5.36.1
+  - semver@6.3.1
 
 allowBuilds:
   '@scarf/scarf': false

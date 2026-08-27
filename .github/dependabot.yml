@@ -10,8 +10,12 @@ updates:
       timezone: Etc/UTC
     open-pull-requests-limit: 2
     groups:
-      actions:
+      automerge-actions-patches:
         patterns: ["*"]
+        update-types: [patch]
+      review-actions-minors:
+        patterns: ["*"]
+        update-types: [minor]
     cooldown:
       default-days: 7
 
@@ -26,9 +30,12 @@ updates:
     allow:
       - dependency-type: direct
     groups:
-      go-dependencies:
+      automerge-go-patches:
         patterns: ["*"]
-        update-types: [minor, patch]
+        update-types: [patch]
+      review-go-minors:
+        patterns: ["*"]
+        update-types: [minor]
     cooldown:
       default-days: 7
 
@@ -43,9 +50,12 @@ updates:
     allow:
       - dependency-type: direct
     groups:
-      frontend-dependencies:
+      automerge-frontend-patches:
         patterns: ["*"]
-        update-types: [minor, patch]
+        update-types: [patch]
+      review-frontend-minors:
+        patterns: ["*"]
+        update-types: [minor]
     cooldown:
       default-days: 7
 
@@ -58,7 +68,7 @@ updates:
       timezone: Etc/UTC
     open-pull-requests-limit: 2
     groups:
-      image-bases:
+      review-image-updates:
         patterns: ["*"]
         update-types: [minor, patch]
     cooldown:

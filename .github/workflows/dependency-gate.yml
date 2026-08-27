@@ -1,0 +1,111 @@
+name: dependency gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: dependency-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verdict:
+    name: dependency / merge signal
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == github.event.pull_request.head.repo.full_name &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the proposed dependency graph
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch the comparison revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: Classify update risk
+        id: dependency
+        env:
+          DEPENDENCY_PR_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: tools/dependency-verdict.sh "$BASE_SHA" "$HEAD_SHA"
+
+      - name: Require human review
+        if: steps.dependency.outputs.verdict != 'candidate'
+        env:
+          REASON: ${{ steps.dependency.outputs.reason }}
+        run: |
+          echo "::error title=Dependency review required::$REASON"
+          exit 1
+
+      - name: Enforce action pin policy
+        if: steps.dependency.outputs.plan == 'actions'
+        run: contrib/workload-identity/ci/check-workflows.sh
+
+      - name: Configure Go
+        if: steps.dependency.outputs.plan == 'go'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify Go graph
+        if: steps.dependency.outputs.plan == 'go'
+        run: |
+          go mod verify
+          go mod tidy -diff
+
+      - name: Compile Go production and unit-test surfaces
+        if: steps.dependency.outputs.plan == 'go'
+        run: make test-backend GOTEST_FLAGS="-run '^TestDependencyGateCompileOnly'"
+
+      - name: Configure Node and pnpm
+        if: steps.dependency.outputs.plan == 'npm'
+        uses: ./.github/actions/node-setup
+
+      - name: Reject new production advisories
+        if: steps.dependency.outputs.plan == 'npm'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base_dir=$(mktemp -d)
+          trap 'rm -rf "$base_dir"' 0
+          git archive "$BASE_SHA" -- package.json pnpm-lock.yaml pnpm-workspace.yaml | tar -x -C "$base_dir"
+          pnpm --dir "$base_dir" audit --prod --json >"$RUNNER_TEMP/base-audit.json" || true
+          pnpm audit --prod --json >"$RUNNER_TEMP/head-audit.json" || true
+          tools/dependency-advisories.sh "$RUNNER_TEMP/base-audit.json" "$RUNNER_TEMP/head-audit.json"
+
+      - name: Install frontend graph without lifecycle scripts
+        if: steps.dependency.outputs.plan == 'npm'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Validate frontend compatibility
+        if: steps.dependency.outputs.plan == 'npm'
+        run: |
+          make lint-js
+          make test-frontend
+          pnpm exec vite build
+
+      - name: Record automerge eligibility
+        if: steps.dependency.outputs.verdict == 'candidate'
+        env:
+          PLAN: ${{ steps.dependency.outputs.plan }}
+        run: |
+          {
+            echo
+            echo "### Merge signal"
+            echo
+            echo "✅ This \`$PLAN\` update satisfies the repository's low-risk dependency policy."
+            echo "No merge was performed; this check is the signal future automerge policy may consume."
+          } >>"$GITHUB_STEP_SUMMARY"
