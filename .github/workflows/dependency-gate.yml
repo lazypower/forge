@@ -21,32 +21,42 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out the proposed dependency graph
+      - name: Check out the proposed merge
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Fetch the comparison revision
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
 
+      - name: Test dependency policy
+        run: tools/dependency-verdict.test.sh
+
       - name: Classify update risk
         id: dependency
         env:
           DEPENDENCY_PR_REF: ${{ github.event.pull_request.head.ref }}
+          DEPENDENCY_PR_TITLE: ${{ github.event.pull_request.title }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: tools/dependency-verdict.sh "$BASE_SHA" "$HEAD_SHA"
+          PROPOSED_SHA: ${{ github.sha }}
+        run: tools/dependency-verdict.sh "$BASE_SHA" "$PROPOSED_SHA"
 
       - name: Require human review
         if: steps.dependency.outputs.verdict != 'candidate'
         env:
+          CHANGED_FILES: ${{ steps.dependency.outputs.changed_files }}
+          CLASSIFICATION: ${{ steps.dependency.outputs.classification }}
+          NEXT_STEP: ${{ steps.dependency.outputs.next_step }}
           REASON: ${{ steps.dependency.outputs.reason }}
+          RISK: ${{ steps.dependency.outputs.risk }}
+          RULE: ${{ steps.dependency.outputs.rule }}
         run: |
-          echo "::error title=Dependency review required::$REASON"
+          message="$REASON Matched rule: $RULE. Risk: $RISK"
+          message="$message Required scrutiny: $NEXT_STEP Changed files: $CHANGED_FILES"
+          echo "::error title=Dependency review required ($CLASSIFICATION)::$message"
           exit 1
 
       - name: Enforce action pin policy
