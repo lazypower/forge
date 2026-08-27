@@ -30,7 +30,6 @@ import (
 	"gitea.dev/modules/git"
 	"gitea.dev/modules/git/gitcmd"
 	"gitea.dev/modules/gitrepo"
-	"gitea.dev/modules/glob"
 	"gitea.dev/modules/graceful"
 	issue_template "gitea.dev/modules/issue/template"
 	"gitea.dev/modules/log"
@@ -333,6 +332,7 @@ type pullRequestViewInfo struct {
 	headTarget          string // for display purpose only
 
 	CompareInfo         git_service.CompareInfo
+	Inspection          *pull_service.Inspection
 	ProtectedBranchRule *git_model.ProtectedBranch
 	MergeBoxData        *pullMergeBoxData
 
@@ -369,29 +369,44 @@ func (prInfo *pullRequestViewInfo) prepareViewInfo(ctx *context.Context, issue *
 	}
 }
 
-func (prInfo *pullRequestViewInfo) prepareViewFillInfo(ctx *context.Context, baseRef git.RefName) {
-	prInfo.prepareViewFillCompareInfo(ctx, baseRef)
+func (prInfo *pullRequestViewInfo) prepareViewFillInfo(ctx *context.Context) {
+	prInfo.prepareViewFillCompareInfo(ctx)
 	if ctx.Written() {
 		return
 	}
 }
 
-func (prInfo *pullRequestViewInfo) prepareViewFillCompareInfo(ctx *context.Context, baseRef git.RefName) {
-	var err error
+func (prInfo *pullRequestViewInfo) prepareViewFillCompareInfo(ctx *context.Context) {
 	pull := prInfo.issue.PullRequest
-	prInfo.CompareInfo, err = git_service.GetCompareInfo(ctx, ctx.Repo.Repository, ctx.Repo.Repository, ctx.Repo.GitRepo, baseRef, git.RefName(pull.GetGitHeadRefName()), false, false)
-	if err != nil {
-		isKnownErrorForBroken := errors.Is(err, util.ErrNotExist) || gitcmd.IsStderr(err, gitcmd.StderrNotValidObjectName) || gitcmd.IsStderr(err, gitcmd.StderrUnknownRevisionOrPath)
-		if !isKnownErrorForBroken {
-			log.Error("GetCompareInfo: %v", err)
+	inspection, inspectionErr := pull_service.InspectPullRequest(ctx, ctx.Doer, pull_service.InspectionRequest{
+		Owner: ctx.Repo.Repository.OwnerName, Repository: ctx.Repo.Repository.Name, Index: pull.Index, Checks: true, Policy: true,
+	})
+	var compareErr error
+	if inspection != nil {
+		prInfo.Inspection = inspection
+		if pull.Flow == issues_model.PullRequestFlowAGit {
+			prInfo.HeadBranchCommitID = inspection.Revisions.InternalHead
+		} else {
+			prInfo.HeadBranchCommitID = inspection.Revisions.LiveSource
 		}
-		prInfo.IsPullRequestBroken = true
+		if !inspection.Revisions.TargetAvailable {
+			ctx.Data["BaseBranchNotExist"] = true
+		}
+		if inspection.Revisions.ComparisonBase != "" && inspection.Revisions.InternalHeadAvailable {
+			prInfo.CompareInfo, compareErr = git_service.GetCompareInfo(
+				ctx, ctx.Repo.Repository, ctx.Repo.Repository, ctx.Repo.GitRepo,
+				git.RefNameFromCommit(inspection.Revisions.ComparisonBase),
+				git.RefNameFromCommit(inspection.Revisions.InternalHead), false, false,
+			)
+		}
 	}
-
-	prInfo.HeadBranchCommitID, err = getViewPullHeadBranchCommitID(ctx, pull)
-	if err != nil {
-		if !errors.Is(err, util.ErrNotExist) {
-			log.Error("GetViewPullHeadBranchCommitID: %v", err)
+	if inspectionErr != nil {
+		log.Error("InspectPullRequest: %v", inspectionErr)
+	}
+	if inspection == nil || compareErr != nil {
+		isKnownErrorForBroken := errors.Is(compareErr, util.ErrNotExist) || gitcmd.IsStderr(compareErr, gitcmd.StderrNotValidObjectName) || gitcmd.IsStderr(compareErr, gitcmd.StderrUnknownRevisionOrPath)
+		if compareErr != nil && !isKnownErrorForBroken {
+			log.Error("GetCompareInfo: %v", compareErr)
 		}
 		prInfo.IsPullRequestBroken = true
 	}
@@ -414,32 +429,21 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxStatusCheckData(ctx *context.C
 
 	data := prInfo.MergeBoxData
 
-	var pbRequiredContexts []string
-	data.enableStatusCheck = prInfo.ProtectedBranchRule != nil && prInfo.ProtectedBranchRule.EnableStatusCheck
-	if prInfo.ProtectedBranchRule != nil {
-		pbRequiredContexts = prInfo.ProtectedBranchRule.StatusCheckContexts
-	}
+	policy := prInfo.Inspection.Policy
+	data.enableStatusCheck = policy != nil && policy.StatusChecksEnabled
 
 	statusCheckData := &pullCommitStatusCheckData{}
 	data.StatusCheckData = statusCheckData
 
-	commitStatuses, err := git_model.GetLatestCommitStatus(ctx, ctx.Repo.Repository.ID, prInfo.CompareInfo.HeadCommitID, db.ListOptionsAll)
+	commitStatuses, err := git_model.GetLatestCommitStatus(ctx, ctx.Repo.Repository.ID, headCommitID, db.ListOptionsAll)
 	if err != nil {
 		log.Error("GetLatestCommitStatus: %v", err)
 	}
-
-	// Effective required contexts = branch-protection contexts + required scoped workflow checks.
-	requiredContexts := pbRequiredContexts
-	if effective, err := pull_service.EffectiveRequiredContexts(ctx, ctx.Repo.Repository, prInfo.ProtectedBranchRule); err != nil {
-		log.Error("EffectiveRequiredContexts: %v", err)
-	} else {
-		requiredContexts = effective
-	}
-	data.hasRequiredStatusContexts = len(requiredContexts) > 0
-
 	if !ctx.Repo.Permission.CanRead(unit.TypeActions) {
 		git_model.CommitStatusesHideActionsURL(ctx, commitStatuses)
 	}
+	requiredContexts := policy.RequiredContexts
+	data.hasRequiredStatusContexts = len(requiredContexts) > 0
 	combinedCommitStatus := git_model.CalcCommitStatus(commitStatuses)
 	statusCheckData.ApproveLink = fmt.Sprintf("%s/actions/approve-all-checks?commit_id=%s", ctx.Repo.Repository.Link(), headCommitID)
 	statusCheckData.PullCommitStatuses = commitStatuses
@@ -464,40 +468,9 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxStatusCheckData(ctx *context.C
 		statusCheckData.CanApprove = ctx.Repo.Permission.CanWrite(unit.TypeActions)
 	}
 
-	var missingRequiredChecks []string
-	for _, requiredContext := range requiredContexts {
-		contextFound := false
-		matchesRequiredContext := createRequiredContextMatcher(requiredContext)
-		for _, presentStatus := range commitStatuses {
-			if matchesRequiredContext(presentStatus.Context) {
-				contextFound = true
-				break
-			}
-		}
-
-		if !contextFound {
-			missingRequiredChecks = append(missingRequiredChecks, requiredContext)
-		}
-	}
-	statusCheckData.MissingRequiredChecks = missingRequiredChecks
-
-	statusCheckData.IsContextRequired = func(context string) bool {
-		for _, c := range requiredContexts {
-			if c == context {
-				return true
-			}
-			if gp, err := glob.Compile(c); err != nil {
-				// All newly created status_check_contexts are checked to ensure they are valid glob expressions before being stored in the database.
-				// But some old status_check_context created before glob was introduced may be invalid glob expressions.
-				// So log the error here for debugging.
-				log.Error("compile glob %q: %v", c, err)
-			} else if gp.Match(context) {
-				return true
-			}
-		}
-		return false
-	}
-	statusCheckData.RequiredChecksState = pull_service.MergeRequiredContextsCommitStatus(commitStatuses, requiredContexts)
+	statusCheckData.MissingRequiredChecks = policy.MissingRequiredContexts
+	statusCheckData.IsContextRequired = policy.IsContextRequired
+	statusCheckData.RequiredChecksState = policy.RequiredChecksState
 
 	if data.enableStatusCheck || data.hasRequiredStatusContexts {
 		if statusCheckData.RequiredChecksState.IsError() || statusCheckData.RequiredChecksState.IsFailure() {
@@ -511,8 +484,7 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxStatusCheckData(ctx *context.C
 // prepareViewMergedPullInfo show meta information for a merged pull request view page
 func (prInfo *pullRequestViewInfo) prepareViewMergedPullInfo(ctx *context.Context) {
 	ctx.Data["HasMerged"] = true
-	baseCommit := GetMergedBaseCommitID(ctx, prInfo.issue)
-	prInfo.prepareViewFillInfo(ctx, git.RefName(baseCommit))
+	prInfo.prepareViewFillInfo(ctx)
 }
 
 type pullCommitStatusCheckData struct {
@@ -545,38 +517,9 @@ func (d *pullCommitStatusCheckData) CommitStatusCheckPrompt(locale translation.L
 	return locale.TrString("repo.pulls.status_checking")
 }
 
-func getViewPullHeadBranchCommitID(ctx *context.Context, pull *issues_model.PullRequest) (string, error) {
-	switch pull.Flow {
-	case issues_model.PullRequestFlowGithub:
-		if pull.HeadRepo == nil {
-			return "", util.ErrNotExist
-		}
-		headGitRepo, err := gitrepo.RepositoryFromRequestContextOrOpen(ctx, pull.HeadRepo)
-		if err != nil {
-			return "", err
-		}
-		return headGitRepo.GetRefCommitID(git.RefNameFromBranch(pull.HeadBranch).String())
-	case issues_model.PullRequestFlowAGit:
-		baseGitRepo, err := gitrepo.RepositoryFromRequestContextOrOpen(ctx, pull.BaseRepo)
-		if err != nil {
-			return "", err
-		}
-		return baseGitRepo.GetRefCommitID(pull.GetGitHeadRefName())
-	}
-	setting.PanicInDevOrTesting("invalid pull request flow type: %v", pull.Flow)
-	return "", util.ErrNotExist
-}
-
 func (prInfo *pullRequestViewInfo) prepareViewOpenPullInfo(ctx *context.Context) {
 	pull := prInfo.issue.PullRequest
-	if exist, _ := git_model.IsBranchExist(ctx, pull.BaseRepo.ID, pull.BaseBranch); !exist {
-		// if base branch doesn't exist, prepare from the merge base
-		ctx.Data["BaseBranchNotExist"] = true
-		prInfo.prepareViewFillInfo(ctx, git.RefName(pull.MergeBase))
-		return
-	}
-
-	prInfo.prepareViewFillInfo(ctx, git.RefNameFromBranch(pull.BaseBranch))
+	prInfo.prepareViewFillInfo(ctx)
 	if ctx.Written() {
 		return
 	}
@@ -592,18 +535,6 @@ func (prInfo *pullRequestViewInfo) prepareViewOpenPullInfo(ctx *context.Context)
 	if pull.IsWorkInProgress(ctx) {
 		ctx.Data["IsPullWorkInProgress"] = prInfo.workInProgressPrefix != ""
 		ctx.Data["WorkInProgressPrefix"] = prInfo.workInProgressPrefix
-	}
-}
-
-func createRequiredContextMatcher(requiredContext string) func(string) bool {
-	if gp, err := glob.Compile(requiredContext); err == nil {
-		return func(contextToCheck string) bool {
-			return gp.Match(contextToCheck)
-		}
-	}
-
-	return func(contextToCheck string) bool {
-		return requiredContext == contextToCheck
 	}
 }
 
