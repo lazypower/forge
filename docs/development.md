@@ -7,6 +7,7 @@ contribution workflow and review process, see [CONTRIBUTING.md](../CONTRIBUTING.
 
 Area-specific guidelines:
 
+- [Architecture decisions](architecture/decisions/README.md)
 - [Backend development guidelines](guidelines-backend.md)
 - [Frontend development guidelines](guidelines-frontend.md)
 - [Refactoring guidelines](guidelines-refactoring.md)
