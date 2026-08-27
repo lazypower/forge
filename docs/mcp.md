@@ -39,8 +39,10 @@ steps are not implemented by this profile.
 `pull_request.inspect` identifies one repository and pull request by owner,
 repository name, and pull request number. Optional bounded selections expose
 changed-file metadata, diff content, checks for the frozen revision, and merge
-policy. Repository enumeration, search, raw files and logs, comments, reviews,
-merges, and mutations are not available.
+policy. Metadata includes the repository-authored pull request description as
+untrusted raw Markdown with an explicit truncation flag; Forge does not render
+it to HTML. Repository enumeration, search, raw files and logs, comments,
+reviews, merges, and mutations are not available.
 
 The `[mcp]` settings `MAX_REQUEST_BODY_BYTES` (default one MiB),
 `MAX_IN_FLIGHT_REQUESTS` (default 8), and `EXECUTION_TIMEOUT` (default 30
@@ -62,6 +64,8 @@ individual maxima are 25 files, 1,000 lines per file, and 10,000 bytes per
 line, but combinations must also fit the service-owned request budget. Check
 projection is limited to 100 latest contexts, with context, description, and
 target URL text limited to 2,000 bytes each.
+Pull request descriptions are limited to 32 KiB and truncated on a valid UTF-8
+boundary when necessary.
 
 The endpoint is stateless and cross-origin protected. The current experimental
 profile relies on an operator-managed reverse proxy as the request-rate-limit

@@ -31,11 +31,14 @@ func TestPullRequestInspectionToolTypedHappyPath(t *testing.T) {
 		captured = request
 		return &pull_service.Inspection{
 			Repository: pull_service.InspectionRepository{ID: 99, Owner: "octo", Name: "forge", FullName: "octo/forge"},
-			Metadata:   pull_service.InspectionMetadata{ID: 101, Index: 7, Title: "Inspect me", Author: "pat", State: "open", BaseBranch: "main", HeadBranch: "topic"},
-			Revisions:  pull_service.InspectionRevisions{InternalHead: "head", InternalHeadAvailable: true, Target: "target", TargetAvailable: true, ComparisonBase: "base"},
-			Files:      &pull_service.InspectionFilePage{Files: []pull_service.InspectionFile{{Name: "README.md", Addition: 2}}},
-			Checks:     &pull_service.InspectionChecks{Revision: "head", State: commitstatus.CommitStatusSuccess, Checks: []pull_service.InspectionCheck{{ID: 501, RepositoryID: 99, Revision: "head", Context: "ci", TargetURL: "https://forge.example/actions/1"}}},
-			Policy:     &pull_service.InspectionPolicy{Protected: true, RequiredContexts: []string{"ci"}},
+			Metadata: pull_service.InspectionMetadata{
+				ID: 101, Index: 7, Title: "Inspect me", Description: "raw **Markdown**", DescriptionTruncated: true,
+				Author: "pat", State: "open", BaseBranch: "main", HeadBranch: "topic",
+			},
+			Revisions: pull_service.InspectionRevisions{InternalHead: "head", InternalHeadAvailable: true, Target: "target", TargetAvailable: true, ComparisonBase: "base"},
+			Files:     &pull_service.InspectionFilePage{Files: []pull_service.InspectionFile{{Name: "README.md", Addition: 2}}},
+			Checks:    &pull_service.InspectionChecks{Revision: "head", State: commitstatus.CommitStatusSuccess, Checks: []pull_service.InspectionCheck{{ID: 501, RepositoryID: 99, Revision: "head", Context: "ci", TargetURL: "https://forge.example/actions/1"}}},
+			Policy:    &pull_service.InspectionPolicy{Protected: true, RequiredContexts: []string{"ci"}},
 		}, nil
 	}
 	tool := newPullRequestInspectionTool(1, time.Second, operation, testPrincipal)
@@ -53,6 +56,8 @@ func TestPullRequestInspectionToolTypedHappyPath(t *testing.T) {
 	assert.Equal(t, "available", output.Status)
 	require.NotNil(t, output.Inspection)
 	assert.EqualValues(t, 7, output.Inspection.Metadata.Number)
+	assert.Equal(t, "raw **Markdown**", output.Inspection.Metadata.Description)
+	assert.True(t, output.Inspection.Metadata.DescriptionTruncated)
 	assert.Equal(t, "README.md", output.Inspection.Files.Files[0].Name)
 	assert.Equal(t, "https://forge.example/actions/1", output.Inspection.Checks.Checks[0].TargetURL)
 	assert.Equal(t, pull_service.InspectionRequest{
@@ -105,10 +110,12 @@ func TestPullRequestInspectionToolRejectsOversizedProjection(t *testing.T) {
 }
 
 func TestPullRequestInspectionSerializedResultBound(t *testing.T) {
-	payload := strings.Repeat("x", pull_service.MaxPullRequestInspectionDocumentBytes-(8<<10))
+	payload := strings.Repeat("x", pull_service.MaxPullRequestInspectionDocumentBytes-pull_service.MaxPullRequestInspectionDescriptionBytes-(8<<10))
+	description := strings.Repeat("d", pull_service.MaxPullRequestInspectionDescriptionBytes)
 	tool := newPullRequestInspectionTool(1, time.Second,
 		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 			return &pull_service.Inspection{
+				Metadata: pull_service.InspectionMetadata{Description: description},
 				Diff: &pull_service.InspectionDiffPage{Files: []pull_service.InspectionDiffFile{{
 					Sections: []pull_service.InspectionDiffSection{{Lines: []pull_service.InspectionDiffLine{{Content: payload}}}},
 				}}},
@@ -132,9 +139,17 @@ func TestPullRequestInspectionSerializedResultBound(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assertPullRequestInspectionResultContent(t, result)
-	structured, err := json.Marshal(result.StructuredContent)
+	structured, ok := result.StructuredContent.(map[string]any)
+	require.True(t, ok)
+	inspection, ok := structured["inspection"].(map[string]any)
+	require.True(t, ok)
+	metadata, ok := inspection["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, description, metadata["description"])
+	assert.Equal(t, false, metadata["descriptionTruncated"])
+	structuredJSON, err := json.Marshal(result.StructuredContent)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(structured), pull_service.MaxPullRequestInspectionDocumentBytes)
+	assert.LessOrEqual(t, len(structuredJSON), pull_service.MaxPullRequestInspectionDocumentBytes)
 	serialized, err := json.Marshal(result)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(serialized), pull_service.MaxPullRequestInspectionResponseBytes)
