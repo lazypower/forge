@@ -151,6 +151,9 @@ func loadCommonSettingsFrom(cfg ConfigProvider) error {
 	loadUIFrom(cfg)
 	loadAdminFrom(cfg)
 	loadAPIFrom(cfg)
+	if err := loadMCPFrom(cfg); err != nil {
+		return err
+	}
 	loadMetricsFrom(cfg)
 	loadCamoFrom(cfg)
 	loadI18nFrom(cfg)

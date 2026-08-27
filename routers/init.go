@@ -31,6 +31,7 @@ import (
 	packages_router "gitea.dev/routers/api/packages"
 	apiv1 "gitea.dev/routers/api/v1"
 	"gitea.dev/routers/common"
+	mcp_router "gitea.dev/routers/mcp"
 	"gitea.dev/routers/private"
 	web_routers "gitea.dev/routers/web"
 	actions_service "gitea.dev/services/actions"
@@ -186,6 +187,8 @@ func NormalRoutes() *web.Router {
 
 	r.Post("/-/fetch-redirect", common.FetchRedirectDelegate)
 
+	mountMCP(r)
+
 	if setting.Packages.Enabled {
 		// This implements package support for most package managers
 		r.Mount("/api/packages", packages_router.CommonRoutes())
@@ -212,4 +215,12 @@ func NormalRoutes() *web.Router {
 		http.NotFound(w, req)
 	})
 	return r
+}
+
+func mountMCP(r *web.Router) {
+	if !setting.MCP.Enabled {
+		return
+	}
+	mcpEndpoint := mcp_router.NewEndpoint()
+	r.Any(mcp_router.RoutePath, mcpEndpoint.ServeHTTP)
 }

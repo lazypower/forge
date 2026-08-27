@@ -59,6 +59,14 @@ linters:
               desc: migrations must not depend on the models package
             - pkg: gitea.dev/modules/structs
               desc: migrations must not depend on modules/structs (API structures change over time)
+        mcp:
+          files:
+            - '**/routers/mcp/**/*.go'
+          deny:
+            - pkg: gitea.dev/routers/api
+              desc: MCP transport must not depend on API handlers
+            - pkg: gitea.dev/routers/web
+              desc: MCP transport must not depend on web handlers
     nolintlint:
       allow-unused: false
       require-explanation: true
