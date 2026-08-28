@@ -127,7 +127,8 @@ func Init(ctx context.Context) error {
 			return fmt.Errorf("unknown oauth2 application: %q", configName)
 		}
 	}
-	if setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth {
+	mcpOAuthEnabled := setting.MCP.Enabled && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth
+	if mcpOAuthEnabled {
 		clientIDsToAdd.Add(MCPBuiltinOAuth2ApplicationClientID)
 	}
 	for _, app := range registeredApps {
@@ -141,7 +142,7 @@ func Init(ctx context.Context) error {
 		if !clientIDsToAdd.Contains(app.ClientID) {
 			clientIDsToDelete.Add(app.ClientID) // if a registered app is not in the "add" list, it should be deleted
 		}
-		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth && !validMCPBuiltinApplication(app) {
+		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID && mcpOAuthEnabled && !validMCPBuiltinApplication(app) {
 			return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
 		}
 	}

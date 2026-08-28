@@ -21,24 +21,30 @@ func TestLoadMCPFrom(t *testing.T) {
 		OAuth2 = originalOAuth2
 	}()
 
-	t.Run("defaults", func(t *testing.T) {
+	t.Run("disabled defaults", func(t *testing.T) {
 		MCP = original
-		AppURL = originalAppURL
+		AppURL = "http://forge.example/"
+		OAuth2 = originalOAuth2
+		OAuth2.Enabled = false
+		OAuth2.JWTClaimIssuer = ""
 		cfg, err := NewConfigProviderFromData("")
 		require.NoError(t, err)
 
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.False(t, MCP.Enabled)
-		assert.Equal(t, MCPAuthenticationProfilePAT, MCP.Authentication)
+		assert.Equal(t, MCPAuthenticationProfileOAuth, MCP.Authentication)
 		assert.EqualValues(t, defaultMCPMaxRequestBodyBytes, MCP.MaxRequestBodyBytes)
 		assert.Equal(t, defaultMCPMaxInFlightRequests, MCP.MaxInFlightRequests)
 		assert.Equal(t, defaultMCPExecutionTimeout, MCP.ExecutionTimeout)
 	})
 
-	t.Run("configured", func(t *testing.T) {
+	t.Run("enabled default OAuth", func(t *testing.T) {
 		MCP = original
 		AppURL = "https://forge.example/"
+		OAuth2 = originalOAuth2
+		OAuth2.Enabled = true
+		OAuth2.JWTClaimIssuer = "https://forge.example"
 		cfg, err := NewConfigProviderFromData(`
 [mcp]
 ENABLED = true
@@ -51,9 +57,24 @@ EXECUTION_TIMEOUT = 15s
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.True(t, MCP.Enabled)
+		assert.Equal(t, MCPAuthenticationProfileOAuth, MCP.Authentication)
 		assert.EqualValues(t, 2048, MCP.MaxRequestBodyBytes)
 		assert.Equal(t, 4, MCP.MaxInFlightRequests)
 		assert.Equal(t, 15*time.Second, MCP.ExecutionTimeout)
+	})
+
+	t.Run("explicit PAT fallback", func(t *testing.T) {
+		MCP = original
+		AppURL = "https://forge.example/"
+		OAuth2 = originalOAuth2
+		OAuth2.Enabled = false
+		OAuth2.JWTClaimIssuer = ""
+		cfg, err := NewConfigProviderFromData("[mcp]\nENABLED = true\nAUTHENTICATION = pat\n")
+		require.NoError(t, err)
+
+		require.NoError(t, loadMCPFrom(cfg))
+		assert.True(t, MCP.Enabled)
+		assert.Equal(t, MCPAuthenticationProfilePAT, MCP.Authentication)
 	})
 
 	t.Run("non-positive body limit", func(t *testing.T) {
@@ -102,7 +123,7 @@ ENABLED = true
 		assert.EqualError(t, loadMCPFrom(cfg), `[mcp] AUTHENTICATION must be "pat" or "oauth"`)
 	})
 
-	t.Run("OAuth profile requires configured discoverable issuer", func(t *testing.T) {
+	t.Run("enabled default OAuth requires configured discoverable issuer", func(t *testing.T) {
 		for _, test := range []struct {
 			name    string
 			appURL  string
@@ -122,7 +143,7 @@ ENABLED = true
 				OAuth2 = originalOAuth2
 				OAuth2.Enabled = test.oauth
 				OAuth2.JWTClaimIssuer = test.issuer
-				cfg, err := NewConfigProviderFromData("[mcp]\nENABLED = true\nAUTHENTICATION = oauth\n")
+				cfg, err := NewConfigProviderFromData("[mcp]\nENABLED = true\n")
 				require.NoError(t, err)
 				err = loadMCPFrom(cfg)
 				if test.wantErr == "" {

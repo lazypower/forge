@@ -67,6 +67,7 @@ func TestMCPRoute(t *testing.T) {
 	t.Run("enabled under configured subpath", func(t *testing.T) {
 		token := getUserToken(t, "user1", auth_model.AccessTokenScopeReadRepository)
 		defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+		defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 		defer test.MockVariableValue(&setting.AppSubURL, "/forge")()
 		defer test.MockVariableValue(&setting.UseSubURLPath, true)()
 		defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
@@ -79,6 +80,7 @@ func TestMCPRoute(t *testing.T) {
 
 	t.Run("maintenance mode", func(t *testing.T) {
 		defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+		defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 		defer mockSystemConfig(t, setting.Config().Instance.MaintenanceMode, setting.MaintenanceModeType{AdminWebAccessOnly: true})()
 		defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 
@@ -190,6 +192,7 @@ func TestMCPRealPATWithOfficialClient(t *testing.T) {
 	defer test.MockVariableValue(&pull_service.AddPullRequestToCheckQueue, func(int64) { queued.Add(1) })()
 
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	httpServer := httptest.NewServer(testWebRoutes)
 	defer httpServer.Close()
@@ -263,6 +266,7 @@ func TestMCPAuthenticationBoundary(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	token := getUserToken(t, "user2", auth_model.AccessTokenScopeReadRepository)
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 
 	t.Run("alternate credentials", func(t *testing.T) {
@@ -383,12 +387,14 @@ func TestMCPOAuthAuthenticationProfile(t *testing.T) {
 	testWebRoutes = routers.NormalRoutes()
 	MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusUnauthorized)
 	MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(pat), http.StatusOK)
+	MakeRequest(t, NewRequest(t, http.MethodGet, setting.MCPProtectedResourceMetadataPath()), http.StatusNotFound)
 }
 
 func TestMCPQueryCredentialsAreRedactedBeforeProductionMetadata(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	token := getUserToken(t, "user2", auth_model.AccessTokenScopeReadRepository)
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&setting.AppSubURL, "/forge")()
 	defer test.MockVariableValue(&setting.UseSubURLPath, true)()
 	defer test.MockVariableValue(&setting.Log.AccessLogTemplate, `{{.Ctx.Req.Method}} {{.Ctx.Req.URL.RequestURI}}`)()
@@ -430,6 +436,7 @@ func TestMCPProjectionPermissionBoundaries(t *testing.T) {
 	user2Token := newPersistedMCPPAT(t, 2, "mcp-projection-user2", auth_model.AccessTokenScopeReadRepository)
 	user5Token := newPersistedMCPPAT(t, 5, "mcp-projection-user5", auth_model.AccessTokenScopeReadRepository)
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	httpServer := httptest.NewServer(testWebRoutes)
 	defer httpServer.Close()
@@ -541,6 +548,7 @@ func TestMCPPersistedPATScopes(t *testing.T) {
 		tokens[test.name] = newPersistedMCPPAT(t, 2, "mcp-scope-"+strings.ReplaceAll(test.name, " ", "-"), test.scope)
 	}
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
