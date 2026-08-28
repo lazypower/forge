@@ -31,6 +31,12 @@ set -- docker buildx build \
 	--label "org.opencontainers.image.created=$created" \
 	--tag "$image_ref"
 
+if [ -n "${BUILDX_CACHE_SCOPE:-}" ]; then
+	set -- "$@" \
+		--cache-from "type=gha,scope=$BUILDX_CACHE_SCOPE" \
+		--cache-to "type=gha,mode=max,scope=$BUILDX_CACHE_SCOPE"
+fi
+
 if [ "${PUSH:-0}" = 1 ]; then
 	set -- "$@" --provenance=false --push
 else

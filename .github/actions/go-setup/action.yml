@@ -8,6 +8,9 @@ inputs:
   lint-cache:
     description: Also restore the golangci-lint cache
     default: "false"
+  save-cache:
+    description: Save exact Go caches after the job
+    default: "false"
 
 runs:
   using: composite
@@ -22,3 +25,4 @@ runs:
       uses: ./.github/actions/go-cache
       with:
         lint-cache: ${{ inputs.lint-cache }}
+        save-cache: ${{ inputs.save-cache }}
