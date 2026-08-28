@@ -70,9 +70,8 @@ The release gate must pass all of the following:
 
 - formatting without a resulting diff;
 - generated bindata;
-- Go lint;
+- Linux Go lint, matching the only production target;
 - focused Actions service tests;
-- a complete Forge build;
 - the SQLite runner integration test;
 - two byte-identical rootless image builds;
 - the image smoke test; and
@@ -80,6 +79,12 @@ The release gate must pass all of the following:
 
 Any failure forbids publication. A passing gate is evidence, not release
 authority; human approval is still required.
+
+The production image build is the release's complete Forge build; compiling a
+second standalone binary would test an artifact that is never published. The
+release job is the single writer for exact Go caches and exports the BuildKit
+cache for the next release. The reproducibility rebuild, image smoke test, and
+Vault acceptance remain release gates.
 
 ## Trust-boundary inventory
 

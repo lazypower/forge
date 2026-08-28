@@ -23,6 +23,7 @@ permissions:
   artifact-metadata: write
 
 env:
+  BUILDX_CACHE_SCOPE: forge-rootless-linux-amd64
   IMAGE_NAME: ghcr.io/lazypower/forge
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
@@ -52,9 +53,7 @@ jobs:
         uses: ./.github/actions/go-setup
         with:
           lint-cache: "true"
-
-      - name: Install pinned tools
-        run: make deps-tools
+          save-cache: "true"
 
       - name: Certify the Forge release image
         run: contrib/workload-identity/ci/verify-fork.sh

@@ -19,10 +19,13 @@ trap cleanup EXIT INT TERM
 run_gate() {
 	name="$1"
 	shift
+	started="$(date +%s)"
 	if "$@"; then
-		printf -- '- PASS %s\n' "$name" >> "$report"
+		elapsed="$(($(date +%s) - started))"
+		printf -- '- PASS %s (%ss)\n' "$name" "$elapsed" >> "$report"
 	else
-		printf -- '- FAIL %s\n\nRelease is forbidden.\n' "$name" >> "$report"
+		elapsed="$(($(date +%s) - started))"
+		printf -- '- FAIL %s (%ss)\n\nRelease is forbidden.\n' "$name" "$elapsed" >> "$report"
 		cat "$report"
 		exit 1
 	fi
@@ -38,14 +41,14 @@ run_gate() {
 cd "$repo_root"
 run_gate 'format check' sh -c 'make fmt >/dev/null && git diff --exit-code'
 run_gate 'generated bindata' env TAGS=bindata make generate-go
-run_gate 'Go lint' make lint-go
+run_gate 'Linux Go lint' env -u CI make lint-go
 run_gate 'Actions service tests' go test -tags 'sqlite sqlite_unlock_notify' ./services/actions
-run_gate 'Gitea build' make gitea
 run_gate 'runner integration test' env GITEA_TEST_DATABASE=sqlite make 'test-integration#TestActionsOIDCTokenIntegration'
 
 build_output="$workspace/image-build.log"
+build_started="$(date +%s)"
 if PATCH_REVISION="$source_revision" contrib/workload-identity/image/build.sh >"$build_output" 2>&1; then
-	printf -- '- PASS image build\n' >> "$report"
+	printf -- '- PASS image build (%ss)\n' "$(($(date +%s) - build_started))" >> "$report"
 else
 	cat "$build_output"
 	printf -- '- FAIL image build\n\nRelease is forbidden.\n' >> "$report"
@@ -59,12 +62,13 @@ target_platform="$(sed -n 's/^TARGET_PLATFORM=//p' "$build_output")"
 test -n "$image_ref" && test -n "$image_digest" && test -n "$fork_revision" && test -n "$target_platform"
 
 rebuild_output="$workspace/image-rebuild.log"
+rebuild_started="$(date +%s)"
 if PATCH_REVISION="$source_revision" contrib/workload-identity/image/build.sh >"$rebuild_output" 2>&1 &&
 	[ "$(sed -n 's/^IMAGE_REF=//p' "$rebuild_output")" = "$image_ref" ] &&
 	[ "$(sed -n 's/^IMAGE_DIGEST=//p' "$rebuild_output")" = "$image_digest" ] &&
 	[ "$(sed -n 's/^PATCH_REVISION=//p' "$rebuild_output")" = "$fork_revision" ] &&
 	[ "$(sed -n 's/^TARGET_PLATFORM=//p' "$rebuild_output")" = "$target_platform" ]; then
-	printf -- '- PASS reproducible image rebuild\n' >> "$report"
+	printf -- '- PASS reproducible image rebuild (%ss)\n' "$(($(date +%s) - rebuild_started))" >> "$report"
 else
 	cat "$rebuild_output"
 	printf -- '- FAIL reproducible image rebuild\n\nRelease is forbidden.\n' >> "$report"
