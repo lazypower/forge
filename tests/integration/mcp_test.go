@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,9 +33,11 @@ import (
 	"gitea.dev/modules/util"
 	"gitea.dev/modules/web"
 	"gitea.dev/routers"
+	"gitea.dev/services/oauth2_provider"
 	pull_service "gitea.dev/services/pull"
 	"gitea.dev/tests"
 
+	"github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,6 +67,7 @@ func TestMCPRoute(t *testing.T) {
 	t.Run("enabled under configured subpath", func(t *testing.T) {
 		token := getUserToken(t, "user1", auth_model.AccessTokenScopeReadRepository)
 		defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+		defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 		defer test.MockVariableValue(&setting.AppSubURL, "/forge")()
 		defer test.MockVariableValue(&setting.UseSubURLPath, true)()
 		defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
@@ -76,10 +80,25 @@ func TestMCPRoute(t *testing.T) {
 
 	t.Run("maintenance mode", func(t *testing.T) {
 		defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+		defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 		defer mockSystemConfig(t, setting.Config().Instance.MaintenanceMode, setting.MaintenanceModeType{AdminWebAccessOnly: true})()
 		defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 
 		MakeRequest(t, newMCPDiscoverRequest(t, "/mcp"), http.StatusServiceUnavailable)
+	})
+
+	t.Run("OAuth metadata under configured subpath", func(t *testing.T) {
+		defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+		defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+		defer test.MockVariableValue(&setting.AppURL, "https://forge.example/forge/")()
+		defer test.MockVariableValue(&setting.OAuth2.JWTClaimIssuer, "https://forge.example/forge")()
+		defer test.MockVariableValue(&setting.AppSubURL, "/forge")()
+		defer test.MockVariableValue(&setting.UseSubURLPath, true)()
+		defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
+
+		resp := MakeRequest(t, NewRequest(t, http.MethodGet, "/forge"+setting.MCPProtectedResourceMetadataPath()), http.StatusOK)
+		assert.Contains(t, resp.Body.String(), `"resource":"https://forge.example/forge/mcp"`)
+		assert.Equal(t, "*", resp.Header().Get("Access-Control-Allow-Origin"))
 	})
 }
 
@@ -173,6 +192,7 @@ func TestMCPRealPATWithOfficialClient(t *testing.T) {
 	defer test.MockVariableValue(&pull_service.AddPullRequestToCheckQueue, func(int64) { queued.Add(1) })()
 
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	httpServer := httptest.NewServer(testWebRoutes)
 	defer httpServer.Close()
@@ -246,6 +266,7 @@ func TestMCPAuthenticationBoundary(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	token := getUserToken(t, "user2", auth_model.AccessTokenScopeReadRepository)
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 
 	t.Run("alternate credentials", func(t *testing.T) {
@@ -291,10 +312,89 @@ func TestMCPAuthenticationBoundary(t *testing.T) {
 	})
 }
 
+func TestMCPOAuthAuthenticationProfile(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	require.NoError(t, auth_model.Init(t.Context()))
+	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: 2, Scope: "read:repository"}
+	require.NoError(t, db.Insert(t.Context(), grant))
+	resource := setting.MCPResource()
+	sign := func(audience string, expiresAt time.Time) string {
+		token := &oauth2_provider.Token{
+			GrantID: grant.ID,
+			Kind:    oauth2_provider.KindAccessToken,
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    oauth2_provider.TokenIssuer(),
+				Subject:   strconv.FormatInt(grant.UserID, 10),
+				Audience:  jwt.ClaimStrings{audience},
+				ExpiresAt: jwt.NewNumericDate(expiresAt),
+			},
+		}
+		signed, err := token.SignToken(oauth2_provider.DefaultSigningKey)
+		require.NoError(t, err)
+		return signed
+	}
+	accessToken := sign(resource, time.Now().Add(time.Minute))
+	pat := getUserToken(t, "user2", auth_model.AccessTokenScopeReadRepository)
+	originalRoutes := testWebRoutes
+	defer func() { testWebRoutes = originalRoutes }()
+	testWebRoutes = routers.NormalRoutes()
+
+	resp := MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusOK)
+	assert.Contains(t, resp.Body.String(), `"name":"forge"`)
+	MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(pat), http.StatusUnauthorized)
+
+	for _, testCase := range []struct {
+		name  string
+		token string
+	}{
+		{name: "wrong audience", token: sign(resource+"/other", time.Now().Add(time.Minute))},
+		{name: "expired", token: sign(resource, time.Now().Add(-time.Minute))},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			failure := MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(testCase.token), http.StatusUnauthorized)
+			challenge := failure.Header().Get("WWW-Authenticate")
+			assert.Contains(t, challenge, `error="invalid_token"`)
+			assert.NotContains(t, failure.Body.String(), testCase.token)
+			assert.NotContains(t, failure.Body.String(), resource)
+		})
+	}
+
+	grant.Scope = "read:user"
+	_, err = db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(grant)
+	require.NoError(t, err)
+	failure := MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusForbidden)
+	assert.Contains(t, failure.Header().Get("WWW-Authenticate"), `error="insufficient_scope"`)
+	grant.Scope = "read:repository"
+	_, err = db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(grant)
+	require.NoError(t, err)
+
+	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+	user.ProhibitLogin = true
+	require.NoError(t, user_model.UpdateUserColsNoAutoTime(t.Context(), user, "prohibit_login"))
+	MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusUnauthorized)
+	user.ProhibitLogin = false
+	require.NoError(t, user_model.UpdateUserColsNoAutoTime(t.Context(), user, "prohibit_login"))
+
+	metadata := MakeRequest(t, NewRequest(t, http.MethodGet, setting.MCPProtectedResourceMetadataPath()), http.StatusOK)
+	assert.Contains(t, metadata.Body.String(), `"resource":"`+resource+`"`)
+	assert.NotContains(t, metadata.Body.String(), "client_secret")
+
+	setting.MCP.Authentication = setting.MCPAuthenticationProfilePAT
+	testWebRoutes = routers.NormalRoutes()
+	MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusUnauthorized)
+	MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(pat), http.StatusOK)
+	MakeRequest(t, NewRequest(t, http.MethodGet, setting.MCPProtectedResourceMetadataPath()), http.StatusNotFound)
+}
+
 func TestMCPQueryCredentialsAreRedactedBeforeProductionMetadata(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	token := getUserToken(t, "user2", auth_model.AccessTokenScopeReadRepository)
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&setting.AppSubURL, "/forge")()
 	defer test.MockVariableValue(&setting.UseSubURLPath, true)()
 	defer test.MockVariableValue(&setting.Log.AccessLogTemplate, `{{.Ctx.Req.Method}} {{.Ctx.Req.URL.RequestURI}}`)()
@@ -336,6 +436,7 @@ func TestMCPProjectionPermissionBoundaries(t *testing.T) {
 	user2Token := newPersistedMCPPAT(t, 2, "mcp-projection-user2", auth_model.AccessTokenScopeReadRepository)
 	user5Token := newPersistedMCPPAT(t, 5, "mcp-projection-user5", auth_model.AccessTokenScopeReadRepository)
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	httpServer := httptest.NewServer(testWebRoutes)
 	defer httpServer.Close()
@@ -447,6 +548,7 @@ func TestMCPPersistedPATScopes(t *testing.T) {
 		tokens[test.name] = newPersistedMCPPAT(t, 2, "mcp-scope-"+strings.ReplaceAll(test.name, " ", "-"), test.scope)
 	}
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfilePAT)()
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

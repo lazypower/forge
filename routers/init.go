@@ -222,5 +222,9 @@ func mountMCP(r *web.Router) {
 		return
 	}
 	mcpEndpoint := mcp_router.NewEndpoint()
-	r.Any(mcp_router.RoutePath, mcpEndpoint.ServeHTTP)
+	r.Any(setting.MCPRoutePath, mcpEndpoint.ServeHTTP)
+	if setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth {
+		metadata := mcp_router.ProtectedResourceMetadata()
+		r.Any(setting.MCPProtectedResourceMetadataPath(), metadata.ServeHTTP)
+	}
 }

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	asymkey_model "gitea.dev/models/asymkey"
 	auth_model "gitea.dev/models/auth"
@@ -123,6 +124,7 @@ func TestOAuth2(t *testing.T) {
 		t.Run("AccessTokenExchangeWithBasicAuth", testAccessTokenExchangeWithBasicAuth)
 		t.Run("RefreshTokenInvalidation", testRefreshTokenInvalidation)
 		t.Run("RefreshTokenCrossClientUsage", testRefreshTokenCrossClientUsage)
+		t.Run("MCPResourceProfile", testMCPResourceProfile)
 		t.Run("OAuthIntrospection", testOAuthIntrospection)
 		t.Run("OAuthIntrospectionCrossClientIsolation", testOAuthIntrospectionCrossClientIsolation)
 		t.Run("OAuthGrantScopesReadUserFailRepos", testOAuthGrantScopesReadUserFailRepos)
@@ -137,6 +139,149 @@ func TestOAuth2(t *testing.T) {
 		t.Run("SignInOauthCallbackSyncSSHKeys", testSignInOauthCallbackSyncSSHKeys)
 	})
 	// TODO: move more tests as sub-tests here, avoid unnecessary PrepareTestEnv
+}
+
+func testMCPResourceProfile(t *testing.T) {
+	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	defer test.MockVariableValue(&setting.OAuth2.InvalidateRefreshTokens, false)()
+	require.NoError(t, auth_model.Init(t.Context()))
+	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	require.False(t, app.ConfidentialClient)
+	assert.Equal(t, []string{"http://127.0.0.1", "https://127.0.0.1"}, app.RedirectURIs)
+
+	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: user.ID, Scope: "read:repository"}
+	require.NoError(t, db.Insert(t.Context(), grant))
+	verifier := "mcp-profile-verifier-" + util.FastCryptoRandomHex(12)
+	challenge := sha256.Sum256([]byte(verifier))
+	resource := setting.MCPResource()
+	newCode := func(resource string) string {
+		code := "mcp-profile-code-" + util.FastCryptoRandomHex(10)
+		require.NoError(t, db.Insert(t.Context(), &auth_model.OAuth2AuthorizationCode{
+			GrantID:             grant.ID,
+			Code:                code,
+			CodeChallenge:       base64.RawURLEncoding.EncodeToString(challenge[:]),
+			CodeChallengeMethod: "S256",
+			RedirectURI:         "http://127.0.0.1:49152",
+			Resource:            resource,
+			ValidUntil:          timeutil.TimeStampNow() + 600,
+		}))
+		return code
+	}
+	exchange := func(code, requestedResource string, status int) *httptest.ResponseRecorder {
+		return MakeRequest(t, NewRequestWithValues(t, http.MethodPost, "/login/oauth/access_token", map[string]string{
+			"grant_type":    "authorization_code",
+			"client_id":     app.ClientID,
+			"redirect_uri":  "http://127.0.0.1:49152",
+			"code":          code,
+			"code_verifier": verifier,
+			"resource":      requestedResource,
+		}), status)
+	}
+
+	login := loginUser(t, user.Name)
+	authorizeQuery := url.Values{
+		"client_id":             []string{app.ClientID},
+		"redirect_uri":          []string{"http://127.0.0.1:49152"},
+		"response_type":         []string{"code"},
+		"state":                 []string{"mcp-profile-state"},
+		"scope":                 []string{"read:repository"},
+		"resource":              []string{resource},
+		"code_challenge_method": []string{"S256"},
+		"code_challenge":        []string{base64.RawURLEncoding.EncodeToString(challenge[:])},
+	}
+	duplicateAuthorizeQuery, err := url.ParseQuery(authorizeQuery.Encode())
+	require.NoError(t, err)
+	duplicateAuthorizeQuery.Add("resource", resource)
+	duplicateAuthorizeResp := login.MakeRequest(t, NewRequest(t, http.MethodGet, "/login/oauth/authorize?"+duplicateAuthorizeQuery.Encode()), http.StatusSeeOther)
+	duplicateAuthorizeRedirect, err := duplicateAuthorizeResp.Result().Location()
+	require.NoError(t, err)
+	assert.Equal(t, "invalid_request", duplicateAuthorizeRedirect.Query().Get("error"))
+	assert.Equal(t, "resource parameter must not be repeated", duplicateAuthorizeRedirect.Query().Get("error_description"))
+
+	authorizeResp := login.MakeRequest(t, NewRequest(t, http.MethodGet, "/login/oauth/authorize?"+authorizeQuery.Encode()), http.StatusOK)
+	authorizeHTML := NewHTMLParser(t, authorizeResp.Body)
+	resourceInput := authorizeHTML.Find(`input[name="resource"]`)
+	require.Equal(t, 1, resourceInput.Length())
+	resourceValue, exists := resourceInput.Attr("value")
+	require.True(t, exists)
+	assert.Equal(t, resource, resourceValue)
+	grantResp := login.MakeRequest(t, NewRequestWithValues(t, http.MethodPost, "/login/oauth/grant", map[string]string{
+		"client_id":    app.ClientID,
+		"state":        "mcp-profile-state",
+		"scope":        "read:repository",
+		"resource":     resource,
+		"redirect_uri": "http://127.0.0.1:49152",
+		"granted":      "true",
+	}), http.StatusSeeOther)
+	grantRedirect, err := grantResp.Result().Location()
+	require.NoError(t, err)
+	persistedCode, err := auth_model.GetOAuth2AuthorizationByCode(t.Context(), grantRedirect.Query().Get("code"))
+	require.NoError(t, err)
+	require.NotNil(t, persistedCode)
+	assert.Equal(t, resource, persistedCode.Resource)
+	require.NoError(t, persistedCode.Invalidate(t.Context()))
+
+	exchange(newCode(resource), "", http.StatusBadRequest)
+	exchange(newCode(resource), resource+"/other", http.StatusBadRequest)
+
+	code := newCode(resource)
+	duplicateExchange := MakeRequest(t, NewRequestWithURLValues(t, http.MethodPost, "/login/oauth/access_token", url.Values{
+		"grant_type":    []string{"authorization_code"},
+		"client_id":     []string{app.ClientID},
+		"redirect_uri":  []string{"http://127.0.0.1:49152"},
+		"code":          []string{code},
+		"code_verifier": []string{verifier},
+		"resource":      []string{resource, resource},
+	}), http.StatusBadRequest)
+	duplicateExchangeError := DecodeJSON(t, duplicateExchange, &oauth2_provider.AccessTokenError{})
+	assert.Equal(t, oauth2_provider.AccessTokenErrorCodeInvalidRequest, duplicateExchangeError.ErrorCode)
+	assert.Equal(t, "resource parameter must not be repeated", duplicateExchangeError.ErrorDescription)
+
+	resp := exchange(code, resource, http.StatusOK)
+	parsed := DecodeJSON(t, resp, &oauth2_provider.AccessTokenResponse{})
+	accessToken, err := oauth2_provider.ParseToken(parsed.AccessToken, oauth2_provider.DefaultSigningKey)
+	require.NoError(t, err)
+	assert.Equal(t, oauth2_provider.KindAccessToken, accessToken.Kind)
+	assert.Equal(t, oauth2_provider.TokenIssuer(), accessToken.Issuer)
+	assert.Equal(t, strconv.FormatInt(user.ID, 10), accessToken.Subject)
+	assert.Equal(t, []string{resource}, []string(accessToken.Audience))
+	assert.LessOrEqual(t, accessToken.ExpiresAt.Time.Sub(accessToken.IssuedAt.Time), time.Duration(setting.OAuth2.AccessTokenExpirationTime)*time.Second)
+	MakeRequest(t, NewRequest(t, http.MethodGet, "/api/v1/user").AddTokenAuth(parsed.AccessToken), http.StatusUnauthorized)
+
+	refreshToken, err := oauth2_provider.ParseToken(parsed.RefreshToken, oauth2_provider.DefaultSigningKey)
+	require.NoError(t, err)
+	assert.Equal(t, []string{resource}, []string(refreshToken.Audience))
+
+	refreshValues := map[string]string{
+		"grant_type":    "refresh_token",
+		"client_id":     app.ClientID,
+		"refresh_token": parsed.RefreshToken,
+	}
+	wrongRefresh := map[string]string{
+		"grant_type":    refreshValues["grant_type"],
+		"client_id":     refreshValues["client_id"],
+		"refresh_token": refreshValues["refresh_token"],
+		"resource":      resource + "/other",
+	}
+	duplicateRefresh := MakeRequest(t, NewRequestWithURLValues(t, http.MethodPost, "/login/oauth/access_token", url.Values{
+		"grant_type":    []string{"refresh_token"},
+		"client_id":     []string{app.ClientID},
+		"refresh_token": []string{parsed.RefreshToken},
+		"resource":      []string{resource, resource},
+	}), http.StatusBadRequest)
+	duplicateRefreshError := DecodeJSON(t, duplicateRefresh, &oauth2_provider.AccessTokenError{})
+	assert.Equal(t, oauth2_provider.AccessTokenErrorCodeInvalidRequest, duplicateRefreshError.ErrorCode)
+	assert.Equal(t, "resource parameter must not be repeated", duplicateRefreshError.ErrorDescription)
+
+	MakeRequest(t, NewRequestWithValues(t, http.MethodPost, "/login/oauth/access_token", wrongRefresh), http.StatusBadRequest)
+	MakeRequest(t, NewRequestWithValues(t, http.MethodPost, "/login/oauth/access_token", refreshValues), http.StatusOK)
+	replay := MakeRequest(t, NewRequestWithValues(t, http.MethodPost, "/login/oauth/access_token", refreshValues), http.StatusBadRequest)
+	replayError := DecodeJSON(t, replay, &oauth2_provider.AccessTokenError{})
+	assert.Equal(t, oauth2_provider.AccessTokenErrorCode(oauth2_provider.AccessTokenErrorCodeUnauthorizedClient), replayError.ErrorCode)
+	assert.Equal(t, "token was already used", replayError.ErrorDescription)
 }
 
 func testAuthorizeNoClientID(t *testing.T) {

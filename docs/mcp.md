@@ -7,10 +7,14 @@ tool over stateless Streamable HTTP.
 ## Enablement and endpoint
 
 Configure an externally correct HTTPS `ROOT_URL`, including any installation
-subpath, and enable the endpoint:
+subpath, configure Forge's matching OAuth issuer, and enable the endpoint:
 
 ```ini
 ROOT_URL = https://forge.example/forge/
+
+[oauth2]
+ENABLED = true
+JWT_CLAIM_ISSUER = https://forge.example/forge
 
 [mcp]
 ENABLED = true
@@ -20,7 +24,22 @@ The endpoint is the configured subpath followed by `/mcp`; the example above is
 `https://forge.example/forge/mcp`. Forge refuses to enable MCP when `ROOT_URL`
 is not HTTPS.
 
-## Authentication
+## Authentication profiles
+
+`AUTHENTICATION` selects exactly one MCP credential profile. It defaults to
+`oauth`. Forge never accepts PAT and OAuth credentials concurrently at the MCP
+endpoint. Enabling MCP with the default profile fails closed unless the OAuth
+and issuer requirements below are satisfied.
+
+### Temporary PAT fallback
+
+For a temporary rollback during the transition to OAuth, select PAT explicitly:
+
+```ini
+[mcp]
+ENABLED = true
+AUTHENTICATION = pat
+```
 
 Create a personal access token whose only scope is `read:repository`. Store the
 token in the MCP client's secret storage separately from the server URL, and
@@ -28,11 +47,67 @@ send it only as an `Authorization: Bearer …` header. Tokens in URLs, forms,
 cookies, Basic authentication, OAuth tokens, and Actions credentials are not
 accepted. Do not embed the token in configuration that may be logged or shared.
 
-This PAT bootstrap is experimental and is not MCP OAuth conformance. Forge PATs
-do not expire and are not audience-bound, so the same PAT may be accepted by
-other Forge API endpoints. OAuth Protected Resource Metadata, MCP resource
-audiences, authorization-code resource binding, and the later OAuth delivery
-steps are not implemented by this profile.
+This fallback is temporary, is expected to remain only for a few release
+cycles, and is not MCP OAuth conformance. Forge PATs do not expire and are not
+audience-bound, so the same PAT may be accepted by other Forge API endpoints.
+The OAuth profile described below is not active while `AUTHENTICATION = pat`.
+
+### OAuth profile
+
+OAuth is the primary and default profile:
+
+```ini
+ROOT_URL = https://forge.example/forge/
+
+[oauth2]
+ENABLED = true
+JWT_CLAIM_ISSUER = https://forge.example/forge
+
+[mcp]
+ENABLED = true
+```
+
+`JWT_CLAIM_ISSUER` is required and, ignoring one trailing slash, must equal
+`ROOT_URL`. Forge rejects external issuer aliases because its own
+`/.well-known/openid-configuration` endpoint is the authorization-server
+discovery authority. Both values must use HTTPS.
+
+When MCP is enabled with the OAuth profile, Forge registers one built-in public
+client named `Forge MCP`, with client ID
+`f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. Endpoint-disabled installations do
+not create this registration merely because OAuth is the default. Once created,
+the registration is retained if MCP is later disabled or temporarily rolled
+back to PAT. It accepts only the fixed
+loopback redirects `http://127.0.0.1` and `https://127.0.0.1`; the existing
+public-client rule permits a dynamic port on the HTTP loopback redirect. The
+client is not selected through `DEFAULT_APPLICATIONS` and cannot issue a
+general Forge API token.
+
+Authorization requires the exact MCP resource URL, `read:repository` as the
+only scope, and PKCE `S256`. The resource is the configured `ROOT_URL`,
+including its subpath, followed by `mcp`; the example resource is
+`https://forge.example/forge/mcp`. Access and refresh tokens are signed and
+bound to that exact audience. Refresh-token use always rotates the existing
+grant counter for this client, even when global legacy rotation is disabled.
+Consequently, only one refresh lineage per principal and Forge MCP client is
+active; two installations can invalidate each other's refresh credentials.
+Clients may discard refresh tokens and repeat authorization after access-token
+expiry.
+
+OAuth Protected Resource Metadata is served by the official MCP Go SDK at the
+application-scoped `/.well-known/oauth-protected-resource/mcp` route and is
+advertised explicitly in bearer challenges. Forge's automated interoperability
+coverage drives the official MCP Go SDK v1.7.0 client from that challenge
+through protected-resource and Forge OpenID Connect discovery, authorization
+with the fixed public client and PKCE `S256`, loopback callback, token exchange,
+an authenticated `pull_request.inspect` call, access-token refresh, refresh
+rotation and replay rejection. It also covers the fixed profile's scope,
+audience, credential-profile, unrelated-resource, configured-subpath, and TLS
+trust boundaries. This substantiates interoperability for the initial
+pre-registered, read-only Forge MCP OAuth profile only. It does not claim
+Dynamic Client Registration, Client ID Metadata Documents, external issuer
+aliases, per-installation refresh families, mutations, rate limiting, or
+broader MCP or OAuth conformance.
 
 ## Tool and limits
 

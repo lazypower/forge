@@ -10,19 +10,21 @@ import (
 	"strings"
 
 	"gitea.dev/modules/setting"
+	"gitea.dev/services/oauth2_provider"
 	pull_service "gitea.dev/services/pull"
 
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 )
-
-// RoutePath is the instance-relative MCP endpoint path.
-const RoutePath = "/mcp"
 
 // NewEndpoint returns Forge's stateless MCP endpoint.
 func NewEndpoint() http.Handler {
 	tool := newPullRequestInspectionTool(setting.MCP.MaxInFlightRequests, setting.MCP.ExecutionTimeout, pull_service.InspectPullRequest, authenticatedUser)
 	server := newServer(tool)
+	if setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth {
+		return newOAuthAuthenticatedEndpoint(server, setting.MCP.MaxRequestBodyBytes, newOAuthVerifier())
+	}
 	return newAuthenticatedEndpoint(server, setting.MCP.MaxRequestBodyBytes, newPATVerifier())
 }
 
@@ -33,6 +35,26 @@ func newAuthenticatedEndpoint(server *mcpsdk.Server, maxRequestBodyBytes int64, 
 		AllowMissingExpiration: true,
 	})(streamable)
 	return http.NewCrossOriginProtection().Handler(requireBearerHeader(authenticated))
+}
+
+func newOAuthAuthenticatedEndpoint(server *mcpsdk.Server, maxRequestBodyBytes int64, verifier mcpauth.TokenVerifier) http.Handler {
+	streamable := newStreamableEndpoint(server, maxRequestBodyBytes)
+	authenticated := mcpauth.RequireBearerToken(verifier, &mcpauth.RequireBearerTokenOptions{
+		Scopes:              []string{string(readRepositoryScope)},
+		ResourceMetadataURL: setting.MCPProtectedResourceMetadataURL(),
+	})(streamable)
+	return http.NewCrossOriginProtection().Handler(requireOAuthBearerHeader(augmentOAuthChallenges(authenticated)))
+}
+
+// ProtectedResourceMetadata returns the SDK-owned RFC 9728 metadata handler.
+func ProtectedResourceMetadata() http.Handler {
+	return mcpauth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
+		Resource:               setting.MCPResource(),
+		AuthorizationServers:   []string{oauth2_provider.TokenIssuer()},
+		ScopesSupported:        []string{string(readRepositoryScope)},
+		BearerMethodsSupported: []string{"header"},
+		ResourceName:           "Forge MCP",
+	})
 }
 
 func newServer(tool *pullRequestInspectionTool) *mcpsdk.Server {
@@ -71,7 +93,7 @@ func QueryCredentialBoundary(next http.Handler) http.Handler {
 }
 
 func isMCPRoutePath(path string) bool {
-	return path == RoutePath || setting.AppSubURL != "" && path == setting.AppSubURL+RoutePath
+	return path == setting.MCPRoutePath || setting.AppSubURL != "" && path == setting.AppSubURL+setting.MCPRoutePath
 }
 
 func queryCredentialWasRemoved(ctx context.Context) bool {

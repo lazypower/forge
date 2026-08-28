@@ -31,6 +31,12 @@ import (
 // Authorization codes should expire within 10 minutes per https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.2
 const oauth2AuthorizationCodeValidity = 10 * time.Minute
 
+const (
+	// MCPBuiltinOAuth2ApplicationClientID identifies Forge's fixed public MCP client profile.
+	MCPBuiltinOAuth2ApplicationClientID = "f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31"
+	MCPBuiltinOAuth2ApplicationName     = "forge-mcp"
+)
+
 var (
 	ErrOAuth2AuthorizationCodeInvalidated = errors.New("oauth2 authorization code already invalidated")
 	ErrOAuth2GrantStaleCounter            = errors.New("oauth2 grant state changed during token refresh")
@@ -64,6 +70,7 @@ type BuiltinOAuth2Application struct {
 	ConfigName   string
 	DisplayName  string
 	RedirectURIs []string
+	MCPExclusive bool
 }
 
 func BuiltinApplications() map[string]*BuiltinOAuth2Application {
@@ -82,6 +89,12 @@ func BuiltinApplications() map[string]*BuiltinOAuth2Application {
 		ConfigName:   "tea",
 		DisplayName:  "tea",
 		RedirectURIs: []string{"http://127.0.0.1", "https://127.0.0.1"},
+	}
+	m[MCPBuiltinOAuth2ApplicationClientID] = &BuiltinOAuth2Application{
+		ConfigName:   MCPBuiltinOAuth2ApplicationName,
+		DisplayName:  "Forge MCP",
+		RedirectURIs: []string{"http://127.0.0.1", "https://127.0.0.1"},
+		MCPExclusive: true,
 	}
 	return m
 }
@@ -102,6 +115,9 @@ func Init(ctx context.Context) error {
 	for _, configName := range setting.OAuth2.DefaultApplications {
 		found := false
 		for clientID, builtinApp := range builtinApps {
+			if builtinApp.MCPExclusive {
+				continue
+			}
 			if builtinApp.ConfigName == configName {
 				clientIDsToAdd.Add(clientID) // add all user-configured apps to the "add" list
 				found = true
@@ -111,10 +127,23 @@ func Init(ctx context.Context) error {
 			return fmt.Errorf("unknown oauth2 application: %q", configName)
 		}
 	}
+	mcpOAuthEnabled := setting.MCP.Enabled && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth
+	if mcpOAuthEnabled {
+		clientIDsToAdd.Add(MCPBuiltinOAuth2ApplicationClientID)
+	}
+	for _, app := range registeredApps {
+		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID {
+			clientIDsToAdd.Add(MCPBuiltinOAuth2ApplicationClientID)
+			break
+		}
+	}
 	clientIDsToDelete := container.Set[string]{}
 	for _, app := range registeredApps {
 		if !clientIDsToAdd.Contains(app.ClientID) {
 			clientIDsToDelete.Add(app.ClientID) // if a registered app is not in the "add" list, it should be deleted
+		}
+		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID && mcpOAuthEnabled && !validMCPBuiltinApplication(app) {
+			return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
 		}
 	}
 	for _, app := range registeredApps {
@@ -140,6 +169,19 @@ func Init(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func validMCPBuiltinApplication(app *OAuth2Application) bool {
+	if app == nil || app.ConfidentialClient || len(app.RedirectURIs) != 2 {
+		return false
+	}
+	want := BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
+	return slices.Equal(app.RedirectURIs, want)
+}
+
+// IsMCPBuiltinOAuth2Application reports whether app is Forge's fixed MCP client.
+func IsMCPBuiltinOAuth2Application(app *OAuth2Application) bool {
+	return app != nil && app.ClientID == MCPBuiltinOAuth2ApplicationClientID
 }
 
 // TableName sets the table name to `oauth2_application`
@@ -394,6 +436,7 @@ type OAuth2AuthorizationCode struct {
 	CodeChallenge       string
 	CodeChallengeMethod string
 	RedirectURI         string
+	Resource            string             `xorm:"TEXT"`
 	ValidUntil          timeutil.TimeStamp `xorm:"index"`
 }
 
@@ -505,7 +548,7 @@ func (grant *OAuth2Grant) TableName() string {
 }
 
 // GenerateNewAuthorizationCode generates a new authorization code for a grant and saves it to the database
-func (grant *OAuth2Grant) GenerateNewAuthorizationCode(ctx context.Context, redirectURI, codeChallenge, codeChallengeMethod string) (code *OAuth2AuthorizationCode, err error) {
+func (grant *OAuth2Grant) GenerateNewAuthorizationCode(ctx context.Context, redirectURI, codeChallenge, codeChallengeMethod, resource string) (code *OAuth2AuthorizationCode, err error) {
 	rBytes := util.CryptoRandomBytes(32)
 	// Add a prefix to the base32, this is in order to make it easier
 	// for code scanners to grab sensitive tokens.
@@ -519,6 +562,7 @@ func (grant *OAuth2Grant) GenerateNewAuthorizationCode(ctx context.Context, redi
 		Code:                codeSecret,
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
+		Resource:            resource,
 		ValidUntil:          timeutil.TimeStamp(validUntil.Unix()),
 	}
 	if err := db.Insert(ctx, code); err != nil {
