@@ -27,3 +27,4 @@ dependency is accepted or implemented.
 | [0001](0001-agent-native-forge-domain.md) | Proposed | Domain authority |
 | [0002](0002-native-semantic-mcp.md) | Implemented | Native semantic MCP |
 | [0003](0003-authoritative-work-planning.md) | Proposed | Authoritative work planning |
+| [0004](0004-safe-mcp-work-planning.md) | Proposed | Safe MCP work planning |
