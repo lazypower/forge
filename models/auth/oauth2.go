@@ -102,6 +102,7 @@ func BuiltinApplications() map[string]*BuiltinOAuth2Application {
 }
 
 func mcpBuiltinRedirectURIs() []string {
+	// Released Codex clients append the callback ID even when issuer-bound authorization responses are advertised.
 	digest := sha256.Sum256([]byte(setting.MCPResource()))
 	callbackID := base64.RawURLEncoding.EncodeToString(digest[:9])
 	return []string{
@@ -199,13 +200,25 @@ func upgradeMCPBuiltinApplication(ctx context.Context, app *OAuth2Application) e
 		{"http://127.0.0.1", "https://127.0.0.1"},
 		{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
 	}
-	if app == nil || app.ConfidentialClient || !slices.ContainsFunc(legacyRedirects, func(redirects []string) bool {
+	if app == nil || app.ConfidentialClient || !(slices.ContainsFunc(legacyRedirects, func(redirects []string) bool {
 		return slices.Equal(app.RedirectURIs, redirects)
-	}) {
+	}) || validPreviousMCPBuiltinRedirects(app.RedirectURIs)) {
 		return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
 	}
 	app.RedirectURIs = BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
 	return updateOAuth2Application(ctx, app)
+}
+
+func validPreviousMCPBuiltinRedirects(redirects []string) bool {
+	if len(redirects) != 4 || redirects[0] != "http://127.0.0.1" || redirects[1] != "http://127.0.0.1/callback" || redirects[3] != "https://127.0.0.1" {
+		return false
+	}
+	callbackID, ok := strings.CutPrefix(redirects[2], "http://127.0.0.1/callback/")
+	if !ok {
+		return false
+	}
+	digestPrefix, err := base64.RawURLEncoding.DecodeString(callbackID)
+	return err == nil && len(digestPrefix) == 9 && base64.RawURLEncoding.EncodeToString(digestPrefix) == callbackID
 }
 
 // IsMCPBuiltinOAuth2Application reports whether app is Forge's fixed MCP client.
