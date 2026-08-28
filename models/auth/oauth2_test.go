@@ -66,19 +66,22 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 }
 
 func TestMCPBuiltinOAuth2Application(t *testing.T) {
+	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/")()
 	builtin := auth_model.BuiltinApplications()[auth_model.MCPBuiltinOAuth2ApplicationClientID]
 	require.NotNil(t, builtin)
 	assert.Equal(t, auth_model.MCPBuiltinOAuth2ApplicationName, builtin.ConfigName)
 	assert.Equal(t, "Forge MCP", builtin.DisplayName)
 	assert.True(t, builtin.MCPExclusive)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"}, builtin.RedirectURIs)
+	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe", "https://127.0.0.1"}, builtin.RedirectURIs)
 	assert.True(t, auth_model.IsMCPBuiltinOAuth2Application(&auth_model.OAuth2Application{ClientID: auth_model.MCPBuiltinOAuth2ApplicationClientID}))
 }
 
 func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
+	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/")()
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, false)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	expectedRedirects := []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe", "https://127.0.0.1"}
 
 	require.NoError(t, auth_model.Init(t.Context()))
 	_, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
@@ -89,15 +92,20 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
 	require.NoError(t, err)
 	assert.False(t, app.ConfidentialClient)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"}, app.RedirectURIs)
+	assert.Equal(t, expectedRedirects, app.RedirectURIs)
 
-	app.RedirectURIs = []string{"http://127.0.0.1", "https://127.0.0.1"}
-	_, err = db.GetEngine(t.Context()).ID(app.ID).Cols("redirect_uris").Update(app)
-	require.NoError(t, err)
-	require.NoError(t, auth_model.Init(t.Context()))
-	upgraded, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"}, upgraded.RedirectURIs)
+	for _, legacyRedirects := range [][]string{
+		{"http://127.0.0.1", "https://127.0.0.1"},
+		{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
+	} {
+		app.RedirectURIs = legacyRedirects
+		_, err = db.GetEngine(t.Context()).ID(app.ID).Cols("redirect_uris").Update(app)
+		require.NoError(t, err)
+		require.NoError(t, auth_model.Init(t.Context()))
+		upgraded, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+		require.NoError(t, err)
+		assert.Equal(t, expectedRedirects, upgraded.RedirectURIs)
+	}
 
 	setting.MCP.Enabled = false
 	require.NoError(t, auth_model.Init(t.Context()))

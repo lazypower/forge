@@ -5,8 +5,10 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base32"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -93,10 +95,21 @@ func BuiltinApplications() map[string]*BuiltinOAuth2Application {
 	m[MCPBuiltinOAuth2ApplicationClientID] = &BuiltinOAuth2Application{
 		ConfigName:   MCPBuiltinOAuth2ApplicationName,
 		DisplayName:  "Forge MCP",
-		RedirectURIs: []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
+		RedirectURIs: mcpBuiltinRedirectURIs(),
 		MCPExclusive: true,
 	}
 	return m
+}
+
+func mcpBuiltinRedirectURIs() []string {
+	digest := sha256.Sum256([]byte(setting.MCPResource()))
+	callbackID := base64.RawURLEncoding.EncodeToString(digest[:9])
+	return []string{
+		"http://127.0.0.1",
+		"http://127.0.0.1/callback",
+		"http://127.0.0.1/callback/" + callbackID,
+		"https://127.0.0.1",
+	}
 }
 
 func Init(ctx context.Context) error {
@@ -182,8 +195,13 @@ func validMCPBuiltinApplication(app *OAuth2Application) bool {
 }
 
 func upgradeMCPBuiltinApplication(ctx context.Context, app *OAuth2Application) error {
-	legacyRedirects := []string{"http://127.0.0.1", "https://127.0.0.1"}
-	if app == nil || app.ConfidentialClient || !slices.Equal(app.RedirectURIs, legacyRedirects) {
+	legacyRedirects := [][]string{
+		{"http://127.0.0.1", "https://127.0.0.1"},
+		{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
+	}
+	if app == nil || app.ConfidentialClient || !slices.ContainsFunc(legacyRedirects, func(redirects []string) bool {
+		return slices.Equal(app.RedirectURIs, redirects)
+	}) {
 		return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
 	}
 	app.RedirectURIs = BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
