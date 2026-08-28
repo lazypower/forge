@@ -79,20 +79,32 @@ client named `Forge MCP`, with client ID
 not create this registration merely because OAuth is the default. Once created,
 the registration is retained if MCP is later disabled or temporarily rolled
 back to PAT. It accepts only the fixed loopback redirects
-`http://127.0.0.1`, `http://127.0.0.1/callback`, and `https://127.0.0.1`;
-the existing public-client rule permits a dynamic port on the HTTP loopback
-redirects while preserving their paths. The `/callback` redirect supports
-Codex's stable pre-registered client callback. Forge advertises
+`http://127.0.0.1`, `http://127.0.0.1/callback`,
+`http://127.0.0.1/callback/<callback-id>`, and `https://127.0.0.1`. Forge
+derives `<callback-id>` from the canonical MCP resource URL using Codex's
+SHA-256 callback binding. The existing public-client rule permits a dynamic
+port on the HTTP loopback redirects while preserving their paths. The
+`/callback` redirect supports Codex's stable pre-registered client callback;
+the derived redirect supports released Codex clients that still append the
+server-specific callback ID. Forge advertises
 authorization-response issuer support and includes its OAuth issuer in
 authorization responses so clients can bind the shared callback to this Forge
 instance. The client is not selected through `DEFAULT_APPLICATIONS` and cannot
 issue a general Forge API token.
 
-The first startup with the `/callback` profile upgrades an existing Forge MCP
-client registration in place. An older Forge release expects the previous
-two-redirect profile and will refuse to start after that upgrade. To roll back,
-stop Forge, back up the database, and restore the previous redirect set before
-starting the older image:
+The first startup with a newer callback profile upgrades a recognized earlier
+Forge MCP client registration in place. An older Forge release expects its
+previous redirect profile and will refuse to start after that upgrade. To roll
+back to v1.27.2.7, stop Forge, back up the database, and restore its redirect
+set before starting the older image:
+
+```sql
+UPDATE oauth2_application
+SET redirect_uris = '["http://127.0.0.1","http://127.0.0.1/callback","https://127.0.0.1"]'
+WHERE client_id = 'f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31';
+```
+
+For releases older than v1.27.2.7, restore the original two-redirect profile:
 
 ```sql
 UPDATE oauth2_application

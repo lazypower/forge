@@ -18,3 +18,5 @@
 - Include authorship attribution in issue and pull request comments
 - Always add `Assisted-By` trailers to commit messages in format `Assisted-by: AGENT_NAME:MODEL_VERSION`
 - Never add `Co-Authored-By` `Signed-off-by` trailer to commit messages. Sign off must be done by a human.
+- Treat details of any running Forge installation as sensitive operational data. Do not publish its hostnames, DNS names, IP addresses, tailnet identities, live URLs, account names, deployment topology, or environment-specific identifiers in repository files, commits, pull requests, issues, comments, release notes, test fixtures, examples, or logs unless a human explicitly authorizes that disclosure. Use reserved example domains and addresses with synthetic identifiers.
+- Before publishing repository changes or collaboration text, scan the complete diff, commit messages, and proposed external text for secrets and sensitive operational details.
