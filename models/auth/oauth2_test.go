@@ -76,12 +76,26 @@ func TestMCPBuiltinOAuth2Application(t *testing.T) {
 
 func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
+	defer test_module.MockVariableValue(&setting.MCP.Enabled, false)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+
+	require.NoError(t, auth_model.Init(t.Context()))
+	_, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.True(t, auth_model.IsErrOauthClientIDInvalid(err))
+
+	setting.MCP.Enabled = true
 	require.NoError(t, auth_model.Init(t.Context()))
 	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
 	require.NoError(t, err)
 	assert.False(t, app.ConfidentialClient)
 
+	setting.MCP.Enabled = false
+	require.NoError(t, auth_model.Init(t.Context()))
+	disabled, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.Equal(t, app.ID, disabled.ID)
+
+	setting.MCP.Enabled = true
 	setting.MCP.Authentication = setting.MCPAuthenticationProfilePAT
 	require.NoError(t, auth_model.Init(t.Context()))
 	retained, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)

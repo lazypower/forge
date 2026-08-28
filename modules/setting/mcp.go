@@ -38,7 +38,7 @@ var MCP = struct {
 	ExecutionTimeout    time.Duration `ini:"EXECUTION_TIMEOUT"`
 }{
 	Enabled:             false,
-	Authentication:      MCPAuthenticationProfilePAT,
+	Authentication:      MCPAuthenticationProfileOAuth,
 	MaxRequestBodyBytes: defaultMCPMaxRequestBodyBytes,
 	MaxInFlightRequests: defaultMCPMaxInFlightRequests,
 	ExecutionTimeout:    defaultMCPExecutionTimeout,

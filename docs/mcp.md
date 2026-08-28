@@ -7,42 +7,7 @@ tool over stateless Streamable HTTP.
 ## Enablement and endpoint
 
 Configure an externally correct HTTPS `ROOT_URL`, including any installation
-subpath, and enable the endpoint:
-
-```ini
-ROOT_URL = https://forge.example/forge/
-
-[mcp]
-ENABLED = true
-AUTHENTICATION = pat
-```
-
-The endpoint is the configured subpath followed by `/mcp`; the example above is
-`https://forge.example/forge/mcp`. Forge refuses to enable MCP when `ROOT_URL`
-is not HTTPS.
-
-## Authentication profiles
-
-`AUTHENTICATION` selects exactly one MCP credential profile. It defaults to
-`pat` to preserve the experimental bootstrap. Forge never accepts PAT and
-OAuth credentials concurrently at the MCP endpoint.
-
-### PAT bootstrap
-
-Create a personal access token whose only scope is `read:repository`. Store the
-token in the MCP client's secret storage separately from the server URL, and
-send it only as an `Authorization: Bearer …` header. Tokens in URLs, forms,
-cookies, Basic authentication, OAuth tokens, and Actions credentials are not
-accepted. Do not embed the token in configuration that may be logged or shared.
-
-This PAT bootstrap is experimental and is not MCP OAuth conformance. Forge PATs
-do not expire and are not audience-bound, so the same PAT may be accepted by
-other Forge API endpoints. The OAuth profile described below is not active
-while `AUTHENTICATION = pat`.
-
-### OAuth profile
-
-The implemented OAuth profile is opt-in:
+subpath, configure Forge's matching OAuth issuer, and enable the endpoint:
 
 ```ini
 ROOT_URL = https://forge.example/forge/
@@ -53,7 +18,53 @@ JWT_CLAIM_ISSUER = https://forge.example/forge
 
 [mcp]
 ENABLED = true
-AUTHENTICATION = oauth
+```
+
+The endpoint is the configured subpath followed by `/mcp`; the example above is
+`https://forge.example/forge/mcp`. Forge refuses to enable MCP when `ROOT_URL`
+is not HTTPS.
+
+## Authentication profiles
+
+`AUTHENTICATION` selects exactly one MCP credential profile. It defaults to
+`oauth`. Forge never accepts PAT and OAuth credentials concurrently at the MCP
+endpoint. Enabling MCP with the default profile fails closed unless the OAuth
+and issuer requirements below are satisfied.
+
+### Temporary PAT fallback
+
+For a temporary rollback during the transition to OAuth, select PAT explicitly:
+
+```ini
+[mcp]
+ENABLED = true
+AUTHENTICATION = pat
+```
+
+Create a personal access token whose only scope is `read:repository`. Store the
+token in the MCP client's secret storage separately from the server URL, and
+send it only as an `Authorization: Bearer …` header. Tokens in URLs, forms,
+cookies, Basic authentication, OAuth tokens, and Actions credentials are not
+accepted. Do not embed the token in configuration that may be logged or shared.
+
+This fallback is temporary, is expected to remain only for a few release
+cycles, and is not MCP OAuth conformance. Forge PATs do not expire and are not
+audience-bound, so the same PAT may be accepted by other Forge API endpoints.
+The OAuth profile described below is not active while `AUTHENTICATION = pat`.
+
+### OAuth profile
+
+OAuth is the primary and default profile:
+
+```ini
+ROOT_URL = https://forge.example/forge/
+
+[oauth2]
+ENABLED = true
+JWT_CLAIM_ISSUER = https://forge.example/forge
+
+[mcp]
+ENABLED = true
 ```
 
 `JWT_CLAIM_ISSUER` is required and, ignoring one trailing slash, must equal
@@ -61,8 +72,12 @@ AUTHENTICATION = oauth
 `/.well-known/openid-configuration` endpoint is the authorization-server
 discovery authority. Both values must use HTTPS.
 
-Forge registers and retains one built-in public client named `Forge MCP`, with
-client ID `f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. It accepts only the fixed
+When MCP is enabled with the OAuth profile, Forge registers one built-in public
+client named `Forge MCP`, with client ID
+`f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. Endpoint-disabled installations do
+not create this registration merely because OAuth is the default. Once created,
+the registration is retained if MCP is later disabled or temporarily rolled
+back to PAT. It accepts only the fixed
 loopback redirects `http://127.0.0.1` and `https://127.0.0.1`; the existing
 public-client rule permits a dynamic port on the HTTP loopback redirect. The
 client is not selected through `DEFAULT_APPLICATIONS` and cannot issue a
