@@ -516,6 +516,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 	m.Get("/sitemap.xml", sitemapEnabled, optExploreSignIn, HomeSitemap)
 	m.Group("/.well-known", func() {
 		m.Get("/openid-configuration", auth.OIDCWellKnown)
+		m.Get("/oauth-authorization-server", auth.OIDCWellKnown)
 		m.Group("", func() {
 			m.Get("/nodeinfo", NodeInfoLinks)
 			m.Get("/webfinger", WebfingerQuery)

@@ -118,6 +118,37 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	assert.EqualError(t, auth_model.Init(t.Context()), `unknown oauth2 application: "forge-mcp"`)
 }
 
+func TestMCPBuiltinOAuth2ApplicationRejectsDrift(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
+	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	require.NoError(t, auth_model.Init(t.Context()))
+	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name         string
+		confidential bool
+		redirects    []string
+	}{
+		{name: "confidential client", confidential: true, redirects: app.RedirectURIs},
+		{name: "unexpected redirects", redirects: []string{"http://127.0.0.1", "https://attacker.example/callback"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := *app
+			candidate.ConfidentialClient = test.confidential
+			candidate.RedirectURIs = test.redirects
+			_, err := db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(&candidate)
+			require.NoError(t, err)
+			assert.EqualError(t, auth_model.Init(t.Context()), "the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
+
+			_, err = db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(app)
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestOAuth2Application_GenerateClientSecret(t *testing.T) {
 	assert.NoError(t, unittest.PrepareTestDatabase())
 	app := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Application{ID: 1})

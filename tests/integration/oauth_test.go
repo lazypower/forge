@@ -1367,6 +1367,7 @@ func testOAuthGrantScopesClaimAllGroups(t *testing.T) {
 func testOAuth2WellKnown(t *testing.T) {
 	defer test.MockVariableValue(&setting.AppURL, "https://try.gitea.io/")()
 	urlOpenidConfiguration := "/.well-known/openid-configuration"
+	urlOAuthAuthorizationServer := "/.well-known/oauth-authorization-server"
 
 	t.Run("WellKnown", func(t *testing.T) {
 		req := NewRequest(t, "GET", urlOpenidConfiguration)
@@ -1379,6 +1380,16 @@ func testOAuth2WellKnown(t *testing.T) {
 		assert.Equal(t, "https://try.gitea.io/login/oauth/userinfo", respMap["userinfo_endpoint"])
 		assert.Equal(t, "https://try.gitea.io/login/oauth/introspect", respMap["introspection_endpoint"])
 		assert.Equal(t, []any{"RS256"}, respMap["id_token_signing_alg_values_supported"])
+		assert.Equal(t, true, respMap["authorization_response_iss_parameter_supported"])
+	})
+
+	t.Run("OAuthAuthorizationServer", func(t *testing.T) {
+		req := NewRequest(t, "GET", urlOAuthAuthorizationServer)
+		resp := MakeRequest(t, req, http.StatusOK)
+		respMap := DecodeJSON(t, resp, map[string]any{})
+		assert.Equal(t, "https://try.gitea.io", respMap["issuer"])
+		assert.Equal(t, "https://try.gitea.io/login/oauth/authorize", respMap["authorization_endpoint"])
+		assert.Equal(t, "https://try.gitea.io/login/oauth/access_token", respMap["token_endpoint"])
 		assert.Equal(t, true, respMap["authorization_response_iss_parameter_supported"])
 	})
 
