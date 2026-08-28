@@ -107,6 +107,12 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 		assert.Equal(t, expectedRedirects, upgraded.RedirectURIs)
 	}
 
+	setting.AppURL = "https://moved-forge.example/"
+	require.NoError(t, auth_model.Init(t.Context()))
+	moved, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/hM8DzwbydX6Q", "https://127.0.0.1"}, moved.RedirectURIs)
+
 	setting.MCP.Enabled = false
 	require.NoError(t, auth_model.Init(t.Context()))
 	disabled, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
@@ -141,6 +147,7 @@ func TestMCPBuiltinOAuth2ApplicationRejectsDrift(t *testing.T) {
 	}{
 		{name: "confidential client", confidential: true, redirects: app.RedirectURIs},
 		{name: "unexpected redirects", redirects: []string{"http://127.0.0.1", "https://attacker.example/callback"}},
+		{name: "malformed callback ID", redirects: []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/not-a-callback-id", "https://127.0.0.1"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
