@@ -33,6 +33,8 @@ func TestLoadMCPFrom(t *testing.T) {
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.False(t, MCP.Enabled)
+		assert.False(t, MCP.WorkInspectionEnabled)
+		assert.False(t, MCP.WorkMutationEnabled)
 		assert.Equal(t, MCPAuthenticationProfileOAuth, MCP.Authentication)
 		assert.EqualValues(t, defaultMCPMaxRequestBodyBytes, MCP.MaxRequestBodyBytes)
 		assert.Equal(t, defaultMCPMaxInFlightRequests, MCP.MaxInFlightRequests)
@@ -57,10 +59,26 @@ EXECUTION_TIMEOUT = 15s
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.True(t, MCP.Enabled)
+		assert.False(t, MCP.WorkInspectionEnabled)
+		assert.False(t, MCP.WorkMutationEnabled)
 		assert.Equal(t, MCPAuthenticationProfileOAuth, MCP.Authentication)
 		assert.EqualValues(t, 2048, MCP.MaxRequestBodyBytes)
 		assert.Equal(t, 4, MCP.MaxInFlightRequests)
 		assert.Equal(t, 15*time.Second, MCP.ExecutionTimeout)
+	})
+
+	t.Run("work capabilities require explicit enablement", func(t *testing.T) {
+		MCP = original
+		cfg, err := NewConfigProviderFromData(`
+[mcp]
+WORK_INSPECTION_ENABLED = true
+WORK_MUTATION_ENABLED = true
+`)
+		require.NoError(t, err)
+
+		require.NoError(t, loadMCPFrom(cfg))
+		assert.True(t, MCP.WorkInspectionEnabled)
+		assert.True(t, MCP.WorkMutationEnabled)
 	})
 
 	t.Run("explicit PAT fallback", func(t *testing.T) {

@@ -29,6 +29,9 @@ type (
 
 	// Type is used to identify the type of project in question and ownership
 	Type uint8
+
+	// PlanningState identifies whether a repository Project participates in Work planning.
+	PlanningState uint8
 )
 
 const (
@@ -40,6 +43,15 @@ const (
 
 	// TypeOrganization is a project that is tied to an organisation
 	TypeOrganization
+)
+
+const (
+	// PlanningStateDisabled leaves a Project as an ordinary board.
+	PlanningStateDisabled PlanningState = iota
+	// PlanningStateDraft allows inspection without publishing ready work.
+	PlanningStateDraft
+	// PlanningStateActive publishes the valid ready frontier.
+	PlanningStateActive
 )
 
 // ErrProjectNotExist represents a "ProjectNotExist" kind of error.
@@ -83,18 +95,19 @@ func (err ErrProjectColumnNotExist) Unwrap() error {
 
 // Project represents a project
 type Project struct {
-	ID           int64                  `xorm:"pk autoincr"`
-	Title        string                 `xorm:"INDEX NOT NULL"`
-	Description  string                 `xorm:"TEXT"`
-	OwnerID      int64                  `xorm:"INDEX"`
-	Owner        *user_model.User       `xorm:"-"`
-	RepoID       int64                  `xorm:"INDEX"`
-	Repo         *repo_model.Repository `xorm:"-"`
-	CreatorID    int64                  `xorm:"NOT NULL"`
-	IsClosed     bool                   `xorm:"INDEX"`
-	TemplateType TemplateType           `xorm:"'board_type'"` // TODO: rename the column to template_type
-	CardType     CardType
-	Type         Type
+	ID            int64                  `xorm:"pk autoincr"`
+	Title         string                 `xorm:"INDEX NOT NULL"`
+	Description   string                 `xorm:"TEXT"`
+	OwnerID       int64                  `xorm:"INDEX"`
+	Owner         *user_model.User       `xorm:"-"`
+	RepoID        int64                  `xorm:"INDEX"`
+	Repo          *repo_model.Repository `xorm:"-"`
+	CreatorID     int64                  `xorm:"NOT NULL"`
+	IsClosed      bool                   `xorm:"INDEX"`
+	TemplateType  TemplateType           `xorm:"'board_type'"` // TODO: rename the column to template_type
+	CardType      CardType
+	Type          Type
+	PlanningState PlanningState `xorm:"INDEX NOT NULL DEFAULT 0"`
 
 	RenderedContent template.HTML `xorm:"-"`
 	NumOpenIssues   int64         `xorm:"-"`
@@ -173,6 +186,16 @@ func (p *Project) IsRepositoryProject() bool {
 	return p.Type == TypeRepository
 }
 
+// HasValidPlanningState reports whether the persisted planning state is known.
+func (p *Project) HasValidPlanningState() bool {
+	return IsPlanningStateValid(p.PlanningState)
+}
+
+// IsPlanningEnabled reports whether the Project explicitly opted into planning.
+func (p *Project) IsPlanningEnabled() bool {
+	return p.PlanningState == PlanningStateDraft || p.PlanningState == PlanningStateActive
+}
+
 func (p *Project) CanBeAccessedByOwnerRepo(ownerID int64, repo *repo_model.Repository) bool {
 	if p.Type == TypeRepository {
 		return repo != nil && p.RepoID == repo.ID // if a project belongs to a repository, then its OwnerID is 0 and can be ignored
@@ -196,6 +219,16 @@ func GetCardConfig() []CardConfig {
 func IsTypeValid(p Type) bool {
 	switch p {
 	case TypeIndividual, TypeRepository, TypeOrganization:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsPlanningStateValid checks if a Project planning state is valid.
+func IsPlanningStateValid(state PlanningState) bool {
+	switch state {
+	case PlanningStateDisabled, PlanningStateDraft, PlanningStateActive:
 		return true
 	default:
 		return false
@@ -269,6 +302,9 @@ func NewProject(ctx context.Context, p *Project) error {
 
 	if !IsTypeValid(p.Type) {
 		return util.NewInvalidArgumentErrorf("project type is not valid")
+	}
+	if !IsPlanningStateValid(p.PlanningState) {
+		return util.NewInvalidArgumentErrorf("project planning state is not valid")
 	}
 
 	p.Title = util.EllipsisDisplayString(p.Title, 255)

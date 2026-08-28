@@ -31,17 +31,21 @@ const (
 )
 
 var MCP = struct {
-	Enabled             bool
-	Authentication      MCPAuthenticationProfile
-	MaxRequestBodyBytes int64         `ini:"MAX_REQUEST_BODY_BYTES"`
-	MaxInFlightRequests int           `ini:"MAX_IN_FLIGHT_REQUESTS"`
-	ExecutionTimeout    time.Duration `ini:"EXECUTION_TIMEOUT"`
+	Enabled               bool
+	WorkInspectionEnabled bool `ini:"WORK_INSPECTION_ENABLED"`
+	WorkMutationEnabled   bool `ini:"WORK_MUTATION_ENABLED"`
+	Authentication        MCPAuthenticationProfile
+	MaxRequestBodyBytes   int64         `ini:"MAX_REQUEST_BODY_BYTES"`
+	MaxInFlightRequests   int           `ini:"MAX_IN_FLIGHT_REQUESTS"`
+	ExecutionTimeout      time.Duration `ini:"EXECUTION_TIMEOUT"`
 }{
-	Enabled:             false,
-	Authentication:      MCPAuthenticationProfileOAuth,
-	MaxRequestBodyBytes: defaultMCPMaxRequestBodyBytes,
-	MaxInFlightRequests: defaultMCPMaxInFlightRequests,
-	ExecutionTimeout:    defaultMCPExecutionTimeout,
+	Enabled:               false,
+	WorkInspectionEnabled: false,
+	WorkMutationEnabled:   false,
+	Authentication:        MCPAuthenticationProfileOAuth,
+	MaxRequestBodyBytes:   defaultMCPMaxRequestBodyBytes,
+	MaxInFlightRequests:   defaultMCPMaxInFlightRequests,
+	ExecutionTimeout:      defaultMCPExecutionTimeout,
 }
 
 func loadMCPFrom(rootCfg ConfigProvider) error {

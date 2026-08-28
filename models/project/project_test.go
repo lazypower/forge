@@ -9,6 +9,7 @@ import (
 	"gitea.dev/models/db"
 	"gitea.dev/models/unittest"
 	"gitea.dev/modules/timeutil"
+	"gitea.dev/modules/util"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -28,6 +29,27 @@ func TestIsProjectTypeValid(t *testing.T) {
 
 	for _, v := range cases {
 		assert.Equal(t, v.valid, IsTypeValid(v.typ))
+	}
+}
+
+func TestIsPlanningStateValid(t *testing.T) {
+	const unknownState PlanningState = 255
+
+	tests := []struct {
+		state   PlanningState
+		valid   bool
+		enabled bool
+	}{
+		{state: PlanningStateDisabled, valid: true},
+		{state: PlanningStateDraft, valid: true, enabled: true},
+		{state: PlanningStateActive, valid: true, enabled: true},
+		{state: unknownState},
+	}
+
+	for _, tt := range tests {
+		project := Project{PlanningState: tt.state}
+		assert.Equal(t, tt.valid, project.HasValidPlanningState())
+		assert.Equal(t, tt.enabled, project.IsPlanningEnabled())
 	}
 }
 
@@ -61,15 +83,17 @@ func TestProject(t *testing.T) {
 	}
 
 	assert.NoError(t, NewProject(t.Context(), project))
+	assert.Equal(t, PlanningStateDisabled, project.PlanningState)
 
-	_, err := GetProjectByID(t.Context(), project.ID)
+	projectFromDB, err := GetProjectByID(t.Context(), project.ID)
 	assert.NoError(t, err)
+	assert.Equal(t, PlanningStateDisabled, projectFromDB.PlanningState)
 
 	// Update project
 	project.Title = "Updated title"
 	assert.NoError(t, UpdateProject(t.Context(), project))
 
-	projectFromDB, err := GetProjectByID(t.Context(), project.ID)
+	projectFromDB, err = GetProjectByID(t.Context(), project.ID)
 	assert.NoError(t, err)
 
 	assert.Equal(t, project.Title, projectFromDB.Title)
@@ -81,6 +105,22 @@ func TestProject(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.True(t, projectFromDB.IsClosed)
+}
+
+func TestNewProjectRejectsUnknownPlanningState(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+
+	project := &Project{
+		Type:          TypeRepository,
+		Title:         "Unknown planning state",
+		RepoID:        1,
+		CreatorID:     2,
+		PlanningState: 255,
+	}
+	err := NewProject(t.Context(), project)
+	assert.ErrorIs(t, err, util.ErrInvalidArgument)
+	assert.EqualError(t, err, "project planning state is not valid")
+	assert.Zero(t, project.ID)
 }
 
 func TestProjectsSort(t *testing.T) {

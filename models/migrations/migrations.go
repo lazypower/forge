@@ -421,6 +421,7 @@ func prepareMigrationTasks() []*migration {
 		newMigration(341, "Convert legacy MSSQL DATETIME columns to DATETIME2", v1_27.FixLegacyMSSQLDateTimeColumns),
 		newMigration(342, "Add scoped workflows schema", v1_27.AddScopedWorkflowsSchema),
 		newMigration(343, "Add resource to OAuth2 authorization codes", v1_27.AddResourceToOAuth2AuthorizationCode),
+		newMigration(344, "Add planning state to projects", v1_27.AddPlanningStateToProject),
 	}
 	return preparedMigrations
 }
