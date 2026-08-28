@@ -93,7 +93,7 @@ func BuiltinApplications() map[string]*BuiltinOAuth2Application {
 	m[MCPBuiltinOAuth2ApplicationClientID] = &BuiltinOAuth2Application{
 		ConfigName:   MCPBuiltinOAuth2ApplicationName,
 		DisplayName:  "Forge MCP",
-		RedirectURIs: []string{"http://127.0.0.1", "https://127.0.0.1"},
+		RedirectURIs: []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
 		MCPExclusive: true,
 	}
 	return m
@@ -143,7 +143,9 @@ func Init(ctx context.Context) error {
 			clientIDsToDelete.Add(app.ClientID) // if a registered app is not in the "add" list, it should be deleted
 		}
 		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID && mcpOAuthEnabled && !validMCPBuiltinApplication(app) {
-			return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
+			if err := upgradeMCPBuiltinApplication(ctx, app); err != nil {
+				return err
+			}
 		}
 	}
 	for _, app := range registeredApps {
@@ -172,11 +174,20 @@ func Init(ctx context.Context) error {
 }
 
 func validMCPBuiltinApplication(app *OAuth2Application) bool {
-	if app == nil || app.ConfidentialClient || len(app.RedirectURIs) != 2 {
+	if app == nil || app.ConfidentialClient {
 		return false
 	}
 	want := BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
 	return slices.Equal(app.RedirectURIs, want)
+}
+
+func upgradeMCPBuiltinApplication(ctx context.Context, app *OAuth2Application) error {
+	legacyRedirects := []string{"http://127.0.0.1", "https://127.0.0.1"}
+	if app == nil || app.ConfidentialClient || !slices.Equal(app.RedirectURIs, legacyRedirects) {
+		return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
+	}
+	app.RedirectURIs = BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
+	return updateOAuth2Application(ctx, app)
 }
 
 // IsMCPBuiltinOAuth2Application reports whether app is Forge's fixed MCP client.

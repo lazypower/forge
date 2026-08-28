@@ -149,7 +149,7 @@ func testMCPResourceProfile(t *testing.T) {
 	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
 	require.NoError(t, err)
 	require.False(t, app.ConfidentialClient)
-	assert.Equal(t, []string{"http://127.0.0.1", "https://127.0.0.1"}, app.RedirectURIs)
+	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"}, app.RedirectURIs)
 
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: user.ID, Scope: "read:repository"}
@@ -200,6 +200,7 @@ func testMCPResourceProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_request", duplicateAuthorizeRedirect.Query().Get("error"))
 	assert.Equal(t, "resource parameter must not be repeated", duplicateAuthorizeRedirect.Query().Get("error_description"))
+	assert.Equal(t, oauth2_provider.TokenIssuer(), duplicateAuthorizeRedirect.Query().Get("iss"))
 
 	authorizeResp := login.MakeRequest(t, NewRequest(t, http.MethodGet, "/login/oauth/authorize?"+authorizeQuery.Encode()), http.StatusOK)
 	authorizeHTML := NewHTMLParser(t, authorizeResp.Body)
@@ -222,6 +223,7 @@ func testMCPResourceProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, persistedCode)
 	assert.Equal(t, resource, persistedCode.Resource)
+	assert.Equal(t, oauth2_provider.TokenIssuer(), grantRedirect.Query().Get("iss"))
 	require.NoError(t, persistedCode.Invalidate(t.Context()))
 
 	exchange(newCode(resource), "", http.StatusBadRequest)
@@ -1365,6 +1367,7 @@ func testOAuthGrantScopesClaimAllGroups(t *testing.T) {
 func testOAuth2WellKnown(t *testing.T) {
 	defer test.MockVariableValue(&setting.AppURL, "https://try.gitea.io/")()
 	urlOpenidConfiguration := "/.well-known/openid-configuration"
+	urlOAuthAuthorizationServer := "/.well-known/oauth-authorization-server"
 
 	t.Run("WellKnown", func(t *testing.T) {
 		req := NewRequest(t, "GET", urlOpenidConfiguration)
@@ -1377,6 +1380,17 @@ func testOAuth2WellKnown(t *testing.T) {
 		assert.Equal(t, "https://try.gitea.io/login/oauth/userinfo", respMap["userinfo_endpoint"])
 		assert.Equal(t, "https://try.gitea.io/login/oauth/introspect", respMap["introspection_endpoint"])
 		assert.Equal(t, []any{"RS256"}, respMap["id_token_signing_alg_values_supported"])
+		assert.Equal(t, true, respMap["authorization_response_iss_parameter_supported"])
+	})
+
+	t.Run("OAuthAuthorizationServer", func(t *testing.T) {
+		req := NewRequest(t, "GET", urlOAuthAuthorizationServer)
+		resp := MakeRequest(t, req, http.StatusOK)
+		respMap := DecodeJSON(t, resp, map[string]any{})
+		assert.Equal(t, "https://try.gitea.io", respMap["issuer"])
+		assert.Equal(t, "https://try.gitea.io/login/oauth/authorize", respMap["authorization_endpoint"])
+		assert.Equal(t, "https://try.gitea.io/login/oauth/access_token", respMap["token_endpoint"])
+		assert.Equal(t, true, respMap["authorization_response_iss_parameter_supported"])
 	})
 
 	t.Run("WellKnownWithIssuer", func(t *testing.T) {

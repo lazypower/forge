@@ -31,6 +31,7 @@ func TestValidateMCPAuthorizationRequest(t *testing.T) {
 	resource := setting.MCPResource()
 
 	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "http://127.0.0.1:49152"))
+	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "http://127.0.0.1:49152/callback"))
 	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "https://127.0.0.1"))
 
 	tests := []struct {
@@ -44,7 +45,7 @@ func TestValidateMCPAuthorizationRequest(t *testing.T) {
 		{name: "extra scope", resource: resource, scope: "read:repository read:user", method: "S256", challenge: "challenge", redirect: "http://127.0.0.1:49152"},
 		{name: "plain PKCE", resource: resource, scope: "read:repository", method: "plain", challenge: "challenge", redirect: "http://127.0.0.1:49152"},
 		{name: "missing challenge", resource: resource, scope: "read:repository", method: "S256", redirect: "http://127.0.0.1:49152"},
-		{name: "unregistered callback path", resource: resource, scope: "read:repository", method: "S256", challenge: "challenge", redirect: "http://127.0.0.1:49152/callback"},
+		{name: "unregistered callback path", resource: resource, scope: "read:repository", method: "S256", challenge: "challenge", redirect: "http://127.0.0.1:49152/other"},
 		{name: "non-loopback HTTP", resource: resource, scope: "read:repository", method: "S256", challenge: "challenge", redirect: "http://192.0.2.1"},
 		{name: "confidential client", resource: resource, scope: "read:repository", method: "S256", challenge: "challenge", redirect: "http://127.0.0.1:49152", mutate: func(app *auth_model.OAuth2Application) { app.ConfidentialClient = true }},
 	}

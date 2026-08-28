@@ -69,19 +69,39 @@ ENABLED = true
 
 `JWT_CLAIM_ISSUER` is required and, ignoring one trailing slash, must equal
 `ROOT_URL`. Forge rejects external issuer aliases because its own
-`/.well-known/openid-configuration` endpoint is the authorization-server
-discovery authority. Both values must use HTTPS.
+`/.well-known/openid-configuration` and
+`/.well-known/oauth-authorization-server` endpoints are the
+authorization-server discovery authority. Both values must use HTTPS.
 
 When MCP is enabled with the OAuth profile, Forge registers one built-in public
 client named `Forge MCP`, with client ID
 `f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. Endpoint-disabled installations do
 not create this registration merely because OAuth is the default. Once created,
 the registration is retained if MCP is later disabled or temporarily rolled
-back to PAT. It accepts only the fixed
-loopback redirects `http://127.0.0.1` and `https://127.0.0.1`; the existing
-public-client rule permits a dynamic port on the HTTP loopback redirect. The
-client is not selected through `DEFAULT_APPLICATIONS` and cannot issue a
-general Forge API token.
+back to PAT. It accepts only the fixed loopback redirects
+`http://127.0.0.1`, `http://127.0.0.1/callback`, and `https://127.0.0.1`;
+the existing public-client rule permits a dynamic port on the HTTP loopback
+redirects while preserving their paths. The `/callback` redirect supports
+Codex's stable pre-registered client callback. Forge advertises
+authorization-response issuer support and includes its OAuth issuer in
+authorization responses so clients can bind the shared callback to this Forge
+instance. The client is not selected through `DEFAULT_APPLICATIONS` and cannot
+issue a general Forge API token.
+
+The first startup with the `/callback` profile upgrades an existing Forge MCP
+client registration in place. An older Forge release expects the previous
+two-redirect profile and will refuse to start after that upgrade. To roll back,
+stop Forge, back up the database, and restore the previous redirect set before
+starting the older image:
+
+```sql
+UPDATE oauth2_application
+SET redirect_uris = '["http://127.0.0.1","https://127.0.0.1"]'
+WHERE client_id = 'f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31';
+```
+
+This changes only the built-in client's registered redirects; its grants and
+tokens are retained.
 
 Authorization requires the exact MCP resource URL, `read:repository` as the
 only scope, and PKCE `S256`. The resource is the configured `ROOT_URL`,
