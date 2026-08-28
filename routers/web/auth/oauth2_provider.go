@@ -364,6 +364,7 @@ func AuthorizeOAuth(ctx *context.Context) {
 			handleServerError(ctx, form.State, form.RedirectURI)
 			return
 		}
+		addAuthorizationResponseIssuer(redirect)
 		// Update nonce to reflect the new session
 		if len(form.Nonce) > 0 {
 			err := grant.SetNonce(ctx, form.Nonce)
@@ -504,6 +505,7 @@ func GrantApplicationOAuth(ctx *context.Context) {
 		handleServerError(ctx, form.State, form.RedirectURI)
 		return
 	}
+	addAuthorizationResponseIssuer(redirect)
 	ctx.Redirect(redirect.String(), http.StatusSeeOther)
 }
 
@@ -837,5 +839,12 @@ func handleAuthorizeError(ctx *context.Context, authErr AuthorizeError, redirect
 	q.Set("error_description", authErr.ErrorDescription)
 	q.Set("state", authErr.State)
 	redirect.RawQuery = q.Encode()
+	addAuthorizationResponseIssuer(redirect)
 	ctx.Redirect(redirect.String(), http.StatusSeeOther)
+}
+
+func addAuthorizationResponseIssuer(redirect *url.URL) {
+	query := redirect.Query()
+	query.Set("iss", oauth2_provider.TokenIssuer())
+	redirect.RawQuery = query.Encode()
 }

@@ -77,11 +77,15 @@ client named `Forge MCP`, with client ID
 `f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. Endpoint-disabled installations do
 not create this registration merely because OAuth is the default. Once created,
 the registration is retained if MCP is later disabled or temporarily rolled
-back to PAT. It accepts only the fixed
-loopback redirects `http://127.0.0.1` and `https://127.0.0.1`; the existing
-public-client rule permits a dynamic port on the HTTP loopback redirect. The
-client is not selected through `DEFAULT_APPLICATIONS` and cannot issue a
-general Forge API token.
+back to PAT. It accepts only the fixed loopback redirects
+`http://127.0.0.1`, `http://127.0.0.1/callback`, and `https://127.0.0.1`;
+the existing public-client rule permits a dynamic port on the HTTP loopback
+redirects while preserving their paths. The `/callback` redirect supports
+Codex's stable pre-registered client callback. Forge advertises
+authorization-response issuer support and includes its OAuth issuer in
+authorization responses so clients can bind the shared callback to this Forge
+instance. The client is not selected through `DEFAULT_APPLICATIONS` and cannot
+issue a general Forge API token.
 
 Authorization requires the exact MCP resource URL, `read:repository` as the
 only scope, and PKCE `S256`. The resource is the configured `ROOT_URL`,

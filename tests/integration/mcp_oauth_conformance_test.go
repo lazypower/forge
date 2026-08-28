@@ -183,7 +183,11 @@ func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL str
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK || resp.Request.URL.Scheme != "http" || resp.Request.URL.Host != strings.TrimPrefix(callbackURL, "http://") {
+		callback, err := url.Parse(callbackURL)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK || resp.Request.URL.Scheme != callback.Scheme || resp.Request.URL.Host != callback.Host || resp.Request.URL.Path != callback.Path {
 			return nil, fmt.Errorf("Forge did not complete the loopback callback: status %d", resp.StatusCode)
 		}
 		if callbackCount.Load() != 1 {
@@ -298,6 +302,7 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer callbackServer.Close()
+	callbackURL := callbackServer.URL + "/callback"
 
 	trace := &mcpOAuthHTTPTrace{base: forgeServer.Client().Transport, requests: map[string]int{}}
 	httpClient := &http.Client{Transport: trace, Jar: login.jar}
@@ -308,8 +313,8 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 			ClientID: auth_model.MCPBuiltinOAuth2ApplicationClientID,
 			Issuer:   strings.TrimSuffix(setting.AppURL, "/"),
 		},
-		RedirectURL:              callbackServer.URL,
-		AuthorizationCodeFetcher: authorizeMCPThroughForge(t, httpClient, callbackServer.URL, &callbackCount, &authorizationCode),
+		RedirectURL:              callbackURL,
+		AuthorizationCodeFetcher: authorizeMCPThroughForge(t, httpClient, callbackURL, &callbackCount, &authorizationCode),
 		Client:                   httpClient,
 		NewTokenSource: func(ctx context.Context, config *oauth2.Config, token *oauth2.Token) (oauth2.TokenSource, error) {
 			initialClientToken = token
