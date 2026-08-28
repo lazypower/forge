@@ -112,20 +112,39 @@ func NewJwtRegisteredClaimsFromUser(clientID string, grantUserID int64, exp *jwt
 	// to retrieve the configuration information. This MUST also be identical to the "iss" Claim value in ID Tokens issued from this Issuer.
 	// * https://accounts.google.com/.well-known/openid-configuration
 	// * https://github.com/login/oauth/.well-known/openid-configuration
-	issuer := setting.OAuth2.JWTClaimIssuer
-	if issuer == "" {
-		issuer = strings.TrimSuffix(setting.AppURL, "/")
-	}
 	return jwt.RegisteredClaims{
-		Issuer:    issuer,
+		Issuer:    TokenIssuer(),
 		Audience:  []string{clientID},
 		Subject:   strconv.FormatInt(grantUserID, 10),
 		ExpiresAt: exp,
 	}
 }
 
+// TokenIssuer returns the configured Forge OAuth token issuer.
+func TokenIssuer() string {
+	if setting.OAuth2.JWTClaimIssuer != "" {
+		return setting.OAuth2.JWTClaimIssuer
+	}
+	return strings.TrimSuffix(setting.AppURL, "/")
+}
+
 func NewAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {
-	if setting.OAuth2.InvalidateRefreshTokens {
+	return newAccessTokenResponse(ctx, grant, "", setting.OAuth2.InvalidateRefreshTokens, serverKey, clientKey)
+}
+
+// NewMCPAccessTokenResponse issues tokens bound to the canonical MCP resource.
+func NewMCPAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {
+	if !setting.MCP.Enabled || setting.MCP.Authentication != setting.MCPAuthenticationProfileOAuth || grant == nil || grant.Scope != string(auth.AccessTokenScopeReadRepository) {
+		return nil, &AccessTokenError{
+			ErrorCode:        AccessTokenErrorCodeInvalidGrant,
+			ErrorDescription: "grant does not match the MCP profile",
+		}
+	}
+	return newAccessTokenResponse(ctx, grant, setting.MCPResource(), true, serverKey, clientKey)
+}
+
+func newAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, resource string, rotateRefresh bool, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {
+	if rotateRefresh {
 		if err := grant.IncreaseCounter(ctx); err != nil {
 			return nil, &AccessTokenError{
 				ErrorCode:        AccessTokenErrorCodeInvalidGrant,
@@ -135,12 +154,18 @@ func NewAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, server
 	}
 	// generate access token to access the API
 	expirationDate := timeutil.TimeStampNow().Add(setting.OAuth2.AccessTokenExpirationTime)
+	accessClaims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(expirationDate.AsTime()),
+	}
+	if resource != "" {
+		accessClaims.Issuer = TokenIssuer()
+		accessClaims.Subject = strconv.FormatInt(grant.UserID, 10)
+		accessClaims.Audience = jwt.ClaimStrings{resource}
+	}
 	accessToken := &Token{
-		GrantID: grant.ID,
-		Kind:    KindAccessToken,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationDate.AsTime()),
-		},
+		GrantID:          grant.ID,
+		Kind:             KindAccessToken,
+		RegisteredClaims: accessClaims,
 	}
 	signedAccessToken, err := accessToken.SignToken(serverKey)
 	if err != nil {
@@ -152,13 +177,19 @@ func NewAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, server
 
 	// generate refresh token to request an access token after it expired later
 	refreshExpirationDate := timeutil.TimeStampNow().Add(setting.OAuth2.RefreshTokenExpirationTime * 60 * 60).AsTime()
+	refreshClaims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(refreshExpirationDate),
+	}
+	if resource != "" {
+		refreshClaims.Issuer = TokenIssuer()
+		refreshClaims.Subject = strconv.FormatInt(grant.UserID, 10)
+		refreshClaims.Audience = jwt.ClaimStrings{resource}
+	}
 	refreshToken := &Token{
-		GrantID: grant.ID,
-		Counter: grant.Counter,
-		Kind:    KindRefreshToken,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(refreshExpirationDate),
-		},
+		GrantID:          grant.ID,
+		Counter:          grant.Counter,
+		Kind:             KindRefreshToken,
+		RegisteredClaims: refreshClaims,
 	}
 	signedRefreshToken, err := refreshToken.SignToken(serverKey)
 	if err != nil {

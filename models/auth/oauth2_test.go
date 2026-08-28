@@ -4,11 +4,14 @@
 package auth_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	auth_model "gitea.dev/models/auth"
 	"gitea.dev/models/unittest"
+	"gitea.dev/modules/setting"
+	test_module "gitea.dev/modules/test"
 	"gitea.dev/modules/timeutil"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +25,7 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 	t.Run("GenerateSetsValidUntil", func(t *testing.T) {
 		grant := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Grant{ID: 1})
 		expectedValidUntil := timeutil.TimeStamp(time.Now().Unix() + 600)
-		code, err := grant.GenerateNewAuthorizationCode(t.Context(), "http://127.0.0.1/", "", "")
+		code, err := grant.GenerateNewAuthorizationCode(t.Context(), "http://127.0.0.1/", "", "", "https://forge.example/mcp")
 		require.NoError(t, err)
 		assert.Equal(t, expectedValidUntil, code.ValidUntil)
 		assert.False(t, code.IsExpired())
@@ -31,6 +34,10 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 		code2, err := auth_model.GetOAuth2AuthorizationByCode(t.Context(), code.Code)
 		require.NoError(t, err)
 		assert.Equal(t, code.Code, code2.Code)
+		assert.Equal(t, "https://forge.example/mcp", code2.Resource)
+		assert.Equal(t, grant.Scope, code2.Grant.Scope)
+		_, grantHasResource := reflect.TypeFor[auth_model.OAuth2Grant]().FieldByName("Resource")
+		assert.False(t, grantHasResource)
 
 		assert.NoError(t, code.Invalidate(t.Context()))
 
@@ -48,13 +55,57 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 
 	t.Run("Invalidate", func(t *testing.T) {
 		grant := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Grant{ID: 1})
-		code, err := grant.GenerateNewAuthorizationCode(t.Context(), "http://127.0.0.1/", "", "")
+		code, err := grant.GenerateNewAuthorizationCode(t.Context(), "http://127.0.0.1/", "", "", "")
 		require.NoError(t, err)
 		require.NotNil(t, code)
 		require.NoError(t, code.Invalidate(t.Context()))
 		unittest.AssertNotExistsBean(t, &auth_model.OAuth2AuthorizationCode{Code: code.Code})
 		assert.ErrorIs(t, code.Invalidate(t.Context()), auth_model.ErrOAuth2AuthorizationCodeInvalidated)
 	})
+}
+
+func TestMCPBuiltinOAuth2Application(t *testing.T) {
+	builtin := auth_model.BuiltinApplications()[auth_model.MCPBuiltinOAuth2ApplicationClientID]
+	require.NotNil(t, builtin)
+	assert.Equal(t, auth_model.MCPBuiltinOAuth2ApplicationName, builtin.ConfigName)
+	assert.Equal(t, "Forge MCP", builtin.DisplayName)
+	assert.True(t, builtin.MCPExclusive)
+	assert.Equal(t, []string{"http://127.0.0.1", "https://127.0.0.1"}, builtin.RedirectURIs)
+	assert.True(t, auth_model.IsMCPBuiltinOAuth2Application(&auth_model.OAuth2Application{ClientID: auth_model.MCPBuiltinOAuth2ApplicationClientID}))
+}
+
+func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	defer test_module.MockVariableValue(&setting.MCP.Enabled, false)()
+	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+
+	require.NoError(t, auth_model.Init(t.Context()))
+	_, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.True(t, auth_model.IsErrOauthClientIDInvalid(err))
+
+	setting.MCP.Enabled = true
+	require.NoError(t, auth_model.Init(t.Context()))
+	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.False(t, app.ConfidentialClient)
+
+	setting.MCP.Enabled = false
+	require.NoError(t, auth_model.Init(t.Context()))
+	disabled, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.Equal(t, app.ID, disabled.ID)
+
+	setting.MCP.Enabled = true
+	setting.MCP.Authentication = setting.MCPAuthenticationProfilePAT
+	require.NoError(t, auth_model.Init(t.Context()))
+	retained, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.Equal(t, app.ID, retained.ID)
+
+	originalDefaults := setting.OAuth2.DefaultApplications
+	defer func() { setting.OAuth2.DefaultApplications = originalDefaults }()
+	setting.OAuth2.DefaultApplications = append([]string{}, auth_model.MCPBuiltinOAuth2ApplicationName)
+	assert.EqualError(t, auth_model.Init(t.Context()), `unknown oauth2 application: "forge-mcp"`)
 }
 
 func TestOAuth2Application_GenerateClientSecret(t *testing.T) {
@@ -257,10 +308,11 @@ func TestOAuth2Grant_ScopeContains(t *testing.T) {
 func TestOAuth2Grant_GenerateNewAuthorizationCode(t *testing.T) {
 	assert.NoError(t, unittest.PrepareTestDatabase())
 	grant := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Grant{ID: 1})
-	code, err := grant.GenerateNewAuthorizationCode(t.Context(), "https://example2.com/callback", "CjvyTLSdR47G5zYenDA-eDWW4lRrO8yvjcWwbD_deOg", "S256")
+	code, err := grant.GenerateNewAuthorizationCode(t.Context(), "https://example2.com/callback", "CjvyTLSdR47G5zYenDA-eDWW4lRrO8yvjcWwbD_deOg", "S256", "https://forge.example/mcp")
 	assert.NoError(t, err)
 	assert.NotNil(t, code)
 	assert.Greater(t, len(code.Code), 32) // secret length > 32
+	assert.Equal(t, "https://forge.example/mcp", code.Resource)
 }
 
 func TestOAuth2Grant_TableName(t *testing.T) {

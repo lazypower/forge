@@ -6,6 +6,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -21,6 +22,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOAuthResourceParameterAtMostOnce(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *http.Request
+		want bool
+	}{
+		{name: "absent", req: httptest.NewRequest(http.MethodGet, "/login/oauth/authorize", nil), want: true},
+		{name: "single", req: httptest.NewRequest(http.MethodGet, "/login/oauth/authorize?resource=https%3A%2F%2Fforge.example%2Fmcp", nil), want: true},
+		{name: "duplicate query", req: httptest.NewRequest(http.MethodGet, "/login/oauth/authorize?resource=one&resource=two", nil), want: false},
+		{name: "query and form", req: httptest.NewRequest(http.MethodPost, "/login/oauth/access_token?resource=one", strings.NewReader("resource=two")), want: false},
+	}
+	tests[3].req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, oauthResourceParameterAtMostOnce(test.req))
+		})
+	}
+}
 
 func createAndParseToken(t *testing.T, grant *auth.OAuth2Grant) *oauth2_provider.OIDCToken {
 	signingKey, err := oauth2_provider.CreateJWTSigningKey("HS256", make([]byte, 32))

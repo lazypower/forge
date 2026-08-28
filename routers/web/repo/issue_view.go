@@ -1031,6 +1031,11 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxProtectionChecks(ctx *context.
 		prInfo.ProtectedBranchRule = pb
 	}
 
+	if prInfo.Inspection == nil || prInfo.Inspection.Policy == nil {
+		ctx.ServerError("InspectPullRequest", errors.New("pull request inspection policy unavailable"))
+		return
+	}
+
 	prInfo.prepareMergeBoxStatusCheckData(ctx)
 	if ctx.Written() {
 		return
@@ -1050,10 +1055,11 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxProtectedRules(ctx *context.Co
 
 	pull := prInfo.issue.PullRequest
 	data := prInfo.MergeBoxData
+	policy := prInfo.Inspection.Policy
 
-	data.isBlockedByApprovals = !issues_model.HasEnoughApprovals(ctx, pb, pull)
+	data.isBlockedByApprovals = policy.HasBlocker(pull_service.PullRequestInspectionBlockerApprovals)
 	if data.isBlockedByApprovals {
-		grantedApprovals := issues_model.GetGrantedApprovalsCount(ctx, pb, pull)
+		grantedApprovals := policy.GrantedApprovals
 		blockerInfo := ctx.Locale.Tr("repo.pulls.blocked_by_approvals", grantedApprovals, pb.RequiredApprovals)
 		if pb.EnableApprovalsWhitelist {
 			blockerInfo = ctx.Locale.Tr("repo.pulls.blocked_by_approvals_whitelisted", grantedApprovals, pb.RequiredApprovals)
@@ -1061,22 +1067,22 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxProtectedRules(ctx *context.Co
 		data.infoProtectionBlockers.AddErrorItem(blockerInfo)
 	}
 
-	data.isBlockedByRejection = issues_model.MergeBlockedByRejectedReview(ctx, pb, pull)
+	data.isBlockedByRejection = policy.HasBlocker(pull_service.PullRequestInspectionBlockerRejectedReview)
 	if data.isBlockedByRejection {
 		data.infoProtectionBlockers.AddErrorItem(ctx.Locale.Tr("repo.pulls.blocked_by_rejection"))
 	}
 
-	data.isBlockedByOfficialReviewRequests = issues_model.MergeBlockedByOfficialReviewRequests(ctx, pb, pull)
+	data.isBlockedByOfficialReviewRequests = policy.HasBlocker(pull_service.PullRequestInspectionBlockerOfficialReviewRequest)
 	if data.isBlockedByOfficialReviewRequests {
 		data.infoProtectionBlockers.AddErrorItem(ctx.Locale.Tr("repo.pulls.blocked_by_official_review_requests"))
 	}
 
-	data.isBlockedByOutdatedBranch = issues_model.MergeBlockedByOutdatedBranch(pb, pull)
+	data.isBlockedByOutdatedBranch = policy.HasBlocker(pull_service.PullRequestInspectionBlockerOutdatedBranch)
 	if data.isBlockedByOutdatedBranch {
 		data.infoProtectionBlockers.AddErrorItem(ctx.Locale.Tr("repo.pulls.blocked_by_outdated_branch"))
 	}
 
-	data.isBlockedByChangedProtectedFiles = len(pull.ChangedProtectedFiles) != 0
+	data.isBlockedByChangedProtectedFiles = policy.HasBlocker(pull_service.PullRequestInspectionBlockerProtectedFiles)
 	if data.isBlockedByChangedProtectedFiles {
 		detailItems := escapeStringSliceToHTML(pull.ChangedProtectedFiles)
 		data.infoProtectionBlockers.AddErrorItem(

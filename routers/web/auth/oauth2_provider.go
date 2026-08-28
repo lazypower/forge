@@ -267,6 +267,26 @@ func AuthorizeOAuth(ctx *context.Context) {
 		}, "")
 		return
 	}
+	if !oauthResourceParameterAtMostOnce(ctx.Req) {
+		handleAuthorizeError(ctx, AuthorizeError{
+			ErrorCode:        ErrorCodeInvalidRequest,
+			ErrorDescription: "resource parameter must not be repeated",
+			State:            form.State,
+		}, form.RedirectURI)
+		return
+	}
+	if err := oauth2_provider.ValidateMCPAuthorizationRequest(app, form.Resource, form.Scope, form.CodeChallengeMethod, form.CodeChallenge, form.RedirectURI); err != nil {
+		errorCode := ErrorCodeInvalidRequest
+		if auth.IsMCPBuiltinOAuth2Application(app) && form.Scope != string(auth.AccessTokenScopeReadRepository) {
+			errorCode = ErrorCodeInvalidScope
+		}
+		handleAuthorizeError(ctx, AuthorizeError{
+			ErrorCode:        errorCode,
+			ErrorDescription: "request does not match the registered client profile",
+			State:            form.State,
+		}, form.RedirectURI)
+		return
+	}
 
 	if form.ResponseType != "code" {
 		handleAuthorizeError(ctx, AuthorizeError{
@@ -334,7 +354,7 @@ func AuthorizeOAuth(ctx *context.Context) {
 	// Redirect if user already granted access and the application is confidential or trusted otherwise
 	// I.e. always require authorization for untrusted public clients as recommended by RFC 6749 Section 10.2
 	if (app.ConfidentialClient || app.SkipSecondaryAuthorization) && grant != nil {
-		code, err := grant.GenerateNewAuthorizationCode(ctx, form.RedirectURI, form.CodeChallenge, form.CodeChallengeMethod)
+		code, err := grant.GenerateNewAuthorizationCode(ctx, form.RedirectURI, form.CodeChallenge, form.CodeChallengeMethod, form.Resource)
 		if err != nil {
 			handleServerError(ctx, form.State, form.RedirectURI)
 			return
@@ -363,6 +383,7 @@ func AuthorizeOAuth(ctx *context.Context) {
 	ctx.Data["RedirectURI"] = form.RedirectURI
 	ctx.Data["State"] = form.State
 	ctx.Data["Scope"] = form.Scope
+	ctx.Data["Resource"] = form.Resource
 	ctx.Data["Nonce"] = form.Nonce
 	if user != nil {
 		ctx.Data["ApplicationCreatorLinkHTML"] = template.HTML(fmt.Sprintf(`<a href="%s">@%s</a>`, html.EscapeString(user.HomeLink()), html.EscapeString(user.Name)))
@@ -389,6 +410,12 @@ func AuthorizeOAuth(ctx *context.Context) {
 		log.Error(err.Error())
 		return
 	}
+	err = ctx.Session.Set("resource", form.Resource)
+	if err != nil {
+		handleServerError(ctx, form.State, form.RedirectURI)
+		log.Error(err.Error())
+		return
+	}
 	// Here we're just going to try to release the session early
 	if err := ctx.Session.Release(); err != nil {
 		// we'll tolerate errors here as they *should* get saved elsewhere
@@ -405,7 +432,7 @@ func GrantApplicationOAuth(ctx *context.Context) {
 	}
 
 	if ctx.Session.Get("client_id") != form.ClientID || ctx.Session.Get("state") != form.State ||
-		ctx.Session.Get("redirect_uri") != form.RedirectURI {
+		ctx.Session.Get("redirect_uri") != form.RedirectURI || oauthSessionString(ctx, "resource") != form.Resource {
 		ctx.HTTPError(http.StatusBadRequest)
 		return
 	}
@@ -422,6 +449,14 @@ func GrantApplicationOAuth(ctx *context.Context) {
 	app, err := auth.GetOAuth2ApplicationByClientID(ctx, form.ClientID)
 	if err != nil {
 		ctx.ServerError("GetOAuth2ApplicationByClientID", err)
+		return
+	}
+	if err := oauth2_provider.ValidateMCPAuthorizationRequest(app, form.Resource, form.Scope, oauthSessionString(ctx, "CodeChallengeMethod"), oauthSessionString(ctx, "CodeChallenge"), form.RedirectURI); err != nil {
+		handleAuthorizeError(ctx, AuthorizeError{
+			State:            form.State,
+			ErrorDescription: "request does not match the registered client profile",
+			ErrorCode:        ErrorCodeInvalidRequest,
+		}, form.RedirectURI)
 		return
 	}
 	grant, err := app.GetGrantByUserID(ctx, ctx.Doer.ID)
@@ -459,7 +494,7 @@ func GrantApplicationOAuth(ctx *context.Context) {
 	codeChallenge, _ = ctx.Session.Get("CodeChallenge").(string)
 	codeChallengeMethod, _ = ctx.Session.Get("CodeChallengeMethod").(string)
 
-	code, err := grant.GenerateNewAuthorizationCode(ctx, form.RedirectURI, codeChallenge, codeChallengeMethod)
+	code, err := grant.GenerateNewAuthorizationCode(ctx, form.RedirectURI, codeChallenge, codeChallengeMethod, form.Resource)
 	if err != nil {
 		handleServerError(ctx, form.State, form.RedirectURI)
 		return
@@ -470,6 +505,11 @@ func GrantApplicationOAuth(ctx *context.Context) {
 		return
 	}
 	ctx.Redirect(redirect.String(), http.StatusSeeOther)
+}
+
+func oauthSessionString(ctx *context.Context, key string) string {
+	value, _ := ctx.Session.Get(key).(string)
+	return value
 }
 
 // OIDCWellKnown generates JSON so OIDC clients know Gitea's capabilities
@@ -512,6 +552,13 @@ func OIDCKeys(ctx *context.Context) {
 // AccessTokenOAuth manages all access token requests by the client
 func AccessTokenOAuth(ctx *context.Context) {
 	form := *web.GetForm(ctx).(*forms.AccessTokenForm)
+	if !oauthResourceParameterAtMostOnce(ctx.Req) {
+		handleAccessTokenError(ctx, oauth2_provider.AccessTokenError{
+			ErrorCode:        oauth2_provider.AccessTokenErrorCodeInvalidRequest,
+			ErrorDescription: "resource parameter must not be repeated",
+		})
+		return
+	}
 	// if there is no ClientID or ClientSecret in the request body, fill these fields by the Authorization header and ensure the provided field matches the Authorization header
 	if form.ClientID == "" || form.ClientSecret == "" {
 		if authHeader := ctx.Req.Header.Get("Authorization"); authHeader != "" {
@@ -571,6 +618,13 @@ func AccessTokenOAuth(ctx *context.Context) {
 	}
 }
 
+func oauthResourceParameterAtMostOnce(req *http.Request) bool {
+	if err := req.ParseForm(); err != nil {
+		return false
+	}
+	return len(req.Form["resource"]) <= 1
+}
+
 func handleRefreshToken(ctx *context.Context, form forms.AccessTokenForm, serverKey, clientKey oauth2_provider.JWTSigningKey) {
 	app, err := auth.GetOAuth2ApplicationByClientID(ctx, form.ClientID)
 	if err != nil {
@@ -620,9 +674,17 @@ func handleRefreshToken(ctx *context.Context, form forms.AccessTokenForm, server
 		})
 		return
 	}
+	resource, err := oauth2_provider.ValidateMCPRefresh(app, grant, token, form.Resource)
+	if err != nil {
+		handleAccessTokenError(ctx, oauth2_provider.AccessTokenError{
+			ErrorCode:        oauth2_provider.AccessTokenErrorCodeInvalidGrant,
+			ErrorDescription: "refresh token does not match the registered client profile",
+		})
+		return
+	}
 
 	// check if token got already used
-	if setting.OAuth2.InvalidateRefreshTokens && (grant.Counter != token.Counter || token.Counter == 0) {
+	if (setting.OAuth2.InvalidateRefreshTokens || resource != "") && (grant.Counter != token.Counter || token.Counter == 0) {
 		handleAccessTokenError(ctx, oauth2_provider.AccessTokenError{
 			ErrorCode:        oauth2_provider.AccessTokenErrorCodeUnauthorizedClient,
 			ErrorDescription: "token was already used",
@@ -630,7 +692,13 @@ func handleRefreshToken(ctx *context.Context, form forms.AccessTokenForm, server
 		log.Warn("A client tried to use a refresh token for grant_id = %d was used twice!", grant.ID)
 		return
 	}
-	accessToken, tokenErr := oauth2_provider.NewAccessTokenResponse(ctx, grant, serverKey, clientKey)
+	var accessToken *oauth2_provider.AccessTokenResponse
+	var tokenErr *oauth2_provider.AccessTokenError
+	if resource != "" {
+		accessToken, tokenErr = oauth2_provider.NewMCPAccessTokenResponse(ctx, grant, serverKey, clientKey)
+	} else {
+		accessToken, tokenErr = oauth2_provider.NewAccessTokenResponse(ctx, grant, serverKey, clientKey)
+	}
 	if tokenErr != nil {
 		handleAccessTokenError(ctx, *tokenErr)
 		return
@@ -681,6 +749,13 @@ func handleAuthorizationCode(ctx *context.Context, form forms.AccessTokenForm, s
 		})
 		return
 	}
+	if err := oauth2_provider.ValidateMCPAuthorizationCodeExchange(app, authorizationCode.Grant, form.Resource, authorizationCode.Resource); err != nil {
+		handleAccessTokenError(ctx, oauth2_provider.AccessTokenError{
+			ErrorCode:        oauth2_provider.AccessTokenErrorCodeInvalidGrant,
+			ErrorDescription: "authorization code does not match the registered client profile",
+		})
+		return
+	}
 	// check if code verifier authorizes the client, PKCE support
 	if !authorizationCode.ValidateCodeChallenge(form.CodeVerifier) {
 		handleAccessTokenError(ctx, oauth2_provider.AccessTokenError{
@@ -718,7 +793,13 @@ func handleAuthorizationCode(ctx *context.Context, form forms.AccessTokenForm, s
 		})
 		return
 	}
-	resp, tokenErr := oauth2_provider.NewAccessTokenResponse(ctx, authorizationCode.Grant, serverKey, clientKey)
+	var resp *oauth2_provider.AccessTokenResponse
+	var tokenErr *oauth2_provider.AccessTokenError
+	if authorizationCode.Resource != "" {
+		resp, tokenErr = oauth2_provider.NewMCPAccessTokenResponse(ctx, authorizationCode.Grant, serverKey, clientKey)
+	} else {
+		resp, tokenErr = oauth2_provider.NewAccessTokenResponse(ctx, authorizationCode.Grant, serverKey, clientKey)
+	}
 	if tokenErr != nil {
 		handleAccessTokenError(ctx, *tokenErr)
 		return
