@@ -96,9 +96,18 @@ expiry.
 
 OAuth Protected Resource Metadata is served by the official MCP Go SDK at the
 application-scoped `/.well-known/oauth-protected-resource/mcp` route and is
-advertised explicitly in bearer challenges. This Step 6 profile has not yet
-completed the real-client interoperability and negative conformance pass
-scheduled for Step 7, so operators must not claim MCP OAuth conformance yet.
+advertised explicitly in bearer challenges. Forge's automated interoperability
+coverage drives the official MCP Go SDK v1.7.0 client from that challenge
+through protected-resource and Forge OpenID Connect discovery, authorization
+with the fixed public client and PKCE `S256`, loopback callback, token exchange,
+an authenticated `pull_request.inspect` call, access-token refresh, refresh
+rotation and replay rejection. It also covers the fixed profile's scope,
+audience, credential-profile, unrelated-resource, configured-subpath, and TLS
+trust boundaries. This substantiates interoperability for the initial
+pre-registered, read-only Forge MCP OAuth profile only. It does not claim
+Dynamic Client Registration, Client ID Metadata Documents, external issuer
+aliases, per-installation refresh families, mutations, rate limiting, or
+broader MCP or OAuth conformance.
 
 ## Tool and limits
 
