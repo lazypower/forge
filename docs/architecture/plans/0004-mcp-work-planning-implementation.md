@@ -6,6 +6,8 @@
 - Decision: [ADR 0004](../decisions/0004-safe-mcp-work-planning.md)
 - Domain authority:
   [ADR 0003](../decisions/0003-authoritative-work-planning.md)
+- Execution projection:
+  [ADR 0004 swarm orchestration](0004-mcp-work-planning-orchestration.md)
 
 ## Purpose and delivery rules
 
