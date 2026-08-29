@@ -121,10 +121,12 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	thirdRef := created["third"].(string)
 	assert.Equal(t, "draft", revised["workPlan"].(map[string]any)["planningState"])
 
+	countsBeforeRevisionReplay := mcpWorkDogfoodNativeCounts(t)
 	replayed := callMCPWorkTool(t, writeSession, "work_plan.revise", revisionInput)
 	assertCommittedMCPWorkResult(t, replayed, "applied", true, "available")
 	assert.Equal(t, created, replayed["createdReferences"])
 	assert.Equal(t, revised["operation"].(map[string]any)["id"], replayed["operation"].(map[string]any)["id"])
+	assert.Equal(t, countsBeforeRevisionReplay, mcpWorkDogfoodNativeCounts(t))
 
 	changedReplay := map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef,
@@ -159,7 +161,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	staleActivationInput := map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-stale-plan-token-0001",
 		"expectedPlanToken": planToken,
-		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "draft", "desired": "active"}},
+		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "active", "desired": "draft"}},
 	}
 	staleActivation := callMCPWorkTool(t, writeSession, "work_plan.revise", staleActivationInput)
 	assert.Equal(t, "rejected", staleActivation["status"])
@@ -254,6 +256,17 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_item.revise", staleItemInput), stale)
 	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_item.revise", closeInput), closed)
 	assert.Equal(t, countsBeforeFullReplay, mcpWorkDogfoodNativeCounts(t))
+	readInspectionAfterReplay := callMCPWorkTool(t, readSession, "work_plan.inspect", map[string]any{
+		"repository": beginInput["repository"], "workPlan": planRef,
+	})
+	assert.Equal(t, "available", readInspectionAfterReplay["status"])
+	assert.Equal(t, "active", readInspectionAfterReplay["workPlan"].(map[string]any)["planningState"])
+	assertMCPReadyFrontier(t, readInspectionAfterReplay["workPlan"].(map[string]any), planRef+"/"+secondRef)
+	humanReplayResponse := human.MakeRequest(t, NewRequest(t, http.MethodGet, fmt.Sprintf("/%s/projects/%d", repo.FullName(), projectID)), http.StatusOK)
+	humanReplayHTML := NewHTMLParser(t, humanReplayResponse.Body)
+	assert.Equal(t, 1, humanReplayHTML.Find(`.work-plan[data-work-plan-state="active"]`).Length())
+	assert.Equal(t, 1, humanReplayHTML.Find(`[data-work-context="`+planRef+`/`+secondRef+`"]`).Length())
+	assert.Contains(t, humanReplayHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority; software actor unverified.")
 
 	writeApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID)
 	require.NoError(t, err)

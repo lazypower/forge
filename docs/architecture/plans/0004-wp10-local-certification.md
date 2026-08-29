@@ -33,7 +33,7 @@ in the immutable handoff for this branch so this file does not point at itself.
 | Claim | Result | Evidence |
 | --- | --- | --- |
 | Endpoint and both Work layers default off | Passed | Production-default discovery tests and `custom/conf/app.example.ini`. |
-| Existing pull inspection remains available with Work flags off | Passed | The dogfood scenario disables mutation, verifies advertised tools, then calls `pull_request.inspect` with the official client. |
+| Existing pull inspection remains available with Work flags off | Passed | Discovery coverage proves both Work flags off advertises pull inspection only; the dogfood also disables mutation and calls `pull_request.inspect` with the official client. |
 | Read OAuth cannot mutate | Passed | Read inspection succeeds and the same profile receives a permission-neutral mutation rejection. |
 | PAT remains read-only | Passed | Integration discovery and official-client PAT coverage. |
 | Explicit Project opt-in | Passed | Migration and lifecycle tests prove ordinary Projects stay `disabled` until a guarded begin operation. |
@@ -90,22 +90,23 @@ second mutation series reused the first run's exact idempotency keys.
 | Step | First run | Identical replay |
 | --- | --- | --- |
 | 1. Read profile | Plan inspection succeeded; mutation was rejected without disclosure. | Read behavior remained unchanged. |
-| 2. Write profile | Exact write OAuth profile issued only after explicit consent. | The same authority envelope was reused. |
+| 2. Write profile | Exact write OAuth profile issued only after explicit consent. | The same consented authority envelope authorized every replayed mutation. |
 | 3. Begin draft | One native repository Project entered `draft`. | Same operation identity returned with `replayed=true`. |
 | 4. Bounded revision | Three native Issues, three memberships, and a two-edge chain were created atomically. | Same operation identity returned; no native row count changed. |
-| 5. Revision replay | Immediate replay added no Issue, membership, dependency, event, receipt, artifact link, or event link. | Full-series replay retained the same zero-delta result. |
+| 5. Revision replay | Immediate replay left every native-fact and narrow-receipt count unchanged. | Full-series replay retained the same zero-delta result. |
 | 6. Changed request, same key | `idempotency_conflict` disclosed no earlier target. | The same conflict recurred without new state. |
 | 7. Cycle | The complete cycle attempt rolled back. | The same rejected outcome returned without new state. |
 | 8. Activate | Current just-in-time token activated the Project and composed the first ready Issue. | Same activation operation replayed without new state. |
-| 9. Stale activation | An older token returned `conflict`; planning state did not change. | Same rejection replayed without new state. |
+| 9. Stale activation | An older token with the current expected state returned `conflict`; planning state did not change. | Same rejection replayed without new state. |
 | 10. Close ready Issue | Native Issue close made the next dependent ready on reinspection. | Same close operation replayed without new state. |
-| 11. Human surface | Project state, ready context, and honest unverified-software provenance matched MCP. | Native and human views remained unchanged. |
+| 11. Human surface | Project state, ready context, and honest unverified-software provenance matched MCP. | The human page was fetched again and still matched the post-replay MCP view. |
 | 12. Disable mutation | Write tools and the issuable write profile disappeared; existing pull inspection still succeeded. | Disabled discovery remained pull-compatible. |
 
-The scenario additionally verifies the expected native Project, Issue,
-membership, dependency, receipt, artifact-link, and event-link counts before
-and after replay. It stores no projection, raw credential, raw idempotency key,
-or request body, and it makes no execution or verified-actor claim.
+The scenario additionally snapshots native Project, Issue, membership,
+dependency, comment, receipt, artifact-link, and event-link counts and asserts
+that both the immediate revision replay and the complete mutation-series replay
+leave them unchanged. It stores no projection, raw credential, raw idempotency
+key, or request body, and it makes no execution or verified-actor claim.
 
 ## Certification gate outcomes
 
@@ -128,10 +129,10 @@ dedicated disposable environment; connection values are intentionally omitted.
 | Local links | Verify relative Markdown targets in the same implementation set | Passed: 138 targets. |
 | Whitespace | `git diff --check` | Passed. |
 
-The Go lint crash is the known Go 1.27 analyzer incompatibility identified by
-the repository instructions. Formatting, compilation, race tests, integration,
-and both database runs provide independent source evidence; the analyzer crash
-is retained as a toolchain exception rather than relabeled as a pass.
+The Go lint crash is a Go 1.27 analyzer incompatibility. Formatting,
+compilation, race tests, integration, and both database runs provide independent
+source evidence; the analyzer crash is retained as a toolchain exception rather
+than relabeled as a pass.
 
 ## Remaining prerequisite and non-goals
 

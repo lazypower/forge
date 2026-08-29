@@ -281,8 +281,8 @@ Project state and receipts remain native inert data; disabling an interface does
 not rewrite Projects or delete provenance. Do not run an older image against an
 upgraded database unless that exact downgrade is documented and tested. The
 safe old-image rollback is to stop Forge and restore the pre-upgrade database
-backup. The fixed read-client redirect rollback below is a separate,
-version-specific compatibility procedure.
+backup. The fixed read-client redirect rollback documented earlier is a
+separate, version-specific compatibility procedure.
 
 ## Pull inspection tool and limits
 
