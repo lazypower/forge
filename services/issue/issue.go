@@ -212,7 +212,16 @@ func GetRefEndNamesAndURLs(issues []*issues_model.Issue, repoLink string) (map[i
 
 // deleteIssue deletes the issue
 func deleteIssue(ctx context.Context, issue *issues_model.Issue) ([]string, error) {
+	return deleteIssueData(ctx, issue, true)
+}
+
+func deleteIssueData(ctx context.Context, issue *issues_model.Issue, guardActivePlan bool) ([]string, error) {
 	return db.WithTx2(ctx, func(ctx context.Context) ([]string, error) {
+		if guardActivePlan {
+			if err := project_model.RequireIssueOutsideActivePlan(ctx, issue.ID); err != nil {
+				return nil, err
+			}
+		}
 		if _, err := db.GetEngine(ctx).ID(issue.ID).NoAutoCondition().Delete(issue); err != nil {
 			return nil, err
 		}
@@ -316,7 +325,9 @@ func DeleteIssuesByRepoID(ctx context.Context, repoID int64) (attachmentPaths []
 		}
 
 		for _, issue := range issues {
-			issueAttachPaths, err := deleteIssue(ctx, issue)
+			// Repository deletion owns the enclosing lifecycle and removes its
+			// Projects too, so the per-Issue active-plan guard does not apply.
+			issueAttachPaths, err := deleteIssueData(ctx, issue, false)
 			if err != nil {
 				return nil, fmt.Errorf("deleteIssue [issue_id: %d]: %w", issue.ID, err)
 			}

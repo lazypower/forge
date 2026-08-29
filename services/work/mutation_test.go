@@ -155,7 +155,7 @@ func TestMembershipPresenceConvergesAndPreservesUnrelatedProjects(t *testing.T) 
 	_, _, err := issues_model.EnsureIssueProjectInWorkTx(t.Context(), issue, doer, other, true)
 	require.NoError(t, err)
 	service := NewMutationService()
-	request := PlanRevisionRequest{RepositoryID: repo.ID, ProjectID: plan.ID, Changes: []PlanChange{{
+	request := PlanRevisionRequest{RepositoryID: repo.ID, ProjectID: plan.ID, ExpectedPlanToken: "permitted-for-set-only-revision", Changes: []PlanChange{{
 		Kind: PlanChangeEnsureMember, WorkItem: ItemSelector{IssueNumber: issue.Index}, Presence: PresencePresent,
 	}}}
 	first, err := service.RevisePlan(t.Context(), doer, request)
@@ -428,7 +428,7 @@ func TestArchivedRepositoryRejectsMutationAndUnarchiveRecomposes(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, mcpwork_model.OutcomeRejected, commit.Completion.Outcome)
-	assert.Equal(t, "invalid_plan", commit.Completion.ProblemCode)
+	assert.Equal(t, "not_permitted", commit.Completion.ProblemCode)
 	archived, err := reader.InspectPlan(t.Context(), doer, PlanRequest{Owner: repo.OwnerName, Repository: repo.Name, ProjectID: plan.ID})
 	require.NoError(t, err)
 	assert.Empty(t, archived.WorkPlan.ReadyFrontier)

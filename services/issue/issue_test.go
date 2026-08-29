@@ -8,8 +8,10 @@ import (
 	"errors"
 	"testing"
 
+	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
 	mcpwork_model "gitea.dev/models/mcpwork"
+	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unittest"
 	user_model "gitea.dev/models/user"
@@ -88,6 +90,26 @@ func TestIssue_DeleteIssue(t *testing.T) {
 	left, err = issues_model.IssueNoDependenciesLeft(t.Context(), issue1)
 	assert.NoError(t, err)
 	assert.True(t, left)
+}
+
+func TestDeleteIssueRejectsActiveWorkPlanMember(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+	plan := &project_model.Project{
+		Type: project_model.TypeRepository, Title: "Active plan", RepoID: issue.RepoID, CreatorID: 2,
+		PlanningState: project_model.PlanningStateActive,
+	}
+	require.NoError(t, project_model.NewProject(t.Context(), plan))
+	column, err := plan.MustDefaultColumn(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, db.Insert(t.Context(), &project_model.ProjectIssue{
+		ProjectID: plan.ID, ProjectColumnID: column.ID, IssueID: issue.ID,
+	}))
+
+	_, err = deleteIssue(t.Context(), issue)
+	require.ErrorIs(t, err, project_model.ErrActiveWorkPlan)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: issue.ID})
+	unittest.AssertExistsAndLoadBean(t, &project_model.ProjectIssue{ProjectID: plan.ID, IssueID: issue.ID})
 }
 
 func TestDeleteIssueMCPReceiptRetirementFailureRollsBack(t *testing.T) {

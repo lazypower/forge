@@ -291,6 +291,14 @@ func UpdateIssueTitle(ctx *context.Context) {
 	}
 
 	if err := issue_service.ChangeTitle(ctx, issue, ctx.Doer, title); err != nil {
+		if errors.Is(err, issues_model.ErrIssueAlreadyChanged) {
+			if issue.IsPull {
+				ctx.JSONError(ctx.Tr("repo.pulls.edit.already_changed"))
+			} else {
+				ctx.JSONError(ctx.Tr("repo.issues.edit.already_changed"))
+			}
+			return
+		}
 		ctx.ServerError("ChangeTitle", err)
 		return
 	}

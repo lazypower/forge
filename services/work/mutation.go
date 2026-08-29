@@ -480,8 +480,7 @@ func validatePlanRevision(request PlanRevisionRequest) (validatedPlanRevision, s
 		targets[target] = struct{}{}
 	}
 	if len(result.creates) > setting.Work.MaxPlanRevisionCreatedItems || (result.deleteDraft && len(request.Changes) != 1) ||
-		((result.lifecycle != nil || result.deleteDraft) && request.ExpectedPlanToken == "") ||
-		(result.lifecycle == nil && !result.deleteDraft && request.ExpectedPlanToken != "") {
+		((result.lifecycle != nil || result.deleteDraft) && request.ExpectedPlanToken == "") {
 		return validatedPlanRevision{}, "invalid_input"
 	}
 	return result, ""
@@ -493,7 +492,7 @@ func mutationRepository(ctx context.Context, doer *user_model.User, repositoryID
 		return nil, access_model.Permission{}, "unavailable", nil
 	}
 	if repo.IsArchived {
-		return nil, access_model.Permission{}, "invalid_plan", nil
+		return nil, access_model.Permission{}, "not_permitted", nil
 	}
 	permission, err := access_model.GetDoerRepoPermission(ctx, repo, doer)
 	if err != nil {

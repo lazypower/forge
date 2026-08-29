@@ -398,6 +398,29 @@ func StabilizePlanningStates(ctx context.Context, projectIDs []int64) error {
 	return err
 }
 
+// RequireIssueOutsideActivePlan prevents Issue deletion from silently
+// changing the membership or dependency graph of a published plan.
+func RequireIssueOutsideActivePlan(ctx context.Context, issueID int64) error {
+	projectIDs := make([]int64, 0)
+	if err := db.GetEngine(ctx).Table(new(ProjectIssue)).Where("issue_id = ?", issueID).Cols("project_id").Find(&projectIDs); err != nil {
+		return err
+	}
+	if err := StabilizePlanningStates(ctx, projectIDs); err != nil {
+		return err
+	}
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	active, err := db.GetEngine(ctx).In("id", projectIDs).Where("planning_state = ?", PlanningStateActive).Exist(new(Project))
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrActiveWorkPlan
+	}
+	return nil
+}
+
 // GetAllProjectsIDsByOwnerID returns the all projects ids it owns
 func GetAllProjectsIDsByOwnerIDAndType(ctx context.Context, ownerID int64, projectType Type) ([]int64, error) {
 	projects := make([]int64, 0)

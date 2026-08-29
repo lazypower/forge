@@ -217,6 +217,11 @@ func DeleteIssue(ctx *context.Context) {
 	}
 
 	if err := issue_service.DeleteIssue(ctx, ctx.Doer, issue); err != nil {
+		if errors.Is(err, project_model.ErrActiveWorkPlan) {
+			ctx.Flash.Error(err.Error())
+			ctx.Redirect(issue.Link())
+			return
+		}
 		ctx.ServerError("DeleteIssueByID", err)
 		return
 	}

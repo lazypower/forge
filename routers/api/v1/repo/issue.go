@@ -16,6 +16,7 @@ import (
 	issues_model "gitea.dev/models/issues"
 	"gitea.dev/models/organization"
 	access_model "gitea.dev/models/perm/access"
+	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unit"
 	user_model "gitea.dev/models/user"
@@ -795,6 +796,10 @@ func EditIssue(ctx *context.APIContext) {
 	if len(form.Title) > 0 {
 		err = issue_service.ChangeTitle(ctx, issue, ctx.Doer, form.Title)
 		if err != nil {
+			if errors.Is(err, issues_model.ErrIssueAlreadyChanged) {
+				ctx.APIError(http.StatusConflict, err.Error())
+				return
+			}
 			ctx.APIErrorInternal(err)
 			return
 		}
@@ -970,6 +975,10 @@ func DeleteIssue(ctx *context.APIContext) {
 	}
 
 	if err = issue_service.DeleteIssue(ctx, ctx.Doer, issue); err != nil {
+		if errors.Is(err, project_model.ErrActiveWorkPlan) {
+			ctx.APIError(http.StatusConflict, err.Error())
+			return
+		}
 		ctx.APIErrorInternal(err)
 		return
 	}
