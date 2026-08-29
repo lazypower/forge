@@ -13,6 +13,7 @@ import (
 
 	issues_model "gitea.dev/models/issues"
 	mcpwork_model "gitea.dev/models/mcpwork"
+	perm_model "gitea.dev/models/perm"
 	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unit"
@@ -277,6 +278,40 @@ func TestReturnToDraftAndDeleteUseCurrentPlanToken(t *testing.T) {
 	assert.Equal(t, mcpwork_model.OutcomeApplied, deleted.Completion.Outcome)
 	unittest.AssertNotExistsBean(t, &project_model.Project{ID: plan.ID})
 	unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: issue.ID})
+}
+
+func TestPlanLifecycleRequiresProjectWriteWithoutIssueWrite(t *testing.T) {
+	repo, owner, plan := prepareMutationPlan(t, project_model.PlanningStateDraft)
+	issue := insertMutationIssue(t, repo.ID, owner.ID, "Lifecycle member", "")
+	_, _, err := issues_model.EnsureIssueProjectInWorkTx(t.Context(), issue, owner, plan, true)
+	require.NoError(t, err)
+
+	issuesUnit := unittest.AssertExistsAndLoadBean(t, &repo_model.RepoUnit{RepoID: repo.ID, Type: unit.TypeIssues})
+	issuesUnit.EveryoneAccessMode = perm_model.AccessModeRead
+	require.NoError(t, repo_model.UpdateRepoUnitPublicAccess(t.Context(), issuesUnit))
+	projectsUnit := unittest.AssertExistsAndLoadBean(t, &repo_model.RepoUnit{RepoID: repo.ID, Type: unit.TypeProjects})
+	projectsUnit.EveryoneAccessMode = perm_model.AccessModeWrite
+	require.NoError(t, repo_model.UpdateRepoUnitPublicAccess(t.Context(), projectsUnit))
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 5})
+
+	inspection, err := NewReadService().InspectPlan(t.Context(), doer, PlanRequest{
+		Owner: repo.OwnerName, Repository: repo.Name, ProjectID: plan.ID,
+	})
+	require.NoError(t, err)
+	activated, err := NewMutationService().RevisePlan(t.Context(), doer, PlanRevisionRequest{
+		RepositoryID: repo.ID, ProjectID: plan.ID, ExpectedPlanToken: inspection.WorkPlan.PlanToken,
+		Changes: []PlanChange{{Kind: PlanChangeSetPlanningState, ExpectedState: PlanningStateDraft, DesiredState: PlanningStateActive}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, mcpwork_model.OutcomeApplied, activated.Completion.Outcome)
+
+	membership, err := NewMutationService().RevisePlan(t.Context(), doer, PlanRevisionRequest{
+		RepositoryID: repo.ID, ProjectID: plan.ID,
+		Changes: []PlanChange{{Kind: PlanChangeEnsureMember, WorkItem: ItemSelector{IssueNumber: issue.Index}, Presence: PresenceAbsent}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, mcpwork_model.OutcomeRejected, membership.Completion.Outcome)
+	assert.Equal(t, "not_permitted", membership.Completion.ProblemCode)
 }
 
 func TestExpiredPlanTokenRejectsLifecycleChange(t *testing.T) {

@@ -298,7 +298,8 @@ func (service *MutationService) revisePlanInWorkTx(ctx context.Context, doer *us
 	if err := project_model.StabilizePlanningStates(ctx, []int64{project.ID}); err != nil {
 		return MutationCommit{}, err
 	}
-	if !permission.CanWrite(unit.TypeProjects) || !permission.CanWrite(unit.TypeIssues) {
+	changesIssues := len(validated.creates) > 0 || len(validated.memberships) > 0 || len(validated.dependencies) > 0
+	if !permission.CanWrite(unit.TypeProjects) || changesIssues && !permission.CanWrite(unit.TypeIssues) {
 		return rejected("not_permitted"), nil
 	}
 
