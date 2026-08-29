@@ -5,6 +5,7 @@
 package repo
 
 import (
+	"errors"
 	"net/http"
 
 	issues_model "gitea.dev/models/issues"
@@ -16,6 +17,7 @@ import (
 	"gitea.dev/routers/api/v1/utils"
 	"gitea.dev/services/context"
 	"gitea.dev/services/convert"
+	issue_service "gitea.dev/services/issue"
 )
 
 // GetIssueDependencies list an issue's dependencies
@@ -189,12 +191,7 @@ func CreateIssueDependency(ctx *context.APIContext) {
 		return
 	}
 
-	dependencyPerm := getPermissionForRepo(ctx, dependency.Repo)
-	if ctx.Written() {
-		return
-	}
-
-	createIssueDependency(ctx, target, dependency, ctx.Repo.Permission, *dependencyPerm)
+	ensureIssueDependency(ctx, target, dependency, issue_service.DependencyPresent)
 	if ctx.Written() {
 		return
 	}
@@ -250,12 +247,7 @@ func RemoveIssueDependency(ctx *context.APIContext) {
 		return
 	}
 
-	dependencyPerm := getPermissionForRepo(ctx, dependency.Repo)
-	if ctx.Written() {
-		return
-	}
-
-	removeIssueDependency(ctx, target, dependency, ctx.Repo.Permission, *dependencyPerm)
+	ensureIssueDependency(ctx, target, dependency, issue_service.DependencyAbsent)
 	if ctx.Written() {
 		return
 	}
@@ -410,12 +402,7 @@ func CreateIssueBlocking(ctx *context.APIContext) {
 		return
 	}
 
-	targetPerm := getPermissionForRepo(ctx, target.Repo)
-	if ctx.Written() {
-		return
-	}
-
-	createIssueDependency(ctx, target, dependency, *targetPerm, ctx.Repo.Permission)
+	ensureIssueDependency(ctx, target, dependency, issue_service.DependencyPresent)
 	if ctx.Written() {
 		return
 	}
@@ -467,12 +454,7 @@ func RemoveIssueBlocking(ctx *context.APIContext) {
 		return
 	}
 
-	targetPerm := getPermissionForRepo(ctx, target.Repo)
-	if ctx.Written() {
-		return
-	}
-
-	removeIssueDependency(ctx, target, dependency, *targetPerm, ctx.Repo.Permission)
+	ensureIssueDependency(ctx, target, dependency, issue_service.DependencyAbsent)
 	if ctx.Written() {
 		return
 	}
@@ -493,10 +475,6 @@ func getParamsIssue(ctx *context.APIContext) *issues_model.Issue {
 func getFormIssue(ctx *context.APIContext, form *api.IssueMeta) *issues_model.Issue {
 	var repo *repo_model.Repository
 	if form.Owner != ctx.Repo.Repository.OwnerName || form.Name != ctx.Repo.Repository.Name {
-		if !setting.Service.AllowCrossRepositoryDependencies {
-			ctx.JSON(http.StatusBadRequest, "CrossRepositoryDependencies not enabled")
-			return nil
-		}
 		var err error
 		repo, err = repo_model.GetRepositoryByOwnerAndName(ctx, form.Owner, form.Name)
 		if err != nil {
@@ -516,68 +494,16 @@ func getFormIssue(ctx *context.APIContext, form *api.IssueMeta) *issues_model.Is
 	return issue
 }
 
-func getPermissionForRepo(ctx *context.APIContext, repo *repo_model.Repository) *access_model.Permission {
-	if repo.ID == ctx.Repo.Repository.ID {
-		return &ctx.Repo.Permission
-	}
-
-	perm, err := access_model.GetDoerRepoPermission(ctx, repo, ctx.Doer)
-	if err != nil {
+func ensureIssueDependency(ctx *context.APIContext, target, dependency *issues_model.Issue, presence issue_service.DependencyPresence) {
+	_, err := issue_service.EnsureDependency(ctx, ctx.Doer, target, dependency, presence, issue_service.IssueDependencyScope)
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, issue_service.ErrDependencyNotPermitted), errors.Is(err, issue_service.ErrDependencyUnavailable):
+		ctx.APIErrorNotFound()
+	case errors.Is(err, issue_service.ErrInvalidDependency):
+		ctx.APIError(http.StatusUnprocessableEntity, issue_service.ErrInvalidDependency.Error())
+	default:
 		ctx.APIErrorInternal(err)
-		return nil
-	}
-
-	return &perm
-}
-
-func createIssueDependency(ctx *context.APIContext, target, dependency *issues_model.Issue, targetPerm, dependencyPerm access_model.Permission) {
-	if target.Repo.IsArchived || !target.Repo.IsDependenciesEnabled(ctx) {
-		// The target's repository doesn't have dependencies enabled
-		ctx.APIErrorNotFound()
-		return
-	}
-
-	if !targetPerm.CanWriteIssuesOrPulls(target.IsPull) {
-		// We can't write to the target
-		ctx.APIErrorNotFound()
-		return
-	}
-
-	if !dependencyPerm.CanReadIssuesOrPulls(dependency.IsPull) {
-		// We can't read the dependency
-		ctx.APIErrorNotFound()
-		return
-	}
-
-	err := issues_model.CreateIssueDependency(ctx, ctx.Doer, target, dependency)
-	if err != nil {
-		ctx.APIErrorInternal(err)
-		return
-	}
-}
-
-func removeIssueDependency(ctx *context.APIContext, target, dependency *issues_model.Issue, targetPerm, dependencyPerm access_model.Permission) {
-	if target.Repo.IsArchived || !target.Repo.IsDependenciesEnabled(ctx) {
-		// The target's repository doesn't have dependencies enabled
-		ctx.APIErrorNotFound()
-		return
-	}
-
-	if !targetPerm.CanWriteIssuesOrPulls(target.IsPull) {
-		// We can't write to the target
-		ctx.APIErrorNotFound()
-		return
-	}
-
-	if !dependencyPerm.CanReadIssuesOrPulls(dependency.IsPull) {
-		// We can't read the dependency
-		ctx.APIErrorNotFound()
-		return
-	}
-
-	err := issues_model.RemoveIssueDependency(ctx, ctx.Doer, target, dependency, issues_model.DependencyTypeBlockedBy)
-	if err != nil {
-		ctx.APIErrorInternal(err)
-		return
 	}
 }

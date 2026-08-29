@@ -187,6 +187,32 @@ func issueDepExists(ctx context.Context, issueID, depID int64) (bool, error) {
 	return db.GetEngine(ctx).Where("(issue_id = ? AND dependency_id = ?)", issueID, depID).Exist(&IssueDependency{})
 }
 
+// IssueDependencyExists reports whether the directed dependency is present.
+func IssueDependencyExists(ctx context.Context, issueID, dependencyID int64) (bool, error) {
+	return issueDepExists(ctx, issueID, dependencyID)
+}
+
+// GetIssueDependencyIDs returns the immediate prerequisites for the issues.
+func GetIssueDependencyIDs(ctx context.Context, issueIDs []int64) (map[int64][]int64, error) {
+	dependencyIDs := make(map[int64][]int64, len(issueIDs))
+	if len(issueIDs) == 0 {
+		return dependencyIDs, nil
+	}
+
+	for len(issueIDs) > 0 {
+		batchSize := min(len(issueIDs), db.DefaultMaxInSize)
+		dependencies := make([]IssueDependency, 0)
+		if err := db.GetEngine(ctx).In("issue_id", issueIDs[:batchSize]).Find(&dependencies); err != nil {
+			return nil, err
+		}
+		for _, dependency := range dependencies {
+			dependencyIDs[dependency.IssueID] = append(dependencyIDs[dependency.IssueID], dependency.DependencyID)
+		}
+		issueIDs = issueIDs[batchSize:]
+	}
+	return dependencyIDs, nil
+}
+
 // IssueNoDependenciesLeft checks if issue can be closed
 func IssueNoDependenciesLeft(ctx context.Context, issue *Issue) (bool, error) {
 	exists, err := db.GetEngine(ctx).
