@@ -171,6 +171,10 @@ func TestMCPWorkWriteProfileRequiresMutationEnablement(t *testing.T) {
 	_, err = MCPProfileForAccessToken(app, grant)
 	assert.ErrorIs(t, err, ErrInvalidMCPProfileRequest)
 	assert.Equal(t, []string{MCPReadScope}, MCPScopesSupported())
+	profile, err := MCPProfileForScope(grant.Scope)
+	require.NoError(t, err)
+	assert.Equal(t, auth_model.MCPProfileWorkPlanning, profile.Name)
+	assert.Equal(t, MCPWorkWriteScope, profile.CanonicalScope)
 }
 
 func TestMCPProfileRejectsResourceForOtherClients(t *testing.T) {

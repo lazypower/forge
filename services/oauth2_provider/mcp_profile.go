@@ -127,22 +127,28 @@ func mcpProfileForScope(app *auth_model.OAuth2Application, scope string) (MCPPro
 		(app.MCPRedirectClass != auth_model.MCPRedirectClassHTTPS && app.MCPRedirectClass != auth_model.MCPRedirectClassLoopback) {
 		return MCPProfile{}, ErrInvalidMCPProfileRequest
 	}
+	profile, err := MCPProfileForScope(scope)
+	if err != nil || (profile.Name == auth_model.MCPProfileWorkPlanning && !setting.MCP.WorkMutationEnabled) {
+		return MCPProfile{}, ErrInvalidMCPProfileRequest
+	}
+	return profile, nil
+}
+
+// MCPProfileForScope derives consent facts even when MCP is disabled. It does not authorize use.
+func MCPProfileForScope(scope string) (MCPProfile, error) {
 	profiles := []MCPProfile{{
 		Name:           auth_model.MCPProfileRead,
 		CanonicalScope: MCPReadScope,
 		Scopes:         []string{string(auth_model.AccessTokenScopeReadRepository)},
+	}, {
+		Name:           auth_model.MCPProfileWorkPlanning,
+		CanonicalScope: MCPWorkWriteScope,
+		Scopes: []string{
+			string(auth_model.AccessTokenScopeReadRepository),
+			string(auth_model.AccessTokenScopeWriteIssue),
+			string(auth_model.AccessTokenScopeWriteRepository),
+		},
 	}}
-	if setting.MCP.WorkMutationEnabled {
-		profiles = append(profiles, MCPProfile{
-			Name:           auth_model.MCPProfileWorkPlanning,
-			CanonicalScope: MCPWorkWriteScope,
-			Scopes: []string{
-				string(auth_model.AccessTokenScopeReadRepository),
-				string(auth_model.AccessTokenScopeWriteIssue),
-				string(auth_model.AccessTokenScopeWriteRepository),
-			},
-		})
-	}
 	for _, profile := range profiles {
 		canonical, err := canonicalMCPProfileScope(profile, scope)
 		if err == nil && canonical == profile.CanonicalScope {

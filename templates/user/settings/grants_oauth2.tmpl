@@ -13,8 +13,18 @@
 				</div>
 				<div class="item-main">
 					<div class="item-title">{{.Application.Name}}</div>
-					<div class="item-body">
+					<div class="item-body{{if .MCPProfile.Name}} tw-flex-col tw-items-start{{end}}">
+						{{if .MCPProfile.Name}}
+							<div>{{ctx.Locale.Tr "settings.mcp_registration_unverified"}}</div>
+							{{if .Application.MCPInstallationLabel}}<div>{{ctx.Locale.Tr "settings.mcp_registration_installation" .Application.MCPInstallationLabel}}</div>{{end}}
+							<div><b>{{ctx.Locale.Tr "auth.authorize_mcp_profile" (ctx.Locale.Tr (printf "auth.mcp_profile.%s" .MCPProfile.Name))}}</b></div>
+							<div>{{ctx.Locale.Tr "settings.mcp_grant_scopes"}} <code>{{.Scope}}</code></div>
+							<div>{{ctx.Locale.Tr "settings.mcp_grant_authorized"}} {{DateUtils.FullTime .CreatedUnix}}</div>
+							<div>{{ctx.Locale.Tr "settings.mcp_grant_rotated"}} {{if .CredentialRotatedUnix}}{{DateUtils.FullTime .CredentialRotatedUnix}}{{else}}{{ctx.Locale.Tr "settings.mcp_grant_not_issued"}}{{end}}</div>
+							<div>{{if .MCPUsable}}{{ctx.Locale.Tr "settings.mcp_grant_active"}}{{else}}{{ctx.Locale.Tr "settings.mcp_grant_disabled"}}{{end}} · {{ctx.Locale.Tr "auth.mcp_public_pkce"}} · {{ctx.Locale.Tr "settings.mcp_registration_redirect_class" .Application.MCPRedirectClass}}</div>
+						{{else}}
 						<i>{{ctx.Locale.Tr "settings.added_on" (DateUtils.AbsoluteShort .CreatedUnix)}}</i>
+						{{end}}
 					</div>
 				</div>
 				<div class="item-trailing">

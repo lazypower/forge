@@ -16,11 +16,18 @@ import (
 	"gitea.dev/modules/web"
 	"gitea.dev/services/context"
 	"gitea.dev/services/forms"
+	"gitea.dev/services/oauth2_provider"
 )
 
 const (
 	tplSettingsApplications templates.TplName = "user/settings/applications"
 )
+
+type oauth2GrantView struct {
+	*auth_model.OAuth2Grant
+	MCPProfile oauth2_provider.MCPProfile
+	MCPUsable  bool
+}
 
 // Applications render manage access token page
 func Applications(ctx *context.Context) {
@@ -150,11 +157,26 @@ func loadApplicationsData(ctx *context.Context) {
 			ctx.ServerError("GetOAuth2ApplicationsByUserID", err)
 			return
 		}
-		ctx.Data["Grants"], err = auth_model.GetOAuth2GrantsByUserID(ctx, ctx.Doer.ID)
+		grants, err := auth_model.GetOAuth2GrantsByUserID(ctx, ctx.Doer.ID)
 		if err != nil {
 			ctx.ServerError("GetOAuth2GrantsByUserID", err)
 			return
 		}
+		views := make([]oauth2GrantView, 0, len(grants))
+		for _, grant := range grants {
+			view := oauth2GrantView{OAuth2Grant: grant}
+			if grant.Application.IsMCPClientRegistration() {
+				view.MCPProfile, err = oauth2_provider.MCPProfileForScope(grant.Scope)
+				if err != nil {
+					ctx.ServerError("MCPProfileForScope", err)
+					return
+				}
+				_, err = oauth2_provider.MCPProfileForAccessToken(grant.Application, grant)
+				view.MCPUsable = err == nil
+			}
+			views = append(views, view)
+		}
+		ctx.Data["Grants"] = views
 		ctx.Data["MCPRegistrations"], err = auth_model.ListUngrantFinalizedMCPRegistrations(ctx, ctx.Doer.ID)
 		if err != nil {
 			ctx.ServerError("ListUngrantFinalizedMCPRegistrations", err)

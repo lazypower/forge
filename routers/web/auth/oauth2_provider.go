@@ -420,6 +420,13 @@ func AuthorizeOAuth(ctx *context.Context) {
 		ctx.Data["MCPClientProvided"] = true
 		ctx.Data["MCPInstallationLabel"] = app.MCPInstallationLabel
 		ctx.Data["MCPCallbackContext"] = callbackContext
+		profile, err := oauth2_provider.MCPProfileForScope(form.Scope)
+		if err != nil {
+			handleServerError(ctx, form.State, "")
+			return
+		}
+		ctx.Data["MCPProfile"] = profile
+		ctx.Data["MCPProfileReplacement"] = grant != nil && grant.Scope != form.Scope
 	}
 
 	// show authorize page to grant access

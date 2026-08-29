@@ -148,7 +148,20 @@ func NewMCPAccessTokenResponse(ctx context.Context, app *auth.OAuth2Application,
 			ErrorDescription: "principal does not match the MCP profile",
 		}
 	}
-	return newAccessTokenResponse(ctx, grant, setting.MCPResource(), true, serverKey, clientKey)
+	// Sign first so a signing failure preserves the current refresh credential and rotation time.
+	next := *grant
+	next.Counter++
+	response, tokenErr := newAccessTokenResponse(ctx, &next, setting.MCPResource(), false, serverKey, clientKey)
+	if tokenErr != nil {
+		return nil, tokenErr
+	}
+	if err := grant.RotateMCPCredentials(ctx); err != nil {
+		return nil, &AccessTokenError{
+			ErrorCode:        AccessTokenErrorCodeInvalidGrant,
+			ErrorDescription: "grant changed during credential rotation",
+		}
+	}
+	return response, nil
 }
 
 func newAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, resource string, rotateRefresh bool, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {

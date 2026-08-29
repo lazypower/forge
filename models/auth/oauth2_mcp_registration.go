@@ -157,7 +157,7 @@ func CreateMCPClientRegistration(ctx context.Context, name, installationLabel st
 	})
 }
 
-// ApproveMCPClientRegistration atomically binds a provisional client, creates its first grant, and issues a code.
+// ApproveMCPClientRegistration atomically binds a client, replaces changed authority, and issues a code.
 func ApproveMCPClientRegistration(ctx context.Context, applicationID, userID int64, scope, nonce, redirectURI, codeChallenge, codeChallengeMethod, resource string, now time.Time) (*OAuth2Application, *OAuth2Grant, *OAuth2AuthorizationCode, error) {
 	var app *OAuth2Application
 	var grant *OAuth2Grant
@@ -224,13 +224,17 @@ func ApproveMCPClientRegistration(ctx context.Context, applicationID, userID int
 		if err != nil {
 			return err
 		}
+		if grant != nil && grant.Scope != scope {
+			if err := deleteMCPGrant(ctx, grant.ID, userID); err != nil {
+				return err
+			}
+			grant = nil
+		}
 		if grant == nil {
 			grant, err = app.CreateGrant(ctx, userID, scope)
 			if err != nil {
 				return err
 			}
-		} else if grant.Scope != scope {
-			return errors.New("MCP registration has a grant with different scope")
 		}
 		if nonce != "" {
 			if err := grant.SetNonce(ctx, nonce); err != nil {

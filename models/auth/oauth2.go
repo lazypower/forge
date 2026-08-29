@@ -510,15 +510,16 @@ func GetOAuth2AuthorizationByCode(ctx context.Context, code string) (auth *OAuth
 
 // OAuth2Grant represents the permission of a user for a specific application to access resources
 type OAuth2Grant struct {
-	ID            int64              `xorm:"pk autoincr"`
-	UserID        int64              `xorm:"INDEX unique(user_application)"`
-	Application   *OAuth2Application `xorm:"-"`
-	ApplicationID int64              `xorm:"INDEX unique(user_application)"`
-	Counter       int64              `xorm:"NOT NULL DEFAULT 1"`
-	Scope         string             `xorm:"TEXT"`
-	Nonce         string             `xorm:"TEXT"`
-	CreatedUnix   timeutil.TimeStamp `xorm:"created"`
-	UpdatedUnix   timeutil.TimeStamp `xorm:"updated"`
+	ID                    int64              `xorm:"pk autoincr"`
+	UserID                int64              `xorm:"INDEX unique(user_application)"`
+	Application           *OAuth2Application `xorm:"-"`
+	ApplicationID         int64              `xorm:"INDEX unique(user_application)"`
+	Counter               int64              `xorm:"NOT NULL DEFAULT 1"`
+	Scope                 string             `xorm:"TEXT"`
+	Nonce                 string             `xorm:"TEXT"`
+	CreatedUnix           timeutil.TimeStamp `xorm:"created"`
+	UpdatedUnix           timeutil.TimeStamp `xorm:"updated"`
+	CredentialRotatedUnix timeutil.TimeStamp
 }
 
 // TableName sets the table name to `oauth2_grant`
@@ -552,11 +553,20 @@ func (grant *OAuth2Grant) GenerateNewAuthorizationCode(ctx context.Context, redi
 
 // IncreaseCounter increases the counter and updates the grant
 func (grant *OAuth2Grant) IncreaseCounter(ctx context.Context) error {
+	return grant.increaseCounter(ctx, 0)
+}
+
+// RotateMCPCredentials commits a successfully signed credential pair against the old lineage.
+func (grant *OAuth2Grant) RotateMCPCredentials(ctx context.Context) error {
+	return grant.increaseCounter(ctx, timeutil.TimeStampNow())
+}
+
+func (grant *OAuth2Grant) increaseCounter(ctx context.Context, rotated timeutil.TimeStamp) error {
 	affected, err := db.GetEngine(ctx).
 		Where("id = ?", grant.ID).
 		And("counter = ?", grant.Counter).
 		Incr("counter").
-		Update(new(OAuth2Grant))
+		Update(&OAuth2Grant{CredentialRotatedUnix: rotated})
 	if err != nil {
 		return err
 	}
@@ -564,6 +574,9 @@ func (grant *OAuth2Grant) IncreaseCounter(ctx context.Context) error {
 		return ErrOAuth2GrantStaleCounter
 	}
 	grant.Counter++
+	if rotated != 0 {
+		grant.CredentialRotatedUnix = rotated
+	}
 	return nil
 }
 
@@ -634,13 +647,33 @@ func RevokeOAuth2Grant(ctx context.Context, grantID, userID int64) error {
 			return err
 		}
 		if app.IsMCPClientRegistration() {
-			if _, err := db.GetEngine(ctx).Where("grant_id = ?", grantID).Delete(new(OAuth2AuthorizationCode)); err != nil {
+			// Serialize revoke with consent and deletion on the registration before touching its grant.
+			affected, err := db.GetEngine(ctx).Where(builder.Eq{
+				"id": app.ID, "mcp_registration_state": MCPRegistrationStateFinalized, "mcp_bound_user_id": userID,
+			}).Cols("mcp_registration_state").Update(&OAuth2Application{MCPRegistrationState: mcpRegistrationStateChanging})
+			if err != nil {
 				return err
 			}
+			if affected != 1 {
+				return ErrMCPRegistrationWrongPrincipal
+			}
+			if err := deleteMCPGrant(ctx, grantID, userID); err != nil {
+				return err
+			}
+			_, err = db.GetEngine(ctx).ID(app.ID).Cols("mcp_registration_state").Update(&OAuth2Application{MCPRegistrationState: MCPRegistrationStateFinalized})
+			return err
 		}
 		_, err = db.GetEngine(ctx).Where(builder.Eq{"id": grantID, "user_id": userID}).Delete(new(OAuth2Grant))
 		return err
 	})
+}
+
+func deleteMCPGrant(ctx context.Context, grantID, userID int64) error {
+	if _, err := db.GetEngine(ctx).Where("grant_id = ?", grantID).Delete(new(OAuth2AuthorizationCode)); err != nil {
+		return err
+	}
+	_, err := db.GetEngine(ctx).Where(builder.Eq{"id": grantID, "user_id": userID}).Delete(new(OAuth2Grant))
+	return err
 }
 
 // ErrOAuthClientIDInvalid will be thrown if client id cannot be found

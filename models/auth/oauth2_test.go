@@ -30,7 +30,7 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, expectedValidUntil, code.ValidUntil)
 		assert.False(t, code.IsExpired())
-		assert.Equal(t, int64(1), code.ID)
+		assert.Positive(t, code.ID)
 
 		code2, err := auth_model.GetOAuth2AuthorizationByCode(t.Context(), code.Code)
 		require.NoError(t, err)

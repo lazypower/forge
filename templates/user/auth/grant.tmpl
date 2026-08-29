@@ -18,6 +18,11 @@
 				{{end}}
 				{{ctx.Locale.Tr "auth.authorize_application_with_scopes" (HTMLFormat "<b>%s</b>" .Scope)}}
 			</p>
+			{{if .MCPProfile}}
+				<p><b>{{ctx.Locale.Tr "auth.authorize_mcp_profile" (ctx.Locale.Tr (printf "auth.mcp_profile.%s" .MCPProfile.Name))}}</b></p>
+				{{if .MCPProfileReplacement}}<p>{{ctx.Locale.Tr "auth.authorize_mcp_profile_replacement"}}</p>{{end}}
+				{{if not .MCPWorkWriteConsent}}<p>{{ctx.Locale.Tr "auth.authorize_mcp_read_description"}}</p>{{end}}
+			{{end}}
 			{{if .MCPWorkWriteConsent}}
 				<p><b>{{ctx.Locale.Tr "auth.authorize_mcp_work_write_description"}}</b></p>
 				<p>{{ctx.Locale.Tr "auth.authorize_mcp_work_write_boundary"}}</p>
@@ -25,6 +30,7 @@
 		</div>
 		<div class="ui attached segment">
 			{{if .MCPClientProvided}}
+				<p>{{ctx.Locale.Tr "auth.mcp_public_pkce"}}</p>
 				<p>{{ctx.Locale.Tr "auth.authorize_mcp_callback_context" .MCPCallbackContext}}</p>
 			{{else}}
 				<p>{{ctx.Locale.Tr "auth.authorize_redirect_notice" .ApplicationRedirectDomainHTML}}</p>
