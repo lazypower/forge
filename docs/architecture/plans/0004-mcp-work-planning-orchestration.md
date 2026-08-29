@@ -8,6 +8,8 @@
 - Decision: [ADR 0004](../decisions/0004-safe-mcp-work-planning.md)
 - Implementation packages:
   [ADR 0004 implementation plan](0004-mcp-work-planning-implementation.md)
+- Amendment execution:
+  [client-onboarding delegated execution](0004-mcp-client-onboarding-orchestration.md)
 
 ## Objective
 
@@ -442,6 +444,11 @@ prepare tests or compile-time interfaces early, but the orchestrator supplies a
 reviewed integration base before final implementation and handoff.
 
 ## Amendment re-entry orchestration
+
+The dedicated
+[client-onboarding delegated execution](0004-mcp-client-onboarding-orchestration.md)
+supersedes this section's Agent K-N seat assignments and WP11-WP14 execution
+mechanics. This section's semantic boundaries and gates remain authoritative.
 
 The extension uses new branches from the integrated WP10 baseline. It does not
 reopen the original package branches or hide new semantics in a documentation
