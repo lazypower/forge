@@ -401,6 +401,9 @@ func StabilizePlanningStates(ctx context.Context, projectIDs []int64) error {
 // RequireIssueOutsideActivePlan prevents Issue deletion from silently
 // changing the membership or dependency graph of a published plan.
 func RequireIssueOutsideActivePlan(ctx context.Context, repoID, issueID int64) error {
+	if err := repo_model.StabilizeWorkPlanning(ctx, repoID); err != nil {
+		return err
+	}
 	projectIDs := make([]int64, 0)
 	if err := db.GetEngine(ctx).Table(new(Project)).Where("repo_id = ? AND type = ? AND planning_state != ?", repoID, TypeRepository, PlanningStateDisabled).Cols("id").Find(&projectIDs); err != nil {
 		return err

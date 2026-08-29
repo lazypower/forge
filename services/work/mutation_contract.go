@@ -102,8 +102,8 @@ type PlanChange struct {
 type PlanRevisionRequest struct {
 	RepositoryID int64
 	ProjectID    int64
-	// ExpectedPlanToken is enforced for lifecycle changes and accepted but
-	// ignored for set-only revisions.
+	// ExpectedPlanToken is enforced for lifecycle changes and draft deletion;
+	// set-only revisions accept but ignore it.
 	ExpectedPlanToken string
 	Changes           []PlanChange
 }

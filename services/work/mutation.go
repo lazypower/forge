@@ -90,6 +90,9 @@ func (service *MutationService) BeginPlanInWorkTx(ctx context.Context, doer *use
 		(request.ExistingProjectID > 0 && (request.Title != "" || request.Markdown != "")) {
 		return rejected("invalid_input"), nil
 	}
+	if err := repo_model.StabilizeWorkPlanning(ctx, request.RepositoryID); err != nil {
+		return MutationCommit{}, err
+	}
 	repo, _, rejection, err := mutationRepository(ctx, doer, request.RepositoryID, true, false)
 	if err != nil || rejection != "" {
 		return rejected(rejection), err

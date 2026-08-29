@@ -33,6 +33,13 @@ func UpdateRepositoryUpdatedTime(ctx context.Context, repoID int64, updateTime t
 	return err
 }
 
+// StabilizeWorkPlanning serializes repository-scoped plan creation with
+// lifecycle operations that must account for every plan in the repository.
+func StabilizeWorkPlanning(ctx context.Context, repoID int64) error {
+	_, err := db.GetEngine(ctx).ID(repoID).SetExpr("id", "id").NoAutoTime().Update(new(Repository))
+	return err
+}
+
 // UpdateRepositoryColsWithAutoTime updates repository's columns and the timestamp fields automatically
 func UpdateRepositoryColsWithAutoTime(ctx context.Context, repo *Repository, colName string, moreColNames ...string) error {
 	_, err := db.GetEngine(ctx).ID(repo.ID).Cols(append([]string{colName}, moreColNames...)...).Update(repo)

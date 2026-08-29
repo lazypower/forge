@@ -128,3 +128,68 @@ func TestIssueDeletionSerializesWithActivePlanMembership(t *testing.T) {
 	unittest.AssertNotExistsBean(t, &issues_model.Issue{ID: issue.ID})
 	unittest.AssertNotExistsBean(t, &project_model.ProjectIssue{ProjectID: plan.ID, IssueID: issue.ID})
 }
+
+func TestIssueDeletionSerializesWithPlanCreation(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+
+	guarded := make(chan struct{})
+	releaseDeletion := make(chan struct{})
+	deletionDone := make(chan error, 1)
+	type beginResult struct {
+		commit work_service.MutationCommit
+		err    error
+	}
+	beginStarted := make(chan struct{})
+	beginDone := make(chan beginResult, 1)
+	go func() {
+		deletionDone <- db.WithTx(t.Context(), func(ctx context.Context) error {
+			if err := project_model.RequireIssueOutsideActivePlan(ctx, repo.ID, issue.ID); err != nil {
+				return err
+			}
+			close(guarded)
+			<-releaseDeletion
+			_, err := db.GetEngine(ctx).ID(issue.ID).Delete(new(issues_model.Issue))
+			return err
+		})
+	}()
+	select {
+	case <-guarded:
+	case err := <-deletionDone:
+		require.NoError(t, err)
+		require.FailNow(t, "deletion completed before the repository planning guard")
+	}
+	go func() {
+		close(beginStarted)
+		commit, err := work_service.NewMutationService().BeginPlan(t.Context(), doer, work_service.BeginPlanRequest{
+			RepositoryID: repo.ID, Title: "Concurrent plan",
+		})
+		beginDone <- beginResult{commit: commit, err: err}
+	}()
+	<-beginStarted
+	select {
+	case result := <-beginDone:
+		require.Failf(t, "plan creation did not serialize", "returned before deletion released its repository lock: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseDeletion)
+	require.NoError(t, <-deletionDone)
+	result := <-beginDone
+	require.NoError(t, result.err)
+	require.Equal(t, mcpwork_model.OutcomeApplied, result.commit.Completion.Outcome)
+	require.Len(t, result.commit.Completion.Artifacts, 1)
+	planID := result.commit.Completion.Artifacts[0].ArtifactID
+
+	revision, err := work_service.NewMutationService().RevisePlan(t.Context(), doer, work_service.PlanRevisionRequest{
+		RepositoryID: repo.ID, ProjectID: planID,
+		Changes: []work_service.PlanChange{{
+			Kind: work_service.PlanChangeEnsureMember, WorkItem: work_service.ItemSelector{IssueNumber: issue.Index}, Presence: work_service.PresencePresent,
+		}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, mcpwork_model.OutcomeRejected, revision.Completion.Outcome)
+	require.Equal(t, "unavailable", revision.Completion.ProblemCode)
+	unittest.AssertNotExistsBean(t, &project_model.ProjectIssue{ProjectID: planID, IssueID: issue.ID})
+}
