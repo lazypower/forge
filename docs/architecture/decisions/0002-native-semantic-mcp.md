@@ -4,6 +4,11 @@
 - Date: 2026-08-26
 - Decision owner: Forge maintainer
 - Depends on: [ADR 0001](0001-agent-native-forge-domain.md)
+- Planned partial supersession: [ADR 0004](0004-safe-mcp-work-planning.md) will
+  replace the fixed pre-registered MCP clients, shared installation refresh
+  lineage, and client registration/onboarding clauses when ADR 0004 is accepted
+  and its clean-slate cutover lands. Until then, this implemented decision
+  remains the authority for the original read-only slice.
 
 ## Context
 

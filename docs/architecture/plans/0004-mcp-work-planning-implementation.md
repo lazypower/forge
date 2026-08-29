@@ -2,7 +2,9 @@
 
 - Status: Proposed implementation plan
 - Date: 2026-08-28
+- Amended: 2026-08-29
 - Planning base: `454768f3a7b43b02a337add3fd387c78b4cfb47a`
+- Amendment base: `233dc10123457fb9f69ba425cdf2586371b5a869`
 - Decision: [ADR 0004](../decisions/0004-safe-mcp-work-planning.md)
 - Domain authority:
   [ADR 0003](../decisions/0003-authoritative-work-planning.md)
@@ -14,6 +16,12 @@
 This plan turns ADR 0004 into dependency-aware, stackable work packages. It is
 grounded in Forge at the planning base above. It does not implement production
 code, accept any Proposed ADR, or reopen ADR 0003.
+
+WP0 through WP10 describe the original locally dogfooded slice. ADR 0004's
+2026-08-29 client-onboarding and attribution amendment adds WP11 through WP14.
+The earlier packages remain valid implementation history, but their fixed MCP
+applications and unverified-actor presentation are intermediate states rather
+than final conformance. ADR 0004 completion now requires evidence through WP14.
 
 Each package is an independently reviewable pull request or a short stack of
 mechanically inseparable pull requests. A package may land with its feature
@@ -60,13 +68,16 @@ planning base.
 | MCP authentication | [`routers/mcp/auth.go`](../../../routers/mcp/auth.go) | Carry verified grant/profile; fix space-delimited scope parsing |
 | MCP tool precedent | [`routers/mcp/pull_inspection.go`](../../../routers/mcp/pull_inspection.go) | Preserve structured envelopes, annotations, and disclosure behavior |
 | MCP settings | [`modules/setting/mcp.go`](../../../modules/setting/mcp.go) | Add off-by-default work read/write enablement |
-| OAuth fixed profile | [`services/oauth2_provider/mcp_profile.go`](../../../services/oauth2_provider/mcp_profile.go) | Generalize to separate exact read and write clients |
+| OAuth MCP profile | [`services/oauth2_provider/mcp_profile.go`](../../../services/oauth2_provider/mcp_profile.go) | Preserve exact profiles while moving selection from fixed clients to explicit grants |
 | OAuth token verification | [`services/oauth2_provider/access_token_verification.go`](../../../services/oauth2_provider/access_token_verification.go) | Preserve principal, audience, grant, scope, and credential identity |
-| OAuth application/grant | [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) | One grant per user/application requires a second write client |
+| OAuth application/grant | [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) | Use one public registration per installation and atomically replace grants for profile changes |
 | OAuth scope vocabulary | [`models/auth/access_token_scope.go`](../../../models/auth/access_token_scope.go) | Reuse exact repository/Issue scopes; do not create MCP permission semantics |
 | OAuth consent | [`routers/web/auth/oauth2_provider.go`](../../../routers/web/auth/oauth2_provider.go), [`templates/user/auth/grant.tmpl`](../../../templates/user/auth/grant.tmpl) | Add explicit write-profile consent and strict scope handling |
-| Migration registry | [`models/migrations/migrations.go`](../../../models/migrations/migrations.go) | Current registry ends at version 343 |
-| Migration pattern | [`models/migrations/v1_27/v343.go`](../../../models/migrations/v1_27/v343.go) | Add focused, tested migrations under the current release directory |
+| OAuth client bootstrap | OAuth application creation and redirect validation under [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) | Add a closed, provisional public MCP registration lifecycle rather than general application CRUD |
+| Grant authority inspection | [`templates/user/settings/grants_oauth2.tmpl`](../../../templates/user/settings/grants_oauth2.tmpl), [`routers/web/user/setting/applications.go`](../../../routers/web/user/setting/applications.go) | Show exact profile, scopes, lifecycle, and revocation boundary without inventing last-use telemetry |
+| MCP request identity | Official SDK `ServerRequest.ClientInfo` and request `_meta` | Require bounded harness/model attribution at the mutation transport boundary |
+| Migration registry | [`models/migrations/migrations.go`](../../../models/migrations/migrations.go) | Amendment base registry ends at version 345 |
+| Migration pattern | [`models/migrations/v1_27/v345.go`](../../../models/migrations/v1_27/v345.go) | Add focused, tested migrations under the current release directory |
 | MCP conformance tests | [`tests/integration/mcp_oauth_conformance_test.go`](../../../tests/integration/mcp_oauth_conformance_test.go) | Extend audience, scope, refresh, and consent matrix |
 | MCP integration tests | [`tests/integration/mcp_test.go`](../../../tests/integration/mcp_test.go) | Cover discovery, calls, errors, cancellation, and limits |
 | Dependency guard | [`.golangci.yml`](../../../.golangci.yml) | MCP handlers must not import API or web layers |
@@ -113,6 +124,25 @@ WP0 and WP1 can start together. WP8 may proceed after ADR 0004 fixes the write
 profile, but it must not enable write tools. WP5 and WP6 can stack independently
 after the shared projection and mutation APIs stabilize. WP10 is evidence and
 rollout, not a place to hide unfinished domain work.
+
+The amendment continues from the integrated WP10 baseline:
+
+```mermaid
+flowchart TD
+    WP10["WP10 Original local certification"]
+    WP11["WP11 MCP client bootstrap"]
+    WP12["WP12 Grant lifecycle and authority UI"]
+    WP13["WP13 Required client attribution"]
+    WP14["WP14 Amendment security certification"]
+
+    WP10 --> WP11
+    WP11 --> WP12
+    WP11 --> WP13
+    WP12 --> WP13
+    WP11 --> WP14
+    WP12 --> WP14
+    WP13 --> WP14
+```
 
 ## WP0: Serializable work transactions
 
@@ -316,6 +346,10 @@ repositories reject mutation; unarchive merely recomposes retained facts.
 
 ## WP5: Human Work interface symmetry
 
+**Amendment note:** WP13 supersedes the original unverified-actor wording below
+with the authoritative-registration and client-reported-attribution
+presentation. WP5 remains the shared human-projection seam.
+
 **Scope**
 
 Render the shared projection and invoke the shared mutations in Project, Issue,
@@ -376,6 +410,10 @@ existing read OAuth and PAT compatibility.
 
 ## WP7: Durable idempotency and provenance substrate
 
+**Amendment note:** WP13 extends and migrates this receipt rather than creating
+a parallel audit record. The fixed-application and unverified-actor fields
+below describe the original substrate, not final amended conformance.
+
 **Scope**
 
 Add a narrow MCP-work operation receipt and artifact/event links. Use migration
@@ -419,6 +457,10 @@ returns stored stable refs plus a fresh WP3 projection.
   artifact lifecycle.
 
 ## WP8: Fixed OAuth work-write profile and consent
+
+**Amendment note:** WP11 and WP12 replace the two fixed MCP applications and
+their shared installation lineages. WP8 remains the audience, PKCE, exact-scope,
+`jti`, refresh, and consent baseline on which that replacement builds.
 
 **Scope**
 
@@ -508,6 +550,9 @@ receipt CRUD tool; replaying the identical mutation is the recovery operation.
 
 ## WP10: Compatibility, rollout, and certification
 
+**Amendment note:** WP10 certifies the original local slice. WP14 is the final
+gate for ADR 0004 after the 2026-08-29 amendment.
+
 **Scope**
 
 Update operator and client documentation, complete the security matrix, run
@@ -556,6 +601,267 @@ schedules, retries execution, or includes copied Issue prose.
   deployment-specific operational details.
 - The decision log still marks ADR 0003 and ADR 0004 Proposed until ADR 0001 is
   accepted and each decision has the required implementation evidence.
+
+## WP11: Constrained MCP client bootstrap
+
+**Scope**
+
+Replace the two fixed MCP OAuth applications with one programmatic bootstrap
+for each independently revocable harness installation. Accept only the closed
+ADR 0004 public-client registration profile. Generate a high-entropy client ID
+without a client secret, persist bounded registered-client and optional
+installation labels, and preserve exact redirect URIs plus their validated
+class. A client registration is MCP-exclusive but does not own a scope profile.
+Labels and redirects become immutable at finalization. Changing them requires a
+new bootstrap and consent; the bound principal may delete an ungranted
+finalized registration only through Applications settings.
+
+Model a short-lived provisional state explicitly. An unapproved registration
+cannot exchange tokens or access MCP. The first successful authorization binds
+and finalizes it for the authenticated principal; a different principal cannot
+reuse it. Expired or denied provisional registrations are deleted by bounded,
+repeatable cleanup. Use the next free migration number after rebase; do not
+overload ordinary user-created OAuth application ownership or infer state from
+an empty field.
+
+Advertise the bootstrap endpoint through OAuth authorization metadata. The
+endpoint accepts no scope, profile, repository, principal, confidential-client
+method, arbitrary extension metadata, or fetched content. Enforce exact HTTPS
+or native loopback redirect validation, PKCE S256 at authorization, request and
+metadata limits, a small independent in-flight budget, per-source and
+instance-wide rate limits, and outstanding provisional caps. Use a 30-minute
+default provisional lifetime configurable only from 10 to 60 minutes. Expiry
+during login or consent creates no grant and requires a fresh bootstrap.
+Bootstrap has its own enablement so operators can stop new registrations
+without invalidating existing grants. Explicitly document that a source-rotating
+attacker can temporarily fill the instance cap and deny only new onboarding;
+the cap is an accepted storage-bound availability tradeoff.
+
+Remove both the ADR 0002 fixed read application and ADR 0004 fixed write
+application outright after the new flow passes conformance. They have no
+supported client or deployment compatibility boundary. Stop and discard the
+pre-release dogfood database and credentials, then validate the replacement on
+a fresh database. Do not add grant, client-ID, token-lineage, application, or
+receipt compatibility migration or alias behavior for the disposable
+substrate.
+
+**Files and packages**
+
+- [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) and focused new
+  registration model/service files under the OAuth authority.
+- The next free migration and
+  [`models/migrations/migrations.go`](../../../models/migrations/migrations.go).
+- [`services/oauth2_provider/mcp_profile.go`](../../../services/oauth2_provider/mcp_profile.go)
+  and authorization-server metadata.
+- A narrow registration route under [`routers/web/auth`](../../../routers/web/auth)
+  or another OAuth-provider-owned router, not `routers/mcp` domain handlers.
+- [`modules/setting/mcp.go`](../../../modules/setting/mcp.go) and example
+  configuration for bootstrap admission and cleanup bounds.
+
+**Acceptance evidence**
+
+- A conforming harness silently obtains and reuses a public client ID, then
+  completes login, consent, callback, code exchange, and refresh without a
+  manual application-creation or copy/paste step.
+- Registration alone creates no grant, token, scope, repository access, or
+  usable authorization code.
+- Client IDs are high entropy, no client secret is issued, and bootstrap input
+  cannot select authority.
+- HTTPS and loopback redirect positive cases pass; user-info, fragments,
+  non-loopback HTTP, malformed hosts, excess redirects, and redirect mismatch
+  fail without fetching client-supplied URLs.
+- Missing PKCE, `plain`, wrong verifier, wrong resource, confidential client,
+  and token exchange before consent fail closed.
+- Concurrent first approval finalizes once; another principal cannot authorize
+  the registration.
+- Finalized labels and redirects cannot be edited; deletion requires the bound
+  principal and no active grant, invalidates remaining authorization codes, and
+  leaves receipt snapshots unchanged.
+- Consent marks names as client-provided and unverified and shows the loopback
+  class or exact HTTPS callback origin.
+- Rate, capacity, size, provisional-count, expiry, and repeatable-cleanup tests
+  prove registration spam remains bounded; expiry during consent creates no
+  grant and the accepted instance-cap availability tradeoff is documented.
+- Disabling bootstrap prevents new registrations while existing approved
+  clients continue to authorize and refresh.
+- A fresh database advertises no fixed shared MCP application, contains no
+  inherited MCP grant or credential lineage, and requires the new onboarding
+  flow for its first client.
+- An opposing-family OAuth and abuse-boundary review has no unresolved blocker.
+
+## WP12: Grant profiles and principal authority inspection
+
+**Scope**
+
+Make the OAuth grant the single authority for the current MCP consent profile.
+Derive `Read` and `Work Planning` from their exact canonical scope sets instead
+of persisting a duplicate application profile. Keep one current grant per
+principal and client registration.
+
+Treat a profile change as atomic grant replacement. A denied or failed consent
+leaves current authority unchanged. An approved change invalidates the old
+grant, authorization codes, access-token lookup, and refresh lineage before a
+new grant and lineage become usable. No access token may observe scopes from a
+replacement grant, and no old refresh token may restore earlier authority.
+
+Expand the principal's Applications page into an authority inspection surface.
+For each active grant, show escaped registered client and optional installation
+labels, server-defined profile, exact scopes, authorization time,
+credential-rotation time, active state, public/PKCE and redirect class, and a
+revoke action. Revoke invalidates grant credentials but leaves the inert client
+registration available for a later explicit reconnect. Do not add model labels
+or synthetic last-use telemetry to the grant.
+List ungranted finalized registrations separately as inert reconnect identities
+with a delete action. Do not reap them automatically.
+
+**Files and packages**
+
+- [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) and
+  [`services/oauth2_provider`](../../../services/oauth2_provider) grant,
+  authorization-code, access-token, and refresh-token operations.
+- [`routers/web/auth/oauth2_provider.go`](../../../routers/web/auth/oauth2_provider.go)
+  and [`templates/user/auth/grant.tmpl`](../../../templates/user/auth/grant.tmpl).
+- [`routers/web/user/setting/applications.go`](../../../routers/web/user/setting/applications.go),
+  [`templates/user/settings/grants_oauth2.tmpl`](../../../templates/user/settings/grants_oauth2.tmpl),
+  and locale strings.
+- OAuth model, service, integration, and focused browser tests.
+
+**Acceptance evidence**
+
+- Consent shows the registered metadata, human-readable profile, exact scopes,
+  and semantic authority before approval.
+- Consent marks the registered name and installation as client-provided and
+  unverified and shows the loopback class or exact HTTPS callback origin.
+- `Read` and `Work Planning` are the only accepted MCP scope sets and derive one
+  profile without a duplicate application-profile authority.
+- Read-to-Work and Work-to-Read transitions mint a distinct grant and token
+  lineage atomically; old codes, access tokens, and refresh tokens all fail.
+- Denial and injected replacement failure preserve the prior grant and lineage.
+- Refresh rotates within one installation without affecting another
+  registration for the same principal or harness label.
+- Revoke immediately fails access lookup and refresh for that grant, does not
+  revoke another installation, and permits a later browser-approved reconnect.
+- The settings page answers what was authorized and what can be revoked without
+  exposing internal IDs or claiming last use.
+- Ungranted finalized registrations remain visible and inert until the bound
+  principal deletes them; they cannot be edited or deleted while a grant exists.
+- Registered metadata is escaped and cannot inject markup into consent,
+  settings, timeline, or error views.
+- An opposing-family OAuth, token-lineage, and authorization-UX review has no
+  unresolved blocker.
+
+## WP13: Required operation client attribution
+
+**Scope**
+
+Replace the original unverified-actor receipt field with the amended ADR 0004
+attribution contract. For every Work mutation, read the harness name and
+optional version through the official SDK's `ServerRequest.ClientInfo` fallback
+rules and read the required model from
+`_meta.io.gitea.forge/clientAttribution`. Validate both before receipt lookup or
+domain invocation and return `client_attribution_required` for missing,
+malformed, control-containing, or over-bound values.
+
+Extend the existing receipt through the next free migration. Preserve the
+authoritative client-registration, grant, credential, profile, scope, origin,
+operation, and outcome fields. Add bounded snapshots of registered client and
+installation labels plus client-reported harness, harness version when present,
+model, and source. Do not add a second audit table or store prompts, model
+traffic, raw requests, or credentials.
+
+Keep attribution outside the RFC 8785 semantic request and idempotency digest.
+The first amended-profile receipt owns the attribution returned on replay.
+Update the mutation output schema and human timeline/Project presentation to
+label registered metadata and client-reported metadata distinctly; remove
+`software actor unverified` without replacing it with a verified-actor claim.
+
+Do not migrate pre-amendment receipts. Recreate the disposable dogfood
+substrate from an empty database before WP13 validation. No implementation path
+reads, transforms, rejects, or otherwise accommodates pre-amendment rows.
+
+**Files and packages**
+
+- [`routers/mcp/mcp.go`](../../../routers/mcp/mcp.go), semantic mutation tool
+  handlers, request metadata extraction, and schema/error tests.
+- Existing MCP-work receipt model and service under
+  [`models/mcpwork`](../../../models/mcpwork) and
+  [`services/mcpwork`](../../../services/mcpwork).
+- The next free receipt migration and migration registry entry.
+- Issue timeline and Project provenance rendering, locale, and focused browser
+  tests.
+
+**Acceptance evidence**
+
+- Every mutation tool rejects absent or invalid `clientInfo.name` and model
+  metadata before receipt lookup and before any native write.
+- Legacy initialized sessions and current stateless per-request `clientInfo`
+  both populate the same bounded attribution result.
+- A committed receipt and result contain `harness`, optional
+  `harnessVersion`, `model`, and `source: client-reported`.
+- Same key and semantic request with changed reported labels replays the first
+  operation and original attribution; it does not conflict or execute again.
+- Different semantic input still conflicts even when attribution is identical.
+- Registration deletion does not rewrite the receipt's label snapshot.
+- A fresh database produces only the amended receipt schema; no `unknown`,
+  invented label, tombstone, backfill, or legacy replay path exists.
+- Database, log, output, and UI tests prove bounded labels are escaped and no
+  prompt, raw request, token, or hidden object data is retained or disclosed.
+- Human presentation distinguishes principal authority, authorized client
+  registration, and client-reported harness/model without attestation language.
+- An opposing-family provenance, idempotency, privacy, and spoofing review has
+  no unresolved blocker.
+
+## WP14: Amended onboarding security and dogfood certification
+
+**Scope**
+
+Complete cross-boundary conformance, documentation, upgrade behavior, and
+dogfood for WP11 through WP13. This is an evidence package, not a place to add
+unreviewed OAuth features, actor registries, last-use telemetry, or production
+enablement.
+
+Run the browser onboarding flow with at least two independently revocable
+registrations and with two installations that deliberately report the same
+harness label. Exercise first connect, normal reuse, refresh rotation, local
+credential loss, reconnect, profile transition, server revoke, bootstrap
+disablement, expired provisional cleanup, registration abuse bounds, and
+mutation attribution/replay. Verify the authority inspection UI and operation
+provenance answer different questions without conflicting.
+
+**Files and packages**
+
+- [`tests/integration/mcp_oauth_conformance_test.go`](../../../tests/integration/mcp_oauth_conformance_test.go),
+  [`tests/integration/mcp_test.go`](../../../tests/integration/mcp_test.go), and
+  focused browser tests.
+- [`docs/mcp.md`](../../mcp.md),
+  [`custom/conf/app.example.ini`](../../../custom/conf/app.example.ini), and
+  operator upgrade/security documentation.
+- ADR status only after every original and amended dependency permits it.
+
+**Acceptance evidence**
+
+- A fresh harness installation completes bootstrap and normal OAuth onboarding
+  without manual application management; repeat use and refresh have no human
+  gate.
+- Two same-label installations receive distinct registrations, grants, and
+  refresh lineages and can be revoked independently.
+- Profile transition requires new consent and cannot be resurrected by any old
+  access or refresh credential.
+- Registration spam, redirect substitution, consent phishing labels,
+  provisional races, cleanup races, wrong audience, PKCE downgrade, disabled
+  bootstrap, and disabled mutation have negative tests.
+- Every mutation supplies required client attribution; replay preserves the
+  original labels while native work changes exactly once.
+- Consent, authority settings, and operation history display only facts Forge
+  owns and annotations with an explicit client-reported source.
+- Existing general OAuth applications, REST tokens, read-only MCP behavior,
+  and ordinary Projects retain their documented boundaries.
+- Complete configuration, migration, rollback, security, and client onboarding
+  documentation contains no operational deployment detail.
+- Opposing-family reviews for WP11 through WP13 are closed, and a final focused
+  ADR-conformance review has no unresolved blocker.
+- Every new capability remains disabled by default, and ADR 0004 remains
+  Proposed until all dependency and database evidence permits acceptance.
 
 ## Stacked-PR execution checklist
 

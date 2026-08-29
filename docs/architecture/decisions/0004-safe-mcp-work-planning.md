@@ -2,10 +2,14 @@
 
 - Status: Proposed
 - Date: 2026-08-28
+- Amended: 2026-08-29
 - Decision owner: Forge maintainer
 - Depends on: [ADR 0001](0001-agent-native-forge-domain.md),
   [ADR 0002](0002-native-semantic-mcp.md),
   [ADR 0003](0003-authoritative-work-planning.md)
+- Will partially supersede upon acceptance: ADR 0002's fixed pre-registered
+  MCP-client, shared installation refresh-lineage, and deferred
+  client-registration clauses
 - Implementation plan:
   [ADR 0004 implementation plan](../plans/0004-mcp-work-planning-implementation.md)
 
@@ -43,8 +47,11 @@ complete envelope:
 - [`services/issue`](../../../services/issue) commonly persists first and emits
   notifications afterward, which must be separated into transactional state
   and post-commit effects before a larger atomic revision can reuse it; and
-- OAuth grants are unique per user and application, so silently broadening the
-  existing fixed read client cannot provide a new, explicit write consent.
+- OAuth grants are unique per user and application. The initial fixed read and
+  write applications collapse every harness installation into shared labels
+  and refresh lineages, while the existing grant page exposes neither the
+  exact authority nor enough client context for a principal to understand what
+  they can revoke.
 
 MCP clients also need a stable contract. Generic Project and Issue CRUD would
 force clients to reconstruct the work domain and its invariants. A generic
@@ -72,9 +79,26 @@ second work authority.
 
 Forge remains a forge and coordination service. It does not adopt work for an
 agent, select an executor, dispatch a harness, schedule or retry execution,
-register agents, or infer exclusive delivery ownership. Claims, leases,
-semantic duplicate detection, and copied Work state remain outside this
-decision.
+register agents or models, or infer exclusive delivery ownership. Claims,
+leases, semantic duplicate detection, and copied Work state remain outside
+this decision.
+
+This decision also extends ADR 0002's OAuth profile for usable multi-client
+onboarding. Each independently revocable harness installation obtains one
+durable, public, MCP-exclusive OAuth client registration through a constrained
+programmatic bootstrap. The bootstrap is plumbing, not another human ceremony:
+the visible flow remains client request, browser login, explicit profile and
+scope consent, callback, token exchange, and silent refresh until revocation or
+a new scope decision. A registration carries no authority before a principal
+approves a grant.
+
+Forge distinguishes facts it can enforce from labels useful for later
+archaeology. The principal, client registration, grant, exact scopes, audience,
+credential, operation, and outcome are authoritative Forge records. Client and
+installation labels are registered metadata. MCP harness and model labels are
+client-reported operation metadata. Neither label class identifies a security
+principal or gains authority, and Forge does not maintain a harness or model
+registry.
 
 ### Protocol and schema rules
 
@@ -130,6 +154,20 @@ shorthand and never requires a client-side schema fetch.
     "idempotencyKey": {
       "type": "string",
       "pattern": "^[!-~]{16,128}$"
+    },
+    "clientAttribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness", "model", "source"],
+      "properties": {
+        "harness": {"type": "string", "minLength": 1,
+          "maxLength": 128},
+        "harnessVersion": {"type": "string", "minLength": 1,
+          "maxLength": 64},
+        "model": {"type": "string", "minLength": 1,
+          "maxLength": 128},
+        "source": {"const": "client-reported"}
+      }
     }
   }
 }
@@ -635,6 +673,34 @@ All mutation tools require `idempotencyKey`. A key is opaque printable ASCII,
 16 through 128 bytes, and must be generated with high entropy. It is not a
 work reference or a user-visible name.
 
+Every mutation request also requires client attribution in MCP request
+metadata. Forge reads the harness name and version from standard MCP
+`clientInfo`, using the negotiated per-request value or the legacy initialized
+session value. The request `_meta` key
+`io.gitea.forge/clientAttribution` has this closed shape:
+
+```json
+{
+  "model": "gpt-5.6"
+}
+```
+
+`clientInfo.name` and `model` are required, trimmed, non-empty client-reported
+strings of at most 128 UTF-8 characters without control characters.
+`clientInfo.version`, when present, has the same rules and a 64-character
+limit. Missing, malformed, or over-bound attribution fails before the Work
+domain service, receipt lookup, or native mutation with
+`client_attribution_required`; the failure is non-retryable until the client
+corrects the request. This is an MCP provenance-profile failure, not a Work
+domain rejection or an authorization fact.
+
+Attribution metadata is deliberately outside the canonical semantic request
+and idempotency digest. The first committed receipt preserves the original
+client attribution. Replaying the same semantic request and key
+returns that original attribution even if a later transport request reports
+different labels. Labels never select permissions, profiles, repositories, or
+operation behavior.
+
 `work_plan.begin` creates a new repository Project in draft planning state or
 opts an existing disabled Project into draft:
 
@@ -870,12 +936,14 @@ The three mutation tools return this exact envelope:
     "operation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "replayed", "changed", "committedAt"],
+      "required": ["id", "replayed", "changed", "committedAt",
+        "clientAttribution"],
       "properties": {
         "id": {"type": "string", "format": "uuid"},
         "replayed": {"type": "boolean"},
         "changed": {"type": "boolean"},
-        "committedAt": {"type": "string", "format": "date-time"}
+        "committedAt": {"type": "string", "format": "date-time"},
+        "clientAttribution": {"$ref": "#/$defs/clientAttribution"}
       }
     },
     "createdReferences": {
@@ -981,8 +1049,10 @@ The receipt stores:
 
 - operation UUID, tool and schema version, canonical request digest, and key
   digest;
-- principal ID, fixed OAuth application and grant IDs, credential `jti`, exact
-  scope snapshot, actor trust `unverified`, and interface origin `mcp`;
+- principal ID, OAuth client registration and grant IDs, credential `jti`,
+  exact scope and server-defined profile snapshot, and interface origin `mcp`;
+- the registered client and installation label snapshot plus bounded
+  client-reported harness, harness version when present, and model;
 - committed `applied`, `unchanged`, or deterministic `rejected` outcome and
   timestamps; and
 - stable affected Project/Issue references and local-reference resolutions.
@@ -1000,9 +1070,10 @@ spelling must be replayed after a repository rename; the stored stable result
 references then identify the committed artifacts.
 
 It never stores the raw token, raw idempotency key, request Markdown, complete
-request body, copied Work state, client-supplied actor identity, or hidden
-object display data. An HMAC key distinct from cursor signing keys protects key
-digests against offline guessing.
+request body, copied Work state, prompts, model inputs or outputs, or hidden
+object display data. The bounded labels are annotations, not actor credentials.
+An HMAC key distinct from cursor signing keys protects key digests against
+offline guessing.
 
 Receipt detail is retained while affected artifacts exist. Deletion replaces
 eligible detail with a compact key/request tombstone; the tombstone has no
@@ -1015,9 +1086,11 @@ risk decision.
 
 The receipt and mutation commit together. Concurrent matching requests produce
 one receipt. The same key and canonical semantic request returns the recorded
-outcome and stable references with `replayed: true`, followed by a fresh
-permission-filtered projection. The same key with a different request returns
-`idempotency_conflict` and discloses no earlier repository or object.
+outcome, original attribution, and stable references with `replayed: true`,
+followed by a fresh permission-filtered projection. Changed attribution alone
+does not change request equality. The same key with a different semantic
+request returns `idempotency_conflict` and discloses no earlier repository or
+object.
 
 If commit returns ambiguously, Forge looks up the receipt in a new transaction.
 A matching final receipt recovers the committed result. A definitely absent
@@ -1058,57 +1131,168 @@ principal, the audience-bound credential and exact scope profile, and current
 repository and unit permissions. The credential instance is the OAuth access
 token identified by a required random `jti`; raw credentials are never stored.
 
-The initial fixed OAuth clients do not verify a distinct software actor.
-MCP `clientInfo`, user input, and an OAuth application's display name are not
-actor identity. Each mutation therefore records actor kind `unverified` and
-interface origin `mcp`. It must not say that the principal personally performed
-the action or name an agent that Forge did not authenticate.
+An OAuth client registration is the independently revocable credential-holder
+boundary. Its client and installation labels describe that registration but
+are client-supplied metadata, not proof that particular software is running.
+MCP `clientInfo` and the model label describe one operation and are also
+client-reported. Forge preserves these values because they are useful for
+debugging and archaeology, while displaying their source and never using them
+for authorization, policy, dispatch, or trust.
 
 Issue timelines and Project views link relevant native events to the receipt
-and render the human-visible meaning: “Performed through MCP using
-`@principal`'s authority; software actor unverified.” Only viewers already
-authorized for the affected object can see that provenance. Internal grant,
-application, token, key, and request digests are not rendered.
+and render the human-visible meaning:
 
-This representation leaves room for a later delegated credential to identify
-a verified actor without introducing an agent registry now.
+```text
+Performed through MCP using @principal's authority.
+Authorized client: <registered client> — <installation label>.
+Client reported: <harness> / <model>.
+```
+
+The registered and runtime labels are escaped, bounded, and visually
+distinguished from verified principal and grant facts. Only viewers already
+authorized for the affected object can see that provenance. Internal grant,
+application, token, key, and request digests are not rendered. Deleting a
+registration does not rewrite an earlier receipt's bounded label snapshot.
+
+This is useful attribution, not attestation. Forge makes no claim that a model
+or harness label is true, maintains no registry of allowed values, and does not
+call either value a verified actor.
 
 ### OAuth, consent, and permissions
 
 MCP work mutations require OAuth. Personal access tokens remain exactly
-read-only and never register mutation tools. Reads use the existing fixed
-public MCP client and exact `read:repository` scope.
+read-only and never authorize mutation tools. OAuth client registrations are
+public and MCP-resource-exclusive. They use the canonical MCP resource
+audience, PKCE S256, header bearer credentials, short-lived access tokens, and
+the existing refresh replay protections. An MCP-audience token cannot
+authorize REST, and a general OAuth token cannot authorize MCP.
 
-Writes use a second fixed public, MCP-exclusive OAuth application and the exact
-canonical scope set:
+The server exposes a constrained programmatic MCP client bootstrap so a
+harness installation can obtain and persist a client ID once. The bootstrap is
+advertised through OAuth authorization metadata and accepts only a closed
+public-client registration profile:
+
+- one bounded client label and an optional bounded installation label;
+- public clients with no client secret or client authentication method;
+- the canonical MCP resource only;
+- exact HTTPS redirects without fragment or user information, or native-app
+  loopback HTTP redirects using Forge's existing dynamic-port normalization;
+- PKCE S256 for every subsequent authorization;
+- no requested OAuth scopes, profile, repository, principal, or authority; and
+- bounded metadata size and redirect count, with no fetched logo, software
+  statement, or client-supplied executable content.
+
+The bootstrap creates a high-entropy, short-lived provisional registration.
+It cannot receive a token, call MCP, or authorize another Forge interface. The
+first successful browser consent binds and finalizes it for the authenticated
+principal; an unapproved registration expires and is deleted. A finalized
+registration cannot be transferred to or authorized by another principal.
+Another principal or independently revocable installation bootstraps another
+registration.
+
+Client and installation labels, redirect URIs, and redirect class become
+immutable when the registration is finalized. Changing any of them requires a
+new bootstrap and consent, followed by revocation of the old grant. The bound
+principal may delete a finalized registration through the Applications
+settings only when it has no active grant; deletion invalidates any remaining
+authorization codes. Receipts retain their bounded label snapshots. Forge does
+not add a remote registration-update credential or endpoint in this slice.
+An ungranted finalized registration is inert, remains visible to its bound
+principal, and persists for reconnect until that principal deletes it; Forge
+does not automatically reap finalized registrations.
+
+This endpoint is not an unbounded application-creation API. It has independent
+enablement, non-blocking capacity, request-size and metadata bounds,
+per-source and instance-wide rate limits, and a cap on outstanding provisional
+registrations. Cleanup is safe to repeat. Operators may disable new bootstrap
+without invalidating established registrations and grants. Registration
+metadata is treated as untrusted text throughout consent and settings views.
+The provisional lifetime defaults to 30 minutes and is configurable only
+within a documented 10-to-60-minute range. Expiry during login or consent
+creates no grant and returns an invalid-client result that tells the harness to
+bootstrap again.
+
+A source-rotating unauthenticated caller can still fill the instance-wide
+provisional cap and temporarily deny new onboarding until expiry or cleanup.
+This bounded availability tradeoff is accepted so storage cannot grow without
+limit; it never affects established registrations, grants, refresh, or MCP
+calls. Deployment rate limiting remains an additional outer control.
+
+The visible onboarding remains the ordinary authorization-code flow:
+
+1. The harness silently obtains or reuses its installation client ID.
+2. It opens the browser authorization request.
+3. Forge authenticates the principal when needed and displays registered
+   client metadata, the requested server-defined profile, and its exact scopes.
+   The consent page labels the name and installation as client-provided and not
+   verified by Forge. It also shows `Local application (loopback)` or the exact
+   HTTPS callback origin so an attacker-chosen label is not the only client
+   context.
+4. The principal approves or denies once.
+5. Forge finalizes the registration, creates the grant, and redirects an
+   authorization code to the exact registered callback.
+6. The harness exchanges the code, stores its credentials, and refreshes them
+   silently until revocation or a later profile change.
+
+Client bootstrap never grants authority. Browser consent is the only step that
+creates a grant.
+
+Forge defines two exact consent profiles. `Read` is exactly
+`read:repository`. `Work Planning` is exactly:
 
 ```text
 read:repository write:issue write:repository
 ```
 
-The write profile uses the same canonical MCP resource audience as the read
-profile, PKCE S256, header bearer credentials, short-lived access tokens, and
-the existing refresh replay protections. It accepts scope members in any order,
-canonicalizes them to the exact set above, and rejects empty, duplicate,
-unknown, or additional scopes. A write token cannot authorize REST because
-generic OAuth verification accepts no MCP resource audience, and a general
-OAuth token cannot authorize MCP because it lacks the canonical MCP audience.
+The server-defined profile is derived from and governed by the grant's exact
+canonical scope set; it is not permanently bound to the client application or
+duplicated as a competing permission record. Scope members may arrive in any
+order, but Forge canonicalizes them and rejects empty, duplicate, unknown,
+additional, or non-profile sets throughout authorization, token exchange,
+refresh, verification, metadata, and challenge paths.
 
-A separate application preserves existing read grants and refresh tokens.
-Forge's one-grant-per-user-and-application model cannot safely represent silent
-incremental escalation on the existing client. The write client always shows
-explicit consent describing that Forge may create, edit, close, and reopen
+One registration has one current grant for its principal. Moving from `Read`
+to `Work Planning`, or back, is a new consent decision rather than an in-place
+scope edit. Forge invalidates the old grant and every authorization code,
+access-token lookup, and refresh lineage that names it; only after explicit
+approval does it create a new grant and credential lineage. An old refresh
+token cannot restore prior or broader authority, and an old access token cannot
+inherit the replacement grant's scopes. Failed or denied consent leaves the
+old grant unchanged. Forge never silently escalates a grant.
+
+Work Planning consent describes that Forge may create, edit, close, and reopen
 Issues; change plan memberships and dependencies; and create, activate, return
-to draft, or delete repository plans wherever current permissions allow. The
-consent also says it cannot push or merge code, administer repositories, or
-run agents.
+to draft, or delete repository plans wherever current permissions allow. It
+also says it cannot push or merge code, administer repositories, or run
+agents. Local logout discards the harness credentials but need not delete the
+persisted client ID; reconnecting after logout requires authorization when no
+valid refresh credential remains. Server-side revoke removes the grant and
+invalidates its credential lineage while leaving the harmless client
+registration available for a later explicit reconnect.
 
-Protected Resource Metadata advertises supported exact scopes. Protocol and
-tool discovery remain instance-scoped and permission-neutral: enabled mutation
-tools may be listed to a read credential, but invocation still requires the
-write profile and current permissions. Discovery never enumerates accessible
-repositories. When mutation enablement is off, the write profile and write
-tools are not advertised or issuable.
+The principal-facing Applications page is an authority inspection surface. For
+each grant it shows the registered client and optional installation label,
+server-defined profile, exact scopes, authorization time, credential-rotation
+time, active state, public/PKCE and redirect class, and a revoke action. It does
+not claim last-use telemetry that Forge does not possess, place model labels on
+the grant, or expose raw client, grant, token, or credential identifiers.
+
+The earlier fixed ADR 0002 read application and ADR 0004 write application have
+no released or supported compatibility contract. The current pre-release
+dogfood database and credentials are disposable, so the
+cutover removes both fixed applications and recreates the dogfood substrate
+from an empty database after the replacement is complete. Forge adds no grant,
+receipt, actor-trust, client-ID, token-lineage, or application-metadata
+migration, backfill, alias, tombstone, or dual-read path for this transition.
+
+Protected Resource Metadata advertises supported exact scopes, while
+authorization metadata advertises the constrained client-bootstrap endpoint.
+Protocol and tool discovery remain instance-scoped and permission-neutral:
+enabled mutation tools may be listed to a read credential, but invocation still
+requires the Work Planning profile and current permissions. Discovery never
+enumerates accessible repositories. When mutation enablement is off, the Work
+Planning profile and write tools are not advertised or issuable. Disabling
+bootstrap stops new registrations without changing existing authorization.
 
 Scopes only cap a credential. Every call rechecks repository state, unit state,
 and native permissions:
@@ -1146,6 +1330,7 @@ structured envelopes above. Error codes are the stable machine vocabulary:
 | `invalid_dependency` | Edge is invalid, undisclosed, cyclic, or over bound |
 | `invalid_cursor` | Cursor is invalid, expired, or bound elsewhere |
 | `limit_exceeded` | A disclosed request or result exceeds a fixed bound |
+| `client_attribution_required` | Required MCP harness/model metadata is missing or malformed |
 | `busy` | Endpoint capacity is unavailable |
 | `timeout` | Execution deadline elapsed before a known commit |
 | `cancelled` | Caller cancelled before a known commit |
@@ -1176,6 +1361,12 @@ Reads default to 25 items and permit at most 100 per page. A plan revision has
 at most 50 changes and 20 new Issues; titles are at most 255 characters and
 Markdown at most 65,536 bytes. Domain-owned graph, projection, SQL, Git, and
 output budgets add stricter finite limits documented in configuration.
+
+Client bootstrap has a separate small request limit, capacity budget,
+provisional-registration lifetime, outstanding-registration cap, and rate
+limits because it is reachable before authorization. Those bounds protect the
+OAuth application table without consuming a Work execution slot. They do not
+become a general Forge request-rate authority.
 
 Forge rejects predictable over-limit input before mutation. It checks context
 cancellation during traversal, database work, and Git inspection. A call that
@@ -1217,7 +1408,10 @@ harness, or runtime.
   second work aggregate.
 - Exact OAuth profiles and native permission checks prevent scope or interface
   confusion.
-- Humans can see that a change came through MCP without false actor claims.
+- Independently revocable installation registrations avoid shared credential
+  lineages without a manual application-creation ceremony.
+- Humans can inspect delegated authority and see useful client-reported
+  provenance without false actor claims.
 - Human and MCP interfaces remain symmetric through shared domain operations.
 
 ### Costs and risks
@@ -1225,7 +1419,12 @@ harness, or runtime.
 - Cross-backend serializable retry is foundational work and must be proven on
   every supported database.
 - Transactional persistence must be separated from post-commit notifications.
-- A second built-in OAuth client adds metadata, consent, and conformance tests.
+- A pre-authorization client-bootstrap endpoint adds application-table abuse,
+  redirect-validation, expiry, cleanup, and rate-limit obligations.
+- Profile replacement must invalidate old access and refresh lineages without
+  silently changing their scope.
+- Required client attribution makes unsupported clients fail before mutation
+  until they provide the profile metadata.
 - Durable key tombstones create retention and privacy obligations.
 - Permission-filtered projections and ambiguous-result fault injection require
   a substantial security test matrix.
@@ -1261,15 +1460,39 @@ for content and lifecycle decisions where stale intent matters.
 Rejected. ADR 0003 permits only Project planning state as new plan-specific
 state. JIT tokens and protocol receipts protect writes without copying work.
 
-### Broaden the existing MCP OAuth grant
+### Use one fixed MCP client per scope profile
 
-Rejected. Existing read grants would either be stranded or acquire mutation
-authority without a new consent. A separate fixed write client preserves them.
+Rejected. It collapses unrelated harness installations into one display label
+and refresh lineage, makes revocation less useful, and hard-binds a client
+registration to current authority. Per-installation registrations plus
+grant-owned profiles preserve explicit consent without manual client setup.
 
-### Trust client-reported agent identity
+### Require users to create OAuth applications manually
 
-Rejected. It would conflate principal, credential, and actor and could display
-an attribution Forge did not verify.
+Rejected. Copying client IDs and redirect URIs into each harness makes first
+connect unnecessarily fragile. A constrained bootstrap can create the same
+durable revocation boundary without granting authority before browser consent.
+
+### Expose unrestricted Dynamic Client Registration
+
+Rejected. General confidential clients, arbitrary redirects, client-selected
+scopes, permanent ungranted applications, and unbounded metadata create an
+unnecessary application-registration and phishing surface. The selected
+bootstrap accepts only the MCP public-client profile and expires unapproved
+registrations.
+
+### Trust or register harness and model identities
+
+Rejected. It would conflate useful client-reported attribution with principal,
+credential, and grant authority. Forge preserves bounded labels with an
+explicit source marker and makes no attestation claim.
+
+### Allow missing model attribution
+
+Rejected for this pre-stable mutation profile. Complete operation archaeology
+is a deliberate MCP contract invariant. Absence therefore fails as a transport
+provenance-profile error before domain mutation, while the value remains
+outside authorization and idempotency semantics.
 
 ### Expire idempotency keys after a short TTL
 
@@ -1294,8 +1517,9 @@ An implementation conforms when:
   scheduling, execution, or copied Work state;
 - read tools have no view or persistence side effect and use signed,
   permission-rechecked, non-snapshot cursors;
-- every mutation requires the fixed write OAuth profile and durable
-  idempotency; PAT and read OAuth credentials cannot invoke mutation tools;
+- every mutation requires the grant-owned Work Planning OAuth profile, durable
+  idempotency, standard `clientInfo`, and bounded model metadata; PAT and Read
+  OAuth credentials cannot invoke mutation tools;
 - same-key replay, concurrent duplicate calls, ambiguous commit, cancellation,
   response loss, and different-payload conflict have deterministic tests;
 - a bounded plan revision commits native facts, timeline events, provenance,
@@ -1306,10 +1530,32 @@ An implementation conforms when:
   token behavior match the concurrency rules above;
 - a read-after-write response contains the committed receipt and a fresh,
   permission-filtered projection without storing that projection;
-- provenance distinguishes verified principal, credential, unverified actor,
-  and MCP origin and is human-visible without exposing credential internals;
-- OAuth audience, exact scope profile, consent, refresh, revocation, repository
-  permission, unit permission, and REST isolation have negative tests;
+- provenance distinguishes verified principal and grant facts, registered
+  client metadata, client-reported harness/model metadata, and MCP origin and
+  is human-visible without exposing credential internals;
+- same-key replay returns the first receipt's attribution, while different
+  attribution alone neither conflicts nor changes semantic execution;
+- client bootstrap is public-client-only, MCP-exclusive, redirect constrained,
+  PKCE S256-bound, bounded, rate-limited, independently disableable, and cleans
+  up expired unapproved registrations;
+- finalized registration metadata is immutable, deletion requires the bound
+  principal and no active grant, and metadata changes require a new bootstrap
+  and consent;
+- onboarding requires no manual application creation and creates no authority
+  before authenticated browser consent;
+- consent marks registered names as client-provided and unverified and exposes
+  the loopback class or exact HTTPS callback origin;
+- each harness installation has an independently revocable registration and
+  credential lineage, and the grant page shows its profile, exact scopes,
+  authorization and rotation times, state, redirect class, and revoke action;
+- profile changes atomically replace the old grant and invalidate old code,
+  access, and refresh lineages without allowing silent escalation;
+- clean-slate cutover removes the fixed clients and recreates the disposable
+  dogfood substrate without compatibility aliases, backfills, tombstones, or
+  dual-read paths;
+- OAuth audience, exact scope profile, consent, bootstrap, redirect, PKCE,
+  refresh, revocation, repository permission, unit permission, and REST
+  isolation have negative tests;
 - missing, denied, hidden-path, over-bound, stale, and idempotency errors cannot
   disclose inaccessible identities or prior requests;
 - one endpoint-wide capacity limit, body/output/semantic bounds, cancellation,
@@ -1322,6 +1568,8 @@ An implementation conforms when:
 ## Deferred decisions
 
 - Verified delegated actor credentials and agent identity.
+- Harness or model registries, verification, attestation, and policy.
+- Last-use telemetry for OAuth grants and client registrations.
 - Claims, leases, adoption, and execution ownership.
 - Organization, cross-repository, and portfolio plans.
 - New cross-repository dependency creation.

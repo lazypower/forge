@@ -2,7 +2,9 @@
 
 - Status: Proposed execution projection
 - Date: 2026-08-28
+- Amended: 2026-08-29
 - Planning base: `d0d7a98b60c508ae343851d2f9c175963709cf49`
+- Amendment base: `233dc10123457fb9f69ba425cdf2586371b5a869`
 - Decision: [ADR 0004](../decisions/0004-safe-mcp-work-planning.md)
 - Implementation packages:
   [ADR 0004 implementation plan](0004-mcp-work-planning-implementation.md)
@@ -21,9 +23,17 @@ CRUD, a generic projection engine, claims, leases, an agent registry, or
 Forge-owned adoption, scheduling, dispatch, harness, or execution state.
 
 The orchestrator owns integration. Workers own bounded packages and evidence.
-Reviewers do not edit a builder's branch. No worker recursively delegates.
+Reviewers do not edit a builder's branch. Original WP0-WP10 workers did not
+recursively delegate; amendment threads follow the bounded rule below.
 
 The deliverable ends at a validated local build and image-ready source state.
+
+The 2026-08-29 amendment re-enters orchestration from the integrated WP10
+dogfood baseline. It adds WP11 through WP14 for per-installation OAuth client
+bootstrap, grant-owned profiles and authority inspection, required
+client-reported mutation attribution, and a new security certification. The
+original swarm record remains useful evidence; it is not rewritten to imply
+those later obligations were already delivered.
 
 ## Two finish lines
 
@@ -48,7 +58,7 @@ The session succeeds when a local, feature-gated build can demonstrate:
   projection;
 - the human Project or Issue surface shows planning state and honest MCP
   provenance sufficient for local dogfood;
-- read OAuth and PAT credentials cannot mutate, while the fixed write profile
+- read OAuth and PAT credentials cannot mutate, while the Work Planning profile
   requires explicit consent and current repository/unit permissions; and
 - all new capability remains disabled by default.
 
@@ -58,10 +68,12 @@ authorize broad rollout.
 
 ### Full ADR 0004 completion
 
-The decision is complete only after every WP0-WP10 acceptance item has evidence,
+The decision is complete only after every WP0-WP14 acceptance item has evidence,
 including the supported-database concurrency matrix, exhaustive ambiguous-
 commit and cancellation fault injection, complete human-interface symmetry,
-compatibility coverage, documentation, and staged rollout certification.
+client-bootstrap abuse and redirect coverage, grant-lineage transition,
+required attribution, compatibility coverage, documentation, and staged
+rollout certification.
 
 The orchestrator records any evidence not completed tonight as an explicit
 remaining obligation. It must never convert an unavailable database or test
@@ -133,7 +145,8 @@ deferred, or explicitly classified—not when the reviewer runs out of ideas.
 The review ledger lives outside the repository and follows the commit through
 orchestrator handoff.
 
-Mandatory cross-family review applies to WP0, WP2, WP4, WP7, WP8, and WP9.
+Mandatory cross-family review applies to WP0, WP2, WP4, WP7, WP8, WP9, WP11,
+WP12, and WP13.
 WP1, WP3, WP5, and WP6 may use orchestrator review when their diff is mechanical
 or completely covered by a downstream mandatory review. The orchestrator may
 escalate any package to opposing-family review.
@@ -357,7 +370,7 @@ frozen.
 
 - ordinary Project visual compatibility;
 - no hidden identity in markup;
-- honest unverified-actor wording; and
+- honest original-slice unverified-actor wording, superseded by WP13; and
 - focused human/MCP symmetry tests.
 
 ### Agent J: MCP mutations and end-to-end contract — WP6/WP9 completion
@@ -427,6 +440,151 @@ flowchart TD
 No downstream agent starts from an unreviewed semantic commit. An agent may
 prepare tests or compile-time interfaces early, but the orchestrator supplies a
 reviewed integration base before final implementation and handoff.
+
+## Amendment re-entry orchestration
+
+The extension uses new branches from the integrated WP10 baseline. It does not
+reopen the original package branches or hide new semantics in a documentation
+or certification commit.
+
+The integrated source baseline is retained; the running pre-release dogfood
+substrate is not. Before interface validation, stop it, discard its database
+and credentials, and recreate it from an empty database with the amended build.
+This pre-release slice has no supported client or deployment data to migrate,
+so no worker may add compatibility aliases, receipt backfills, dual-read
+schemas, or fixed-client transition code.
+
+| Agent | Default builder | Package | Review floor |
+| --- | --- | --- | --- |
+| K | Codex | WP11 constrained MCP client bootstrap | Fable 5 OAuth/abuse review |
+| L | Codex | WP12 grant lifecycle and authority UI | Fable 5 OAuth/token review |
+| M | Codex | WP13 required client attribution | Opus 5 provenance/idempotency review; escalate to Fable 5 for any security dispute |
+| N | Codex | WP14 conformance, docs, and dogfood | Fable 5 focused ADR review |
+
+Each implementing thread may use at most two non-recursive sub-agents for
+bounded tests or investigation. The implementing thread retains semantic
+ownership and must inspect every contributed diff. Reviewers remain read-only
+and never share the builder's model family.
+
+### Agent K: MCP client bootstrap — WP11
+
+**Owns**
+
+- provisional and finalized MCP OAuth client registration lifecycle;
+- closed public-client metadata and redirect validation;
+- bootstrap discovery, enablement, admission limits, expiry, and cleanup;
+- clean-slate fixed-client replacement; and
+- conformance and abuse tests.
+
+**Must not touch**
+
+- grant profile transition, Work receipt semantics, or human operation
+  provenance beyond interfaces explicitly agreed with L and M.
+
+**Handoff evidence**
+
+- no-authority-before-consent proof;
+- redirect, PKCE, audience, rate, capacity, expiry, cleanup, race, and
+  cross-principal negative tests;
+- immutable finalized metadata, bound-principal deletion, client-provided
+  consent marker, callback context, and accepted instance-cap availability
+  tradeoff;
+- ordinary OAuth application compatibility; and
+- Fable 5 review closure.
+
+### Agent L: Grant lifecycle and authority inspection — WP12
+
+**Starts after** K's registration model and service contract are reviewed.
+
+**Owns**
+
+- exact profile derivation from grant scope;
+- atomic scope-profile replacement and old-lineage invalidation;
+- consent and reconnect/revoke lifecycle; and
+- the principal-facing grant authority inspection view.
+
+**Must not touch**
+
+- client bootstrap admission, Work receipt schema, or model/harness policy.
+
+**Handoff evidence**
+
+- read-to-write and write-to-read transition fault tests;
+- old code/access/refresh rejection;
+- independent same-label installation rotation and revocation;
+- settings and consent browser tests with hostile registered metadata; and
+- Fable 5 review closure.
+
+### Agent M: Required operation attribution — WP13
+
+**Starts after** K and L freeze registration/grant snapshot interfaces. It may
+prepare SDK request-metadata tests earlier without changing receipt semantics.
+
+**Owns**
+
+- standard `clientInfo` and custom model metadata extraction and validation;
+- receipt migration and bounded attribution snapshots;
+- idempotency exclusion and replay behavior;
+- output schema and human operation provenance; and
+- privacy, escaping, legacy-session, and stateless-request tests.
+
+**Must not touch**
+
+- OAuth registration or grant authority, Work domain semantics, or an actor or
+  model registry.
+
+**Handoff evidence**
+
+- rejection-before-mutation proof;
+- changed-attribution replay proof;
+- fresh-database receipt schema with no compatibility path;
+- no prompt/request/credential retention proof;
+- human wording that separates authority from client report; and
+- Opus 5 review closure, with Fable 5 escalation for unresolved security
+  findings.
+
+### Agent N: Amended certification — WP14
+
+**Starts after** K, L, and M are reviewed and integrated.
+
+**Owns**
+
+- cross-boundary OAuth/MCP/browser conformance;
+- two-installation dogfood, profile transition, revoke, reconnect, and abuse
+  scenarios;
+- operator/client documentation and disclosure scan; and
+- the amended evidence ledger and final status report.
+
+**Must not touch**
+
+- semantic production code except a correction returned to and committed by
+  the owning builder.
+
+**Handoff evidence**
+
+- WP14's complete matrix with unavailable environments marked unproven;
+- Fable 5 focused ADR-conformance closure;
+- all new capabilities still disabled by default; and
+- no operational detail in the repository or proposed collaboration text.
+
+The extension dependency graph is:
+
+```mermaid
+flowchart TD
+    B["Integrated WP10 dogfood baseline"]
+    K["K WP11 Client bootstrap"]
+    L["L WP12 Grant lifecycle/UI"]
+    M["M WP13 Client attribution"]
+    N["N WP14 Amended certification"]
+
+    B --> K
+    K --> L
+    K --> M
+    L --> M
+    K --> N
+    L --> N
+    M --> N
+```
 
 ## Projected schedule
 
@@ -520,6 +678,61 @@ After WP5, WP6, WP8, and WP9:
 - Leave ADR 0003 and ADR 0004 Proposed and every new capability disabled by
   default.
 
+### Gate 6: client-bootstrap security
+
+After WP11:
+
+- run OAuth model, migration, metadata, route, and conformance tests;
+- prove registration accepts only the closed public MCP profile and exact safe
+  redirect classes;
+- prove finalized metadata is immutable, ungranted deletion is bound to the
+  principal, and consent marks client-provided identity plus callback context;
+- prove bootstrap alone cannot mint or exchange any credential;
+- exercise per-source and instance-wide rate, capacity, size, outstanding, and
+  expiry bounds plus cleanup and concurrent-finalization races;
+- prove expiry during consent creates no grant and record the accepted temporary
+  new-onboarding denial possible when the instance cap is full;
+- prove a registration cannot cross principals and ordinary OAuth applications
+  retain their behavior; and
+- close the Fable 5 OAuth/abuse review before integration.
+
+### Gate 7: grant and attribution integration
+
+After WP12 and WP13:
+
+- run OAuth grant, token, consent, settings, MCP router, receipt, service, and
+  provenance tests;
+- prove profile replacement is atomic and every old authorization code, access
+  token, and refresh token fails without affecting another installation;
+- prove required attribution fails before Work mutation, receipt lookup, and
+  resource-specific disclosure;
+- prove attribution is outside semantic idempotency and replay returns the
+  first committed labels;
+- prove a fresh database has only the amended receipt schema and no invented
+  attribution, backfill, tombstone, or legacy replay path;
+- prove hostile registered and runtime labels are bounded and escaped; and
+- close each package's required opposing-family review.
+
+### Gate 8: amended final certification
+
+- Run every relevant Gate 5 command plus focused OAuth, MCP, migration,
+  template, integration, and browser suites introduced by WP11-WP13.
+- The amended onboarding and attribution scenario replaces the original
+  fixed-client dogfood scenario for Gate 8. The original scenario remains
+  historical WP10 evidence only.
+- Stop and discard the pre-release dogfood database and credentials, rebuild
+  from an empty database, and retain evidence that no fixed client, inherited
+  grant, legacy receipt, or credential lineage exists before onboarding.
+- Execute the amended dogfood scenario with two independently revocable
+  installations and a profile transition.
+- Verify no application, grant, receipt, log, result, or UI contains raw
+  credentials, prompts, full mutation requests, hidden objects, or
+  deployment-specific identifiers.
+- Verify bootstrap and Work mutation remain independently disabled by default.
+- Close the final Fable 5 ADR review and classify every finding.
+- Leave ADR 0004 Proposed unless all dependency and supported-database evidence
+  also permits acceptance.
+
 ## Dogfood scenario
 
 The orchestrator uses synthetic repository, Project, Issue, principal, and
@@ -527,7 +740,7 @@ client identifiers in retained evidence.
 
 1. Authenticate with the existing read profile; inspect succeeds and mutation
    is rejected without resource disclosure.
-2. Authenticate with the fixed write profile after explicit consent.
+2. Authenticate with the original fixed write profile after explicit consent.
 3. Begin one draft plan from a new Project.
 4. Apply one bounded plan revision that creates three Issues, adds membership,
    and creates a two-edge dependency chain.
@@ -547,6 +760,43 @@ client identifiers in retained evidence.
 
 The scenario proves planning and mutation only. It does not launch an agent,
 create a worktree, choose a delivery owner, or claim execution occurred.
+
+### Amended onboarding and attribution scenario
+
+Retain only synthetic client labels and reserved example values in evidence.
+
+1. Start with no MCP registration or credential and initiate client connect.
+2. Bootstrap `Example Harness — installation one`; prove no grant or usable
+   token exists before browser approval.
+3. Complete login and `Read` consent, callback, code exchange, and refresh.
+4. Reuse the credential without another human gate and inspect work.
+5. Request `Work Planning`; approve the new profile and prove the old grant,
+   access token, and refresh token can no longer authorize anything.
+6. Submit a mutation with standard harness information and model metadata;
+   verify the receipt and human view distinguish authoritative grant facts from
+   client-reported labels.
+7. Retry the same mutation and key with a different model label; prove native
+   work changes once and replay returns the first attribution.
+8. Bootstrap `Example Harness — installation two` with the same harness label;
+   prove it has a different registration, grant, and refresh lineage.
+9. Rotate installation two and prove installation one remains valid; revoke
+   installation one and prove installation two remains valid.
+10. Discard local credentials, reconnect through browser authorization, and
+    verify the inert registration can be reused without manual application
+    creation.
+11. Create and expire unapproved provisional registrations up to the configured
+    bounds; prove rate/capacity rejection, expiry during consent, repeatable
+    cleanup, and the documented temporary new-onboarding denial at the instance
+    cap.
+12. Disable bootstrap and prove established clients continue while new
+    registration fails; disable mutation and prove Work Planning invocation
+    fails while read behavior remains compatible.
+13. Revoke the remaining grant, prove the inert finalized registration remains
+    visible, then delete it as the bound principal and verify receipt snapshots
+    remain unchanged.
+
+This scenario does not verify a harness or model identity, track last use, or
+create a grant per operation.
 
 ## Orchestrator goal statement
 
@@ -586,6 +836,19 @@ projection engine, or copied Work state. New cross-repository planning mutation
 remains deferred. Existing ordinary Projects and ADR 0002 pull inspection must
 remain compatible. All new capability is disabled by default.
 
+After the integrated WP10 baseline, continue through WP11-WP14. Replace fixed
+MCP applications with bounded per-installation public-client bootstrap; keep
+browser consent as the only authority-creation step; move exact profile choice
+to the grant; make profile changes invalidate old grant and credential
+lineages; expose a principal-facing authority inspection view; and require
+bounded client-reported harness/model attribution for Work mutations while
+keeping it outside authorization and semantic idempotency.
+
+Treat the existing dogfood runtime as disposable. Stop it, discard its database
+and credentials, and recreate it from an empty database after the replacement
+lands. Do not implement fixed-client, grant, receipt, actor-trust, client-ID, or
+token-lineage compatibility for the unsupported pre-release substrate.
+
 Stop at a validated local build and image-ready source state.
 
 Run the local gates after every handoff and integration wave. The tonight
@@ -593,7 +856,7 @@ milestone requires a real end-to-end MCP and human dogfood scenario, durable
 idempotent mutation, atomic rollback, optimistic and serializable concurrency,
 non-disclosure, explicit OAuth consent, honest provenance, and read-after-write
 composition. Record any unavailable database/backend as unproven, not passed.
-Do not mark ADR 0004 Implemented or enable broad rollout until every WP0-WP10
+Do not mark ADR 0004 Implemented or enable broad rollout until every WP0-WP14
 acceptance item has evidence.
 
 Stop and report the exact conflict if implementation requires changing an ADR
@@ -610,10 +873,17 @@ detail unless the human explicitly authorizes it.
 The final handoff must contain:
 
 - integrated commit and stack order;
-- one row per WP0-WP10 marked complete, partial, blocked, or not started;
+- one row per WP0-WP14 marked complete, partial, blocked, or not started;
 - exact local commands and outcomes for every gate;
 - supported-database matrix with unavailable backends marked unproven;
 - dogfood steps and observed semantic outcomes;
+- client-bootstrap abuse, redirect, expiry, and cleanup matrix;
+- grant-profile transition and old-credential-lineage invalidation evidence;
+- two-installation independent refresh/revocation evidence and authority-page
+  screenshots using synthetic labels;
+- required-attribution and changed-label replay evidence;
+- clean-slate substrate recreation evidence showing no inherited fixed client,
+  grant, receipt, or credential lineage;
 - opposing-family finding ledgers and their final classifications;
 - remaining work required before ADR acceptance or broad rollout;
 - confirmation that feature flags remain off by default;
