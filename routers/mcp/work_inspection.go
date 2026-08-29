@@ -21,16 +21,19 @@ const (
 	workItemInspectionContent = "The structured work item inspection result is in structuredContent."
 	workPlanInspectionContent = "The structured work plan inspection result is in structuredContent."
 	defaultWorkPageItems      = 25
+	// ADR 0004 has no distinct read-internal code; this is a document-boundary fallback, not mutation precedent.
+	workReadInternalFailureCode = "mutation_failed"
 )
 
 // WorkReadFailureKind identifies transport-neutral failures from a Work read adapter.
 type WorkReadFailureKind string
 
 const (
-	WorkReadUnavailable   WorkReadFailureKind = "unavailable"
-	WorkReadInvalidInput  WorkReadFailureKind = "invalid_input"
-	WorkReadInvalidCursor WorkReadFailureKind = "invalid_cursor"
-	WorkReadLimitExceeded WorkReadFailureKind = "limit_exceeded"
+	WorkReadUnavailable       WorkReadFailureKind = "unavailable"
+	WorkReadInvalidInput      WorkReadFailureKind = "invalid_input"
+	WorkReadInvalidCursor     WorkReadFailureKind = "invalid_cursor"
+	WorkReadInvalidDependency WorkReadFailureKind = "invalid_dependency"
+	WorkReadLimitExceeded     WorkReadFailureKind = "limit_exceeded"
 )
 
 // WorkReadFailure carries a safe failure class from the future services/work binding.
@@ -269,15 +272,16 @@ func (tools *workInspectionTools) inspectItem(ctx context.Context, _ *mcpsdk.Cal
 	defer release()
 	doer, err := tools.principal(executionCtx)
 	if err != nil {
-		return workReadErrorResult(workItemInspectionContent, "mutation_failed", "work item inspection failed", false, 0)
+		return workReadErrorResult(workItemInspectionContent, workReadInternalFailureCode, "work item inspection failed", false, 0)
 	}
 	inspection, err := tools.reader.InspectWorkItem(executionCtx, doer, input)
 	if err != nil {
 		return tools.mapError(ctx, executionCtx, workItemInspectionContent, err)
 	}
 	if inspection == nil {
-		return workReadErrorResult(workItemInspectionContent, "mutation_failed", "work item inspection failed", false, 0)
+		return workReadErrorResult(workItemInspectionContent, workReadInternalFailureCode, "work item inspection failed", false, 0)
 	}
+	inspection.normalize()
 	outputValue := workReadOutput{
 		SchemaVersion: "1", Status: "available", Repository: &inspection.Repository, WorkItem: &inspection.WorkItem,
 		SelectedContext: inspection.SelectedContext, Page: &inspection.Page,
@@ -294,15 +298,16 @@ func (tools *workInspectionTools) inspectPlan(ctx context.Context, _ *mcpsdk.Cal
 	defer release()
 	doer, err := tools.principal(executionCtx)
 	if err != nil {
-		return workReadErrorResult(workPlanInspectionContent, "mutation_failed", "work plan inspection failed", false, 0)
+		return workReadErrorResult(workPlanInspectionContent, workReadInternalFailureCode, "work plan inspection failed", false, 0)
 	}
 	inspection, err := tools.reader.InspectWorkPlan(executionCtx, doer, input)
 	if err != nil {
 		return tools.mapError(ctx, executionCtx, workPlanInspectionContent, err)
 	}
 	if inspection == nil {
-		return workReadErrorResult(workPlanInspectionContent, "mutation_failed", "work plan inspection failed", false, 0)
+		return workReadErrorResult(workPlanInspectionContent, workReadInternalFailureCode, "work plan inspection failed", false, 0)
 	}
+	inspection.normalize()
 	outputValue := workReadOutput{
 		SchemaVersion: "1", Status: "available", Repository: &inspection.Repository, WorkPlan: &inspection.WorkPlan, Page: &inspection.Page,
 	}
@@ -313,7 +318,9 @@ func (request *WorkItemInspectRequest) applyDefaults() {
 	if request.PageKind == "" {
 		request.PageKind = "contexts"
 	}
-	if request.Page != nil && request.Page.Limit == 0 {
+	if request.Page == nil {
+		request.Page = &WorkPageRequest{Limit: defaultWorkPageItems}
+	} else if request.Page.Limit == 0 {
 		request.Page.Limit = defaultWorkPageItems
 	}
 }
@@ -322,7 +329,9 @@ func (request *WorkPlanInspectRequest) applyDefaults() {
 	if request.PageKind == "" {
 		request.PageKind = "items"
 	}
-	if request.Page != nil && request.Page.Limit == 0 {
+	if request.Page == nil {
+		request.Page = &WorkPageRequest{Limit: defaultWorkPageItems}
+	} else if request.Page.Limit == 0 {
 		request.Page.Limit = defaultWorkPageItems
 	}
 }
@@ -357,11 +366,62 @@ func (tools *workInspectionTools) mapError(parentCtx, executionCtx context.Conte
 			return workReadErrorResult(content, "invalid_input", "work inspection input is invalid", failure.Retryable, failure.RetryAfterMilliseconds)
 		case WorkReadInvalidCursor:
 			return workReadErrorResult(content, "invalid_cursor", "work inspection cursor is invalid or stale", failure.Retryable, failure.RetryAfterMilliseconds)
+		case WorkReadInvalidDependency:
+			return workReadErrorResult(content, "invalid_dependency", "work inspection dependency is invalid", failure.Retryable, failure.RetryAfterMilliseconds)
 		case WorkReadLimitExceeded:
 			return workReadErrorResult(content, "limit_exceeded", "work inspection exceeded a semantic limit", failure.Retryable, failure.RetryAfterMilliseconds)
 		}
 	}
-	return workReadErrorResult(content, "mutation_failed", "work inspection failed", false, 0)
+	return workReadErrorResult(content, workReadInternalFailureCode, "work inspection failed", false, 0)
+}
+
+func (inspection *WorkItemInspection) normalize() {
+	inspection.WorkItem.normalize()
+	if inspection.SelectedContext != nil {
+		inspection.SelectedContext.normalize()
+	}
+	inspection.Page.normalize()
+}
+
+func (inspection *WorkPlanInspection) normalize() {
+	inspection.WorkPlan.normalize()
+	inspection.Page.normalize()
+}
+
+func (result *WorkItemResult) normalize() {
+	normalizeSlice(&result.ContextSummaries)
+	normalizeSlice(&result.ProjectMemberships)
+	normalizeSlice(&result.PrerequisiteSummaries)
+	normalizeSlice(&result.DependentSummaries)
+	normalizeSlice(&result.DeliverySummaries)
+}
+
+func (result *WorkPlanResult) normalize() {
+	result.Integrity.normalize()
+	normalizeSlice(&result.ItemSummaries)
+	normalizeSlice(&result.EdgeSummaries)
+	normalizeSlice(&result.ReadyFrontier)
+	normalizeSlice(&result.ExcludedMembers)
+}
+
+func (result *WorkPlanContextResult) normalize() {
+	result.Integrity.normalize()
+	normalizeSlice(&result.PrerequisiteSummaries)
+	normalizeSlice(&result.DeliverySummaries)
+}
+
+func (result *WorkIntegrity) normalize() {
+	normalizeSlice(&result.Concerns)
+}
+
+func (result *WorkPageResult) normalize() {
+	normalizeSlice(&result.Items)
+}
+
+func normalizeSlice[T any](values *[]T) {
+	if *values == nil {
+		*values = []T{}
+	}
 }
 
 func (tools *workInspectionTools) boundedResult(content string, output workReadOutput) (*mcpsdk.CallToolResult, workReadOutput, error) {

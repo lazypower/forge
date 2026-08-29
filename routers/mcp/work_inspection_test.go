@@ -163,43 +163,185 @@ func TestWorkReadOutputSchemaRejectsBoundsAndMismatchedPageItems(t *testing.T) {
 }
 
 func TestOfficialSDKAppliesWorkReadDefaults(t *testing.T) {
-	captured := make(chan WorkItemInspectRequest, 1)
-	executor := newToolExecutor(1, time.Second)
+	itemCaptured := make(chan WorkItemInspectRequest, 2)
+	planCaptured := make(chan WorkPlanInspectRequest, 2)
 	reader := fakeWorkReadService{
 		item: func(_ context.Context, _ *user_model.User, request WorkItemInspectRequest) (*WorkItemInspection, error) {
-			captured <- request
+			itemCaptured <- request
 			return validWorkItemInspection(), nil
 		},
-		plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+		plan: func(_ context.Context, _ *user_model.User, request WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+			planCaptured <- request
 			return validWorkPlanInspection(), nil
 		},
 	}
-	pullTool := newPullRequestInspectionTool(executor,
-		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
-			return nil, pull_service.ErrPullRequestInspectionUnavailable
-		}, testPrincipal)
-	server := newServer(pullTool, newWorkInspectionTools(executor, reader, testPrincipal, 1<<20), true)
-	clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
-	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
-	require.NoError(t, err)
-	defer serverSession.Close()
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
-	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
-	require.NoError(t, err)
-	defer clientSession.Close()
+	session := connectWorkReaderTestClient(t, newToolExecutor(1, time.Second), reader)
+	for _, includePage := range []bool{false, true} {
+		arguments := map[string]any{
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",
+		}
+		if includePage {
+			arguments["page"] = map[string]any{}
+		}
+		result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workItemInspectToolName, Arguments: arguments})
+		require.NoError(t, err)
+		assert.False(t, result.IsError)
+		request := <-itemCaptured
+		assert.Equal(t, "contexts", request.PageKind)
+		require.NotNil(t, request.Page)
+		assert.Equal(t, 25, request.Page.Limit)
+	}
+	for _, includePage := range []bool{false, true} {
+		arguments := map[string]any{
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workPlan": "project/9",
+		}
+		if includePage {
+			arguments["page"] = map[string]any{}
+		}
+		result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workPlanInspectToolName, Arguments: arguments})
+		require.NoError(t, err)
+		assert.False(t, result.IsError)
+		request := <-planCaptured
+		assert.Equal(t, "items", request.PageKind)
+		require.NotNil(t, request.Page)
+		assert.Equal(t, 25, request.Page.Limit)
+	}
+}
 
-	result, err := clientSession.CallTool(t.Context(), &mcpsdk.CallToolParams{
+func TestOfficialSDKAcceptsNilRequiredWorkSlices(t *testing.T) {
+	item := validWorkItemInspection()
+	item.WorkItem.ContextSummaries = nil
+	item.WorkItem.ProjectMemberships = nil
+	item.WorkItem.PrerequisiteSummaries = nil
+	item.WorkItem.DependentSummaries = nil
+	item.WorkItem.DeliverySummaries = nil
+	item.SelectedContext = &WorkPlanContextResult{
+		Ref: "project/9/issue/7", WorkPlan: "project/9", WorkItem: "issue/7", DerivedState: "blocked",
+		Integrity: WorkIntegrity{Status: "valid"},
+	}
+	item.Page.Items = nil
+	plan := validWorkPlanInspection()
+	plan.WorkPlan.Integrity.Concerns = nil
+	plan.WorkPlan.ItemSummaries = nil
+	plan.WorkPlan.EdgeSummaries = nil
+	plan.WorkPlan.ReadyFrontier = nil
+	plan.WorkPlan.ExcludedMembers = nil
+	plan.Page.Items = nil
+	reader := fakeWorkReadService{
+		item: func(context.Context, *user_model.User, WorkItemInspectRequest) (*WorkItemInspection, error) {
+			return item, nil
+		},
+		plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+			return plan, nil
+		},
+	}
+	session := connectWorkReaderTestClient(t, newToolExecutor(1, time.Second), reader)
+
+	itemResult, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: workItemInspectToolName,
 		Arguments: map[string]any{
-			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7", "page": map[string]any{},
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",
 		},
 	})
 	require.NoError(t, err)
-	assert.False(t, result.IsError)
-	request := <-captured
-	assert.Equal(t, "contexts", request.PageKind)
-	require.NotNil(t, request.Page)
-	assert.Equal(t, 25, request.Page.Limit)
+	assert.False(t, itemResult.IsError)
+	itemOutput := structuredWorkOutput(t, itemResult)
+	workItem := itemOutput["workItem"].(map[string]any)
+	for _, field := range []string{"contextSummaries", "projectMemberships", "prerequisiteSummaries", "dependentSummaries", "deliverySummaries"} {
+		assertEmptyJSONArray(t, workItem, field)
+	}
+	selected := itemOutput["selectedContext"].(map[string]any)
+	assertEmptyJSONArray(t, selected["integrity"].(map[string]any), "concerns")
+	assertEmptyJSONArray(t, selected, "prerequisiteSummaries")
+	assertEmptyJSONArray(t, selected, "deliverySummaries")
+	assertEmptyJSONArray(t, itemOutput["page"].(map[string]any), "items")
+
+	planResult, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: workPlanInspectToolName,
+		Arguments: map[string]any{
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workPlan": "project/9",
+		},
+	})
+	require.NoError(t, err)
+	assert.False(t, planResult.IsError)
+	planOutput := structuredWorkOutput(t, planResult)
+	workPlan := planOutput["workPlan"].(map[string]any)
+	assertEmptyJSONArray(t, workPlan["integrity"].(map[string]any), "concerns")
+	for _, field := range []string{"itemSummaries", "edgeSummaries", "readyFrontier", "excludedMembers"} {
+		assertEmptyJSONArray(t, workPlan, field)
+	}
+	assertEmptyJSONArray(t, planOutput["page"].(map[string]any), "items")
+}
+
+func TestOfficialSDKFullyPopulatedWorkReadTypeSchemaParity(t *testing.T) {
+	repository := WorkRepositoryResult{Owner: "octo", Name: "forge", URL: "https://forge.example/octo/forge"}
+	reference := WorkReferenceSummary{
+		Availability: "available", Repository: &repository, Ref: "issue/11", URL: "https://forge.example/octo/forge/issues/11", Label: "Prerequisite", State: "closed",
+	}
+	delivery := WorkDeliverySummary{
+		Repository: repository, Ref: "pull/12", URL: "https://forge.example/octo/forge/pulls/12", State: "open",
+		Revision: strings.Repeat("a", 40), CheckState: "pending",
+	}
+	contextSummary := WorkContextSummary{Ref: "project/9/issue/7", WorkPlan: "project/9", DerivedState: "ready", IntegrityStatus: "valid"}
+	edge := WorkEdgeSummary{Blocked: WorkReferenceSummary{
+		Availability: "available", Repository: &repository, Ref: "issue/7", URL: "https://forge.example/octo/forge/issues/7", Label: "Work", State: "open",
+	}, Prerequisite: reference}
+	item := validWorkItemInspection()
+	item.WorkItem.ContextSummaries = []WorkContextSummary{contextSummary}
+	item.WorkItem.ProjectMemberships = []WorkReferenceSummary{{
+		Availability: "available", Repository: &repository, Ref: "project/9", URL: "https://forge.example/octo/forge/projects/9", Label: "Plan", State: "active",
+	}}
+	item.WorkItem.PrerequisiteSummaries = []WorkReferenceSummary{reference}
+	item.WorkItem.DependentSummaries = []WorkReferenceSummary{reference}
+	item.WorkItem.DeliverySummaries = []WorkDeliverySummary{delivery}
+	item.SelectedContext = &WorkPlanContextResult{
+		Ref: "project/9/issue/7", WorkPlan: "project/9", WorkItem: "issue/7", DerivedState: "ready",
+		Integrity:             WorkIntegrity{Status: "valid", Concerns: []WorkIntegrityConcern{{Code: "notice", Message: "Disclosed concern."}}},
+		PrerequisiteSummaries: []WorkReferenceSummary{reference}, DeliverySummaries: []WorkDeliverySummary{delivery},
+	}
+	item.Page = WorkPageResult{
+		Kind: "deliveries", Items: []WorkPageEntry{delivery}, NextCursor: "next-delivery", SnapshotConsistency: "none", ReinspectBeforeAction: true,
+	}
+	plan := validWorkPlanInspection()
+	plan.WorkPlan.Integrity = WorkIntegrity{Status: "concern", Concerns: []WorkIntegrityConcern{{Code: "notice", Message: "Disclosed concern."}}}
+	plan.WorkPlan.ItemSummaries = []WorkContextSummary{contextSummary}
+	plan.WorkPlan.EdgeSummaries = []WorkEdgeSummary{edge}
+	plan.WorkPlan.ReadyFrontier = []WorkContextSummary{contextSummary}
+	plan.WorkPlan.ExcludedMembers = []WorkReferenceSummary{reference}
+	plan.Page = WorkPageResult{Kind: "edges", Items: []WorkPageEntry{edge}, NextCursor: "next-edge", SnapshotConsistency: "none", ReinspectBeforeAction: true}
+	reader := fakeWorkReadService{
+		item: func(context.Context, *user_model.User, WorkItemInspectRequest) (*WorkItemInspection, error) {
+			return item, nil
+		},
+		plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+			return plan, nil
+		},
+	}
+	session := connectWorkReaderTestClient(t, newToolExecutor(1, time.Second), reader)
+
+	itemResult, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: workItemInspectToolName,
+		Arguments: map[string]any{
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7", "selectedPlan": "project/9", "pageKind": "deliveries",
+		},
+	})
+	require.NoError(t, err)
+	assert.False(t, itemResult.IsError)
+	itemOutput := structuredWorkOutput(t, itemResult)
+	assert.Equal(t, "next-delivery", itemOutput["page"].(map[string]any)["nextCursor"])
+	assert.Equal(t, "project/9/issue/7", itemOutput["selectedContext"].(map[string]any)["ref"])
+
+	planResult, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: workPlanInspectToolName,
+		Arguments: map[string]any{
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workPlan": "project/9", "pageKind": "edges",
+		},
+	})
+	require.NoError(t, err)
+	assert.False(t, planResult.IsError)
+	planOutput := structuredWorkOutput(t, planResult)
+	assert.Equal(t, "next-edge", planOutput["page"].(map[string]any)["nextCursor"])
+	assert.Equal(t, "project/9", planOutput["workPlan"].(map[string]any)["ref"])
 }
 
 func TestWorkInspectionHandlersUseTypedReadContract(t *testing.T) {
@@ -266,6 +408,32 @@ func TestWorkInspectionUnavailableIsNeutral(t *testing.T) {
 	}
 }
 
+func TestWorkInspectionInvalidDependencyIsNonDisclosing(t *testing.T) {
+	for _, failureClass := range []string{"hidden path", "unreadable cycle", "graph bound"} {
+		t.Run(failureClass, func(t *testing.T) {
+			reader := fakeWorkReadService{
+				item: func(context.Context, *user_model.User, WorkItemInspectRequest) (*WorkItemInspection, error) {
+					return nil, &WorkReadFailure{
+						Kind: WorkReadInvalidDependency, Cause: errors.New(failureClass + " contains hidden issue/999 and database detail"),
+					}
+				},
+			}
+			tools := newWorkInspectionTools(newToolExecutor(1, time.Second), reader, testPrincipal, 1<<20)
+			result, output, err := tools.inspectItem(t.Context(), nil, WorkItemInspectRequest{})
+			require.NoError(t, err)
+			assert.True(t, result.IsError)
+			require.NotNil(t, output.Problem)
+			assert.Equal(t, "invalid_dependency", output.Problem.Code)
+			assert.Equal(t, "work inspection dependency is invalid", output.Problem.Message)
+			wire, err := json.Marshal(output)
+			require.NoError(t, err)
+			assert.NotContains(t, string(wire), failureClass)
+			assert.NotContains(t, string(wire), "issue/999")
+			assert.NotContains(t, string(wire), "database")
+		})
+	}
+}
+
 func TestWorkInspectionPreservesUndisclosedNestedReferenceAndBoundConcern(t *testing.T) {
 	item := validWorkItemInspection()
 	item.WorkItem.PrerequisiteSummaries = []WorkReferenceSummary{{Availability: "undisclosed"}}
@@ -306,7 +474,7 @@ func TestWorkInspectionControlledErrorsAndOutputBound(t *testing.T) {
 		{name: "invalid input", err: &WorkReadFailure{Kind: WorkReadInvalidInput}, code: "invalid_input"},
 		{name: "invalid cursor", err: &WorkReadFailure{Kind: WorkReadInvalidCursor}, code: "invalid_cursor"},
 		{name: "semantic bound", err: &WorkReadFailure{Kind: WorkReadLimitExceeded}, code: "limit_exceeded"},
-		{name: "internal", err: errors.New("database secret"), code: "mutation_failed"},
+		{name: "internal", err: errors.New("database secret"), code: workReadInternalFailureCode},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -432,6 +600,38 @@ func workOutputMap(t *testing.T, output workReadOutput) map[string]any {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(wire, &result))
 	return result
+}
+
+func connectWorkReaderTestClient(t *testing.T, executor *toolExecutor, reader WorkReadService) *mcpsdk.ClientSession {
+	t.Helper()
+	pullTool := newPullRequestInspectionTool(executor,
+		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
+			return nil, pull_service.ErrPullRequestInspectionUnavailable
+		}, testPrincipal)
+	server := newServer(pullTool, newWorkInspectionTools(executor, reader, testPrincipal, 1<<20), true)
+	clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
+	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, serverSession.Close()) })
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, clientSession.Close()) })
+	return clientSession
+}
+
+func structuredWorkOutput(t *testing.T, result *mcpsdk.CallToolResult) map[string]any {
+	t.Helper()
+	output, ok := result.StructuredContent.(map[string]any)
+	require.True(t, ok)
+	return output
+}
+
+func assertEmptyJSONArray(t *testing.T, object map[string]any, field string) {
+	t.Helper()
+	values, ok := object[field].([]any)
+	require.True(t, ok, field)
+	assert.Empty(t, values)
 }
 
 func validWorkItemInspection() *WorkItemInspection {
