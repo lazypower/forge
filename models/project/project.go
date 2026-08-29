@@ -400,9 +400,9 @@ func StabilizePlanningStates(ctx context.Context, projectIDs []int64) error {
 
 // RequireIssueOutsideActivePlan prevents Issue deletion from silently
 // changing the membership or dependency graph of a published plan.
-func RequireIssueOutsideActivePlan(ctx context.Context, issueID int64) error {
+func RequireIssueOutsideActivePlan(ctx context.Context, repoID, issueID int64) error {
 	projectIDs := make([]int64, 0)
-	if err := db.GetEngine(ctx).Table(new(ProjectIssue)).Where("issue_id = ?", issueID).Cols("project_id").Find(&projectIDs); err != nil {
+	if err := db.GetEngine(ctx).Table(new(Project)).Where("repo_id = ? AND type = ? AND planning_state != ?", repoID, TypeRepository, PlanningStateDisabled).Cols("id").Find(&projectIDs); err != nil {
 		return err
 	}
 	if err := StabilizePlanningStates(ctx, projectIDs); err != nil {
@@ -411,11 +411,16 @@ func RequireIssueOutsideActivePlan(ctx context.Context, issueID int64) error {
 	if len(projectIDs) == 0 {
 		return nil
 	}
-	active, err := db.GetEngine(ctx).In("id", projectIDs).Where("planning_state = ?", PlanningStateActive).Exist(new(Project))
+	active := new(Project)
+	found, err := db.GetEngine(ctx).Table(new(Project)).
+		Join("INNER", "project_issue", "project.id = project_issue.project_id").
+		In("project.id", projectIDs).
+		Where("project.planning_state = ? AND project_issue.issue_id = ?", PlanningStateActive, issueID).
+		Get(active)
 	if err != nil {
 		return err
 	}
-	if active {
+	if found {
 		return ErrActiveWorkPlan
 	}
 	return nil

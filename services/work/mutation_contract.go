@@ -100,8 +100,10 @@ type PlanChange struct {
 
 // PlanRevisionRequest atomically applies one bounded, plan-centered revision.
 type PlanRevisionRequest struct {
-	RepositoryID      int64
-	ProjectID         int64
+	RepositoryID int64
+	ProjectID    int64
+	// ExpectedPlanToken is enforced for lifecycle changes and accepted but
+	// ignored for set-only revisions.
 	ExpectedPlanToken string
 	Changes           []PlanChange
 }

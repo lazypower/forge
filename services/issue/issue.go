@@ -23,7 +23,10 @@ import (
 	notify_service "gitea.dev/services/notify"
 )
 
-var retireIssueMCPWorkReceipts = mcpwork_model.RetireIssue
+var (
+	retireIssueMCPWorkReceipts = mcpwork_model.RetireIssue
+	afterIssueDeletionGuard    = func() {}
+)
 
 // NewIssue creates new issue with labels for repository.
 func NewIssue(ctx context.Context, repo *repo_model.Repository, issue *issues_model.Issue, labelIDs []int64, uuids []string, assigneeIDs, projectIDs []int64) error {
@@ -218,9 +221,10 @@ func deleteIssue(ctx context.Context, issue *issues_model.Issue) ([]string, erro
 func deleteIssueData(ctx context.Context, issue *issues_model.Issue, guardActivePlan bool) ([]string, error) {
 	return db.WithTx2(ctx, func(ctx context.Context) ([]string, error) {
 		if guardActivePlan {
-			if err := project_model.RequireIssueOutsideActivePlan(ctx, issue.ID); err != nil {
+			if err := project_model.RequireIssueOutsideActivePlan(ctx, issue.RepoID, issue.ID); err != nil {
 				return nil, err
 			}
+			afterIssueDeletionGuard()
 		}
 		if _, err := db.GetEngine(ctx).ID(issue.ID).NoAutoCondition().Delete(issue); err != nil {
 			return nil, err

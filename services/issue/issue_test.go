@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
@@ -110,6 +111,64 @@ func TestDeleteIssueRejectsActiveWorkPlanMember(t *testing.T) {
 	require.ErrorIs(t, err, project_model.ErrActiveWorkPlan)
 	unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: issue.ID})
 	unittest.AssertExistsAndLoadBean(t, &project_model.ProjectIssue{ProjectID: plan.ID, IssueID: issue.ID})
+}
+
+func TestDeleteIssueSerializesWithConcurrentActivePlanMembership(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: issue.RepoID})
+	plan := &project_model.Project{
+		Type: project_model.TypeRepository, Title: "Active plan", RepoID: issue.RepoID, CreatorID: doer.ID,
+		PlanningState: project_model.PlanningStateActive,
+	}
+	require.NoError(t, project_model.NewProject(t.Context(), plan))
+
+	guarded := make(chan struct{})
+	releaseDeletion := make(chan struct{})
+	deletionDone := make(chan error, 1)
+	membershipStarted := make(chan struct{})
+	membershipDone := make(chan error, 1)
+	defer test.MockVariableValue(&afterIssueDeletionGuard, func() {
+		close(guarded)
+		<-releaseDeletion
+	})()
+	go func() {
+		_, err := deleteIssue(t.Context(), issue)
+		deletionDone <- err
+	}()
+	select {
+	case <-guarded:
+	case err := <-deletionDone:
+		require.NoError(t, err)
+		require.FailNow(t, "deletion completed before the active-plan guard")
+	}
+	go func() {
+		close(membershipStarted)
+		membershipDone <- db.WithWorkTx(t.Context(), func(ctx context.Context) error {
+			if err := project_model.StabilizePlanningStates(ctx, []int64{plan.ID}); err != nil {
+				return err
+			}
+			storedIssue, err := issues_model.GetIssueByID(ctx, issue.ID)
+			if err != nil {
+				return err
+			}
+			storedIssue.Repo = repo
+			_, _, err = issues_model.EnsureIssueProjectInWorkTx(ctx, storedIssue, doer, plan, true)
+			return err
+		})
+	}()
+	<-membershipStarted
+	select {
+	case err := <-membershipDone:
+		require.Failf(t, "membership mutation did not serialize", "returned before deletion released its plan lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseDeletion)
+	require.NoError(t, <-deletionDone)
+	require.Error(t, <-membershipDone)
+	unittest.AssertNotExistsBean(t, &issues_model.Issue{ID: issue.ID})
+	unittest.AssertNotExistsBean(t, &project_model.ProjectIssue{ProjectID: plan.ID, IssueID: issue.ID})
 }
 
 func TestDeleteIssueMCPReceiptRetirementFailureRollsBack(t *testing.T) {
