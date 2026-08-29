@@ -213,6 +213,66 @@ func TestWebDeleteIssueDependencyCrossRepoPermission(t *testing.T) {
 	})
 }
 
+func TestWebDeleteIssueBlockingCrossRepoPermission(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	allowCrossRepository := setting.Service.AllowCrossRepositoryDependencies
+	setting.Service.AllowCrossRepositoryDependencies = false
+	t.Cleanup(func() {
+		setting.Service.AllowCrossRepositoryDependencies = allowCrossRepository
+	})
+
+	blockedRepo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	blockedIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: blockedRepo.ID, Index: 1})
+	prerequisiteRepo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 3})
+	assert.True(t, prerequisiteRepo.IsPrivate)
+	prerequisiteIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: prerequisiteRepo.ID, Index: 1})
+
+	enableRepoDependencies(t, blockedRepo.ID)
+	enableRepoDependencies(t, prerequisiteRepo.ID)
+
+	user1 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
+	assert.NoError(t, issues_model.CreateIssueDependency(t.Context(), user1, blockedIssue, prerequisiteIssue))
+
+	_, err := db.DeleteByID[access_model.Access](t.Context(), 30)
+	assert.NoError(t, err)
+
+	user40 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 40})
+	session := loginUser(t, user40.Name)
+	url := fmt.Sprintf("/%s/%s/issues/%d/dependency/delete", prerequisiteRepo.OwnerName, prerequisiteRepo.Name, prerequisiteIssue.Index)
+	form := map[string]string{
+		"removeDependencyID": strconv.FormatInt(blockedIssue.ID, 10),
+		"dependencyType":     "blocking",
+	}
+
+	// The private prerequisite remains undisclosed without read permission.
+	req := NewRequestWithValues(t, "POST", url, form)
+	session.MakeRequest(t, req, http.StatusNotFound)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.IssueDependency{
+		IssueID:      blockedIssue.ID,
+		DependencyID: prerequisiteIssue.ID,
+	})
+
+	assert.NoError(t, repo_service.AddOrUpdateCollaborator(t.Context(), prerequisiteRepo, user40, perm.AccessModeRead))
+
+	// Reading the prerequisite is insufficient without write permission on the blocked issue.
+	req = NewRequestWithValues(t, "POST", url, form)
+	session.MakeRequest(t, req, http.StatusSeeOther)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.IssueDependency{
+		IssueID:      blockedIssue.ID,
+		DependencyID: prerequisiteIssue.ID,
+	})
+
+	assert.NoError(t, repo_service.AddOrUpdateCollaborator(t.Context(), blockedRepo, user40, perm.AccessModeWrite))
+
+	// Write on the blocked issue and read-only access to the prerequisite is sufficient.
+	req = NewRequestWithValues(t, "POST", url, form)
+	session.MakeRequest(t, req, http.StatusSeeOther)
+	unittest.AssertNotExistsBean(t, &issues_model.IssueDependency{
+		IssueID:      blockedIssue.ID,
+		DependencyID: prerequisiteIssue.ID,
+	})
+}
+
 func TestHTMLRESTIssueDependencyConvergence(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 

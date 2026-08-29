@@ -77,12 +77,6 @@ func RemoveDependency(ctx *context.Context) {
 		return
 	}
 
-	// Check if the Repo is allowed to have dependencies
-	if !ctx.Repo.CanCreateIssueDependencies(ctx, ctx.Doer, issue.IsPull) {
-		ctx.HTTPError(http.StatusForbidden, "CanCreateIssueDependencies")
-		return
-	}
-
 	depID := ctx.FormInt64("removeDependencyID")
 
 	if err = issue.LoadRepo(ctx); err != nil {
