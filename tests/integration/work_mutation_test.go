@@ -264,3 +264,78 @@ func TestCreateMemberLocksRepositoryBeforeProject(t *testing.T) {
 	require.Equal(t, mcpwork_model.OutcomeApplied, result.commit.Completion.Outcome)
 	require.NoError(t, <-repositoryLockDone)
 }
+
+func TestDeleteDraftLocksRepositoryBeforeProject(t *testing.T) {
+	if !setting.Database.Type.IsPostgreSQL() {
+		t.Skip("row-level lock ordering requires PostgreSQL")
+	}
+	defer tests.PrepareTestEnv(t)()
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
+	plan := &project_model.Project{
+		RepoID: repo.ID, Type: project_model.TypeRepository, CreatorID: doer.ID,
+		Title: "Delete lock order plan", PlanningState: project_model.PlanningStateDraft,
+	}
+	require.NoError(t, project_model.NewProject(t.Context(), plan))
+	inspection, err := work_service.NewReadService().InspectPlan(t.Context(), doer, work_service.PlanRequest{
+		Owner: repo.OwnerName, Repository: repo.Name, ProjectID: plan.ID,
+	})
+	require.NoError(t, err)
+
+	projectLocked := make(chan struct{})
+	releaseProject := make(chan struct{})
+	projectDone := make(chan error, 1)
+	go func() {
+		projectDone <- db.WithTx(t.Context(), func(ctx context.Context) error {
+			if err := project_model.StabilizePlanningStates(ctx, []int64{plan.ID}); err != nil {
+				return err
+			}
+			close(projectLocked)
+			<-releaseProject
+			return nil
+		})
+	}()
+	<-projectLocked
+
+	type revisionResult struct {
+		commit work_service.MutationCommit
+		err    error
+	}
+	revisionStarted := make(chan struct{})
+	revisionDone := make(chan revisionResult, 1)
+	go func() {
+		close(revisionStarted)
+		commit, err := work_service.NewMutationService().RevisePlan(t.Context(), doer, work_service.PlanRevisionRequest{
+			RepositoryID: repo.ID, ProjectID: plan.ID, ExpectedPlanToken: inspection.WorkPlan.PlanToken,
+			Changes: []work_service.PlanChange{{Kind: work_service.PlanChangeDeleteDraft}},
+		})
+		revisionDone <- revisionResult{commit: commit, err: err}
+	}()
+	<-revisionStarted
+	select {
+	case result := <-revisionDone:
+		close(releaseProject)
+		require.Failf(t, "draft deletion did not wait for the project lock", "returned early: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	repositoryLockDone := make(chan error, 1)
+	go func() {
+		repositoryLockDone <- db.WithTx(t.Context(), func(ctx context.Context) error {
+			return repo_model.StabilizeWorkPlanning(ctx, repo.ID)
+		})
+	}()
+	select {
+	case err := <-repositoryLockDone:
+		close(releaseProject)
+		require.Failf(t, "delete-draft did not lock repository first", "repository lock remained available: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseProject)
+	require.NoError(t, <-projectDone)
+	result := <-revisionDone
+	require.NoError(t, result.err)
+	require.Equal(t, mcpwork_model.OutcomeApplied, result.commit.Completion.Outcome)
+	require.NoError(t, <-repositoryLockDone)
+	unittest.AssertNotExistsBean(t, &project_model.Project{ID: plan.ID})
+}

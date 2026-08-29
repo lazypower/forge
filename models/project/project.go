@@ -520,6 +520,11 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 			}
 			return err
 		}
+		if p.RepoID > 0 {
+			if err := repo_model.StabilizeWorkPlanning(ctx, p.RepoID); err != nil {
+				return err
+			}
+		}
 		if p.PlanningState == PlanningStateActive {
 			return ErrActiveWorkPlan
 		}

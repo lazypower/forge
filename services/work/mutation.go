@@ -226,7 +226,7 @@ func (service *MutationService) revisePlanInWorkTx(ctx context.Context, doer *us
 	if problem != "" || doer == nil {
 		return rejected("invalid_input"), nil
 	}
-	if len(validated.creates) > 0 {
+	if len(validated.creates) > 0 || validated.deleteDraft {
 		if err := repo_model.StabilizeWorkPlanning(ctx, request.RepositoryID); err != nil {
 			return MutationCommit{}, err
 		}
