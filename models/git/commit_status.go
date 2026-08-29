@@ -362,6 +362,24 @@ func CountLatestCommitStatus(ctx context.Context, repoID int64, sha string) (int
 
 // GetLatestCommitStatusForPairs returns all statuses with a unique context for a given list of repo-sha pairs
 func GetLatestCommitStatusForPairs(ctx context.Context, repoSHAs []RepoSHA) (map[int64][]*CommitStatus, error) {
+	statusesByPair, err := GetLatestCommitStatusesByRepoAndSHA(ctx, repoSHAs)
+	if err != nil {
+		return nil, err
+	}
+	repoStatuses := make(map[int64][]*CommitStatus)
+	for pair, statuses := range statusesByPair {
+		repoStatuses[pair.RepoID] = append(repoStatuses[pair.RepoID], statuses...)
+	}
+	return repoStatuses, nil
+}
+
+// GetLatestCommitStatusesByRepoAndSHA returns the latest status per context,
+// preserving each repository and revision as a distinct batch result.
+func GetLatestCommitStatusesByRepoAndSHA(ctx context.Context, repoSHAs []RepoSHA) (map[RepoSHA][]*CommitStatus, error) {
+	statusesByPair := make(map[RepoSHA][]*CommitStatus, len(repoSHAs))
+	if len(repoSHAs) == 0 {
+		return statusesByPair, nil
+	}
 	type result struct {
 		Index  int64
 		RepoID int64
@@ -388,8 +406,6 @@ func GetLatestCommitStatusForPairs(ctx context.Context, repoSHAs []RepoSHA) (map
 		return nil, err
 	}
 
-	repoStatuses := make(map[int64][]*CommitStatus)
-
 	if len(results) > 0 {
 		statuses := make([]*CommitStatus, 0, len(results))
 
@@ -407,13 +423,14 @@ func GetLatestCommitStatusForPairs(ctx context.Context, repoSHAs []RepoSHA) (map
 			return nil, err
 		}
 
-		// Group the statuses by repo ID
+		// Group statuses by both authorities; one repository may have several revisions.
 		for _, status := range statuses {
-			repoStatuses[status.RepoID] = append(repoStatuses[status.RepoID], status)
+			pair := RepoSHA{RepoID: status.RepoID, SHA: status.SHA}
+			statusesByPair[pair] = append(statusesByPair[pair], status)
 		}
 	}
 
-	return repoStatuses, nil
+	return statusesByPair, nil
 }
 
 // GetLatestCommitStatusForRepoCommitIDs returns all statuses with a unique context for a given list of repo-sha pairs

@@ -202,7 +202,7 @@ func GetIssueDependencyIDs(ctx context.Context, issueIDs []int64) (map[int64][]i
 	for len(issueIDs) > 0 {
 		batchSize := min(len(issueIDs), db.DefaultMaxInSize)
 		dependencies := make([]IssueDependency, 0)
-		if err := db.GetEngine(ctx).In("issue_id", issueIDs[:batchSize]).Find(&dependencies); err != nil {
+		if err := db.GetEngine(ctx).In("issue_id", issueIDs[:batchSize]).OrderBy("issue_id ASC, dependency_id ASC").Find(&dependencies); err != nil {
 			return nil, err
 		}
 		for _, dependency := range dependencies {
@@ -211,6 +211,27 @@ func GetIssueDependencyIDs(ctx context.Context, issueIDs []int64) (map[int64][]i
 		issueIDs = issueIDs[batchSize:]
 	}
 	return dependencyIDs, nil
+}
+
+// GetIssueDependentIDs returns the immediate blocked Issues for the prerequisites.
+func GetIssueDependentIDs(ctx context.Context, dependencyIDs []int64) (map[int64][]int64, error) {
+	dependentIDs := make(map[int64][]int64, len(dependencyIDs))
+	if len(dependencyIDs) == 0 {
+		return dependentIDs, nil
+	}
+
+	for len(dependencyIDs) > 0 {
+		batchSize := min(len(dependencyIDs), db.DefaultMaxInSize)
+		dependencies := make([]IssueDependency, 0)
+		if err := db.GetEngine(ctx).In("dependency_id", dependencyIDs[:batchSize]).OrderBy("dependency_id ASC, issue_id ASC").Find(&dependencies); err != nil {
+			return nil, err
+		}
+		for _, dependency := range dependencies {
+			dependentIDs[dependency.DependencyID] = append(dependentIDs[dependency.DependencyID], dependency.IssueID)
+		}
+		dependencyIDs = dependencyIDs[batchSize:]
+	}
+	return dependentIDs, nil
 }
 
 // IssueNoDependenciesLeft checks if issue can be closed

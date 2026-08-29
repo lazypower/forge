@@ -22,6 +22,13 @@ type crossReference struct {
 	Action references.XRefAction
 }
 
+// WorkClosingPullReference identifies one effective delivery pull request for a target Issue.
+type WorkClosingPullReference struct {
+	IssueID     int64
+	PullRepoID  int64
+	PullIssueID int64
+}
+
 // crossReferencesContext is context to pass along findCrossReference functions
 type crossReferencesContext struct {
 	Type        CommentType
@@ -359,4 +366,34 @@ func (pr *PullRequest) ResolveCrossReferences(ctx context.Context) ([]*Comment, 
 	}
 
 	return refs, nil
+}
+
+// GetWorkClosingPullReferences returns the latest effective closing action for
+// each target-Issue and pull-request pair in one set-oriented query.
+func GetWorkClosingPullReferences(ctx context.Context, issueIDs []int64) (map[int64][]WorkClosingPullReference, error) {
+	referencesByIssue := make(map[int64][]WorkClosingPullReference, len(issueIDs))
+	if len(issueIDs) == 0 {
+		return referencesByIssue, nil
+	}
+
+	latest := builder.Select("MAX(id)").
+		From("comment").
+		Where(builder.In("issue_id", issueIDs).
+			And(builder.Eq{"ref_is_pull": true}).
+			And(builder.In("ref_action", []references.XRefAction{references.XRefActionCloses, references.XRefActionReopens}))).
+		GroupBy("issue_id, ref_repo_id, ref_issue_id")
+	comments := make([]Comment, 0)
+	if err := db.GetEngine(ctx).
+		In("id", latest).
+		And("ref_action = ?", references.XRefActionCloses).
+		OrderBy("issue_id ASC, ref_repo_id ASC, ref_issue_id ASC").
+		Find(&comments); err != nil {
+		return nil, err
+	}
+	for _, comment := range comments {
+		referencesByIssue[comment.IssueID] = append(referencesByIssue[comment.IssueID], WorkClosingPullReference{
+			IssueID: comment.IssueID, PullRepoID: comment.RefRepoID, PullIssueID: comment.RefIssueID,
+		})
+	}
+	return referencesByIssue, nil
 }

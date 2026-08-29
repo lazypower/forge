@@ -185,6 +185,29 @@ func TestInspectPullRequestRevisionStates(t *testing.T) {
 	assert.Equal(t, open.Revisions.InternalHead, missingTarget.Revisions.InternalHead)
 }
 
+func TestResolveWorkRevisionsUsesFrozenPullAuthority(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	merged, err := issues_model.GetPullRequestByIndex(t.Context(), repo.ID, 2)
+	require.NoError(t, err)
+	open, err := issues_model.GetPullRequestByIndex(t.Context(), repo.ID, 3)
+	require.NoError(t, err)
+
+	revisions, err := ResolveWorkRevisions(t.Context(), issues_model.PullRequestList{merged, open})
+	require.NoError(t, err)
+	assert.Equal(t, merged.MergedCommitID, revisions[merged.ID].Revision)
+	inspection, err := InspectPullRequest(t.Context(), unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2}), InspectionRequest{
+		Owner: repo.OwnerName, Repository: repo.Name, Index: open.Index,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, inspection.Revisions.InternalHead, revisions[open.ID].Revision)
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = ResolveWorkRevisions(cancelled, issues_model.PullRequestList{open})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 func TestPullRequestInspectionCursorBindingAndBounds(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 	defer test.MockVariableValue(&setting.SecretKey, "inspection-test-key")()
