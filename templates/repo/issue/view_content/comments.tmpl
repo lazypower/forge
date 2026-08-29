@@ -697,9 +697,9 @@
 		{{end}}
 		{{if $.HumanWorkProvenanceByComment}}
 			{{range (index $.HumanWorkProvenanceByComment .ID)}}
-				<div class="timeline-item event work-mcp-provenance" data-work-provenance="mcp-unverified">
+				<div class="timeline-item event work-mcp-provenance" data-work-provenance="mcp">
 					<span class="badge">{{svg "octicon-terminal"}}</span>
-					<span class="comment-text-line">{{ctx.Locale.Tr "repo.projects.work_planning.mcp_provenance" .PrincipalName (DateUtils.TimeSince .CommittedAt)}}</span>
+					<span class="comment-text-line">{{template "shared/work_provenance" .}}</span>
 				</div>
 			{{end}}
 		{{end}}

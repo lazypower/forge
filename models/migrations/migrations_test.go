@@ -32,8 +32,11 @@ func TestMCPWorkReceiptMigrationOrdering(t *testing.T) {
 	defer test.MockVariableValue(&preparedMigrations)()
 	preparedMigrations = nil
 	migrations := prepareMigrationTasks()
-	require.GreaterOrEqual(t, len(migrations), 2)
-	assert.EqualValues(t, 344, migrations[len(migrations)-2].idNumber)
-	assert.EqualValues(t, 345, migrations[len(migrations)-1].idNumber)
-	assert.EqualValues(t, 346, ExpectedDBVersion())
+	require.GreaterOrEqual(t, len(migrations), 5)
+	assert.EqualValues(t, 344, migrations[len(migrations)-5].idNumber)
+	assert.EqualValues(t, 345, migrations[len(migrations)-4].idNumber)
+	assert.EqualValues(t, 346, migrations[len(migrations)-3].idNumber)
+	assert.EqualValues(t, 347, migrations[len(migrations)-2].idNumber)
+	assert.EqualValues(t, 348, migrations[len(migrations)-1].idNumber)
+	assert.EqualValues(t, 349, ExpectedDBVersion())
 }

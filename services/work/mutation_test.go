@@ -512,8 +512,10 @@ func executePlanReceipt(t *testing.T, doer *user_model.User, request PlanRevisio
 func receiptRequest(tool, key string) mcpwork_service.Request {
 	return mcpwork_service.Request{
 		Tool: tool, SchemaVersion: "1", IdempotencyKey: key,
-		ExpandedInput: fmt.Appendf(nil, `{"idempotencyKey":%q}`, key),
+		ExpandedInput:     fmt.Appendf(nil, `{"idempotencyKey":%q}`, key),
+		ClientAttribution: mcpwork_service.ClientAttribution{Harness: "Example Harness", HarnessVersion: "1.0", Model: "Example Model", Source: "client-reported"},
 		Authority: mcpwork_service.Authority{
+			Profile: "work-planning", RegisteredClientLabel: "Example Client", RegisteredInstallationLabel: "Example Installation",
 			PrincipalID: 2, OAuthApplicationID: 101, OAuthGrantID: 102,
 			CredentialJTI: "22222222-2222-4222-8222-222222222222", Audience: "https://forge.example/mcp",
 			Scope: "read:repository write:issue write:repository",

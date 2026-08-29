@@ -21,7 +21,6 @@ type mcpWorkReceipt struct {
 	GrantID        int64              `xorm:"INDEX NOT NULL"`
 	CredentialID   string             `xorm:"CHAR(36) NOT NULL"`
 	Scope          string             `xorm:"VARCHAR(255) NOT NULL"`
-	ActorTrust     string             `xorm:"VARCHAR(16) NOT NULL"`
 	Origin         string             `xorm:"VARCHAR(16) NOT NULL"`
 	Outcome        string             `xorm:"VARCHAR(16) NOT NULL"`
 	ProblemCode    string             `xorm:"VARCHAR(64) NOT NULL DEFAULT ''"`

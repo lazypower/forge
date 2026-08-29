@@ -88,12 +88,16 @@ type workPlanReviseRequest struct {
 }
 
 type workMutationAuthority struct {
-	PrincipalID        int64
-	OAuthApplicationID int64
-	OAuthGrantID       int64
-	CredentialJTI      string
-	Audience           string
-	Scope              string
+	PrincipalID                 int64
+	OAuthApplicationID          int64
+	OAuthGrantID                int64
+	CredentialJTI               string
+	Audience                    string
+	Scope                       string
+	Profile                     string
+	RegisteredClientLabel       string
+	RegisteredInstallationLabel string
+	ClientAttribution           mcpwork_service.ClientAttribution
 }
 
 type workMutationExecution struct {
@@ -199,10 +203,12 @@ func (service *boundWorkMutationService) execute(ctx context.Context, doer *user
 	}
 	receiptRequest := mcpwork_service.Request{
 		Tool: tool, SchemaVersion: "1", IdempotencyKey: key, ExpandedInput: expandedInput,
+		ClientAttribution: authority.ClientAttribution,
 		Authority: mcpwork_service.Authority{
 			PrincipalID: authority.PrincipalID, OAuthApplicationID: authority.OAuthApplicationID,
 			OAuthGrantID: authority.OAuthGrantID, CredentialJTI: authority.CredentialJTI,
-			Audience: authority.Audience, Scope: authority.Scope,
+			Audience: authority.Audience, Scope: authority.Scope, Profile: authority.Profile,
+			RegisteredClientLabel: authority.RegisteredClientLabel, RegisteredInstallationLabel: authority.RegisteredInstallationLabel,
 		},
 	}
 	receipt, _, err := work_service.ApplyReceiptMutation(ctx, service.receipts, receiptRequest, mutate)
@@ -230,10 +236,11 @@ func (service *boundWorkMutationService) execute(ctx context.Context, doer *user
 }
 
 type workOperationResult struct {
-	ID          string    `json:"id"`
-	Replayed    bool      `json:"replayed"`
-	Changed     bool      `json:"changed"`
-	CommittedAt time.Time `json:"committedAt"`
+	ID                string                            `json:"id"`
+	Replayed          bool                              `json:"replayed"`
+	Changed           bool                              `json:"changed"`
+	CommittedAt       time.Time                         `json:"committedAt"`
+	ClientAttribution mcpwork_service.ClientAttribution `json:"clientAttribution"`
 }
 
 type workMutationOutput struct {
@@ -271,16 +278,16 @@ func registerWorkMutationTools(server *mcpsdk.Server, tools *workMutationTools) 
 	mcpsdk.AddTool(server, contracts[workPlanReviseToolName], tools.revisePlan)
 }
 
-func (tools *workMutationTools) beginPlan(ctx context.Context, _ *mcpsdk.CallToolRequest, input workPlanBeginRequest) (*mcpsdk.CallToolResult, workMutationOutput, error) {
-	return tools.execute(ctx, workPlanBeginContent, func(executionCtx context.Context, doer *user_model.User, authority workMutationAuthority) (*workMutationExecution, error) {
+func (tools *workMutationTools) beginPlan(ctx context.Context, request *mcpsdk.CallToolRequest, input workPlanBeginRequest) (*mcpsdk.CallToolResult, workMutationOutput, error) {
+	return tools.execute(ctx, request, workPlanBeginContent, func(executionCtx context.Context, doer *user_model.User, authority workMutationAuthority) (*workMutationExecution, error) {
 		return tools.mutations.BeginPlan(executionCtx, doer, authority, input)
 	}, func(executionCtx context.Context, doer *user_model.User, execution *workMutationExecution) (*workMutationOutput, error) {
 		return tools.projectPlan(executionCtx, doer, input.Repository, execution, 0)
 	})
 }
 
-func (tools *workMutationTools) reviseItem(ctx context.Context, _ *mcpsdk.CallToolRequest, input workItemReviseRequest) (*mcpsdk.CallToolResult, workMutationOutput, error) {
-	return tools.execute(ctx, workItemReviseContent, func(executionCtx context.Context, doer *user_model.User, authority workMutationAuthority) (*workMutationExecution, error) {
+func (tools *workMutationTools) reviseItem(ctx context.Context, request *mcpsdk.CallToolRequest, input workItemReviseRequest) (*mcpsdk.CallToolResult, workMutationOutput, error) {
+	return tools.execute(ctx, request, workItemReviseContent, func(executionCtx context.Context, doer *user_model.User, authority workMutationAuthority) (*workMutationExecution, error) {
 		return tools.mutations.ReviseItem(executionCtx, doer, authority, input)
 	}, func(executionCtx context.Context, doer *user_model.User, execution *workMutationExecution) (*workMutationOutput, error) {
 		issueNumber, _ := parseWorkReference(input.WorkItem, "issue/")
@@ -288,8 +295,8 @@ func (tools *workMutationTools) reviseItem(ctx context.Context, _ *mcpsdk.CallTo
 	})
 }
 
-func (tools *workMutationTools) revisePlan(ctx context.Context, _ *mcpsdk.CallToolRequest, input workPlanReviseRequest) (*mcpsdk.CallToolResult, workMutationOutput, error) {
-	return tools.execute(ctx, workPlanReviseContent, func(executionCtx context.Context, doer *user_model.User, authority workMutationAuthority) (*workMutationExecution, error) {
+func (tools *workMutationTools) revisePlan(ctx context.Context, request *mcpsdk.CallToolRequest, input workPlanReviseRequest) (*mcpsdk.CallToolResult, workMutationOutput, error) {
+	return tools.execute(ctx, request, workPlanReviseContent, func(executionCtx context.Context, doer *user_model.User, authority workMutationAuthority) (*workMutationExecution, error) {
 		return tools.mutations.RevisePlan(executionCtx, doer, authority, input)
 	}, func(executionCtx context.Context, doer *user_model.User, execution *workMutationExecution) (*workMutationOutput, error) {
 		projectID, _ := parseWorkReference(input.WorkPlan, "project/")
@@ -302,7 +309,7 @@ type (
 	workMutationProjection func(context.Context, *user_model.User, *workMutationExecution) (*workMutationOutput, error)
 )
 
-func (tools *workMutationTools) execute(ctx context.Context, content string, mutate workMutationCall, project workMutationProjection) (*mcpsdk.CallToolResult, workMutationOutput, error) {
+func (tools *workMutationTools) execute(ctx context.Context, request *mcpsdk.CallToolRequest, content string, mutate workMutationCall, project workMutationProjection) (*mcpsdk.CallToolResult, workMutationOutput, error) {
 	executionCtx, release, err := tools.executor.begin(ctx)
 	if errors.Is(err, errToolCapacityUnavailable) {
 		return workMutationErrorResult(content, "busy", "MCP endpoint capacity is currently unavailable", true)
@@ -321,9 +328,15 @@ func (tools *workMutationTools) execute(ctx context.Context, content string, mut
 		credential.Profile != auth_model.MCPProfileWorkPlanning || credential.CanonicalScope != oauth2_provider.MCPWorkWriteScope {
 		return workMutationErrorResult(content, "not_permitted", "work mutation is not permitted", false)
 	}
+	attribution, err := workClientAttribution(request)
+	if err != nil {
+		return workMutationErrorResult(content, "client_attribution_required", "valid MCP client attribution is required", false)
+	}
 	authority := workMutationAuthority{
 		PrincipalID: doer.ID, OAuthApplicationID: credential.Application.ID, OAuthGrantID: credential.Grant.ID,
 		CredentialJTI: credential.CredentialID, Audience: setting.MCPResource(), Scope: credential.CanonicalScope,
+		Profile: string(credential.Profile), RegisteredClientLabel: credential.Application.Name,
+		RegisteredInstallationLabel: credential.Application.MCPInstallationLabel, ClientAttribution: attribution,
 	}
 	execution, err := mutate(executionCtx, doer, authority)
 	if err != nil {
@@ -418,6 +431,7 @@ func mutationReceiptOutput(execution *workMutationExecution) workMutationOutput 
 		Operation: &workOperationResult{
 			ID: receipt.OperationUUID, Replayed: receipt.Replayed,
 			Changed: receipt.Outcome == mcpwork_model.OutcomeApplied, CommittedAt: receipt.CommittedAt,
+			ClientAttribution: receipt.ClientAttribution,
 		},
 	}
 	if len(execution.CreatedReferences) > 0 {
@@ -472,6 +486,8 @@ func (tools *workMutationTools) mapMutationError(parentCtx, executionCtx context
 		return workMutationErrorResult(content, "conflict", "work mutation encountered a retryable serialization conflict", true)
 	case errors.Is(err, mcpwork_service.ErrIdempotencyConflict), errors.Is(err, mcpwork_service.ErrReceiptTombstoned):
 		return workMutationErrorResult(content, "idempotency_conflict", "the idempotency key was already used for another request", false)
+	case errors.Is(err, mcpwork_service.ErrClientAttributionRequired):
+		return workMutationErrorResult(content, "client_attribution_required", "valid MCP client attribution is required", false)
 	case errors.Is(err, mcpwork_service.ErrInvalidRequest), errors.Is(err, mcpwork_service.ErrInvalidCompletion):
 		return workMutationErrorResult(content, "invalid_input", "work mutation input is invalid", false)
 	default:

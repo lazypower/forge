@@ -178,9 +178,11 @@ func TestDeleteIssueMCPReceiptRetirementFailureRollsBack(t *testing.T) {
 	require.NoError(t, err)
 	requestKey := "rollback-receipt-key-000000000001"
 	result, err := receipts.Execute(t.Context(), mcpwork_service.Request{
-		Tool: "work_plan.begin", SchemaVersion: "1", IdempotencyKey: requestKey,
+		ClientAttribution: mcpwork_service.ClientAttribution{Harness: "Example Harness", Model: "Example Model", Source: "client-reported"},
+		Tool:              "work_plan.begin", SchemaVersion: "1", IdempotencyKey: requestKey,
 		ExpandedInput: []byte(`{"idempotencyKey":"rollback-receipt-key-000000000001"}`),
 		Authority: mcpwork_service.Authority{
+			Profile: "work-planning", RegisteredClientLabel: "Example Client", RegisteredInstallationLabel: "Example Installation",
 			PrincipalID: 801, OAuthApplicationID: 802, OAuthGrantID: 803,
 			CredentialJTI: "88888888-8888-4888-8888-888888888888", Audience: "https://forge.example/mcp",
 			Scope: "read:repository write:issue write:repository",

@@ -425,6 +425,7 @@ func prepareMigrationTasks() []*migration {
 		newMigration(345, "Add MCP Work mutation receipts", v1_27.AddMCPWorkReceiptSchema),
 		newMigration(346, "Add constrained MCP client registrations", v1_27.AddMCPClientRegistrationSchema),
 		newMigration(347, "Record OAuth2 grant credential rotation time", v1_27.AddOAuth2GrantCredentialRotation),
+		newMigration(348, "Add MCP Work client attribution", v1_27.AddMCPWorkClientAttribution),
 	}
 	return preparedMigrations
 }

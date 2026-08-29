@@ -81,8 +81,10 @@ func TestHumanWorkViewsUsePermissionFilteredProjection(t *testing.T) {
 	require.NoError(t, err)
 	receipt, err := receipts.Execute(t.Context(), mcpwork_service.Request{
 		Tool: "work_plan.revise", SchemaVersion: "1", IdempotencyKey: "human-work-view-receipt-000000000001",
-		ExpandedInput: []byte(`{"idempotencyKey":"human-work-view-receipt-000000000001","marker":"human-view"}`),
+		ExpandedInput:     []byte(`{"idempotencyKey":"human-work-view-receipt-000000000001","marker":"human-view"}`),
+		ClientAttribution: mcpwork_service.ClientAttribution{Harness: "<script>Harness</script>", HarnessVersion: "<b>1.0</b>", Model: "<img src=x onerror=alert(1)>", Source: "client-reported"},
 		Authority: mcpwork_service.Authority{
+			Profile: "work-planning", RegisteredClientLabel: "<script>Client</script>", RegisteredInstallationLabel: "<img src=x onerror=alert(2)>",
 			PrincipalID: principal.ID, OAuthApplicationID: 701, OAuthGrantID: 702,
 			CredentialJTI: "77777777-7777-4777-8777-777777777777",
 			Audience:      "https://forge.example/mcp", Scope: "read:repository write:issue write:repository",
@@ -127,7 +129,7 @@ func TestHumanWorkViewsUsePermissionFilteredProjection(t *testing.T) {
 	assert.Equal(t, 1, projectHTML.Find(`.work-plan[data-work-plan-state="active"][data-work-plan-integrity="concern"]`).Length())
 	assert.Equal(t, 1, projectHTML.Find(`[data-work-integrity-code="unresolved_prerequisite"]`).Length())
 	assert.Equal(t, 0, projectHTML.Find(".work-ready-frontier [data-work-context]").Length())
-	assert.Contains(t, projectHTML.doc.Text(), "Performed through MCP using @"+principal.Name+"'s authority; software actor unverified.")
+	assert.Contains(t, projectHTML.doc.Text(), "Performed through MCP using @"+principal.Name+"'s authority.")
 	assert.NotContains(t, projectHTML.doc.Text(), "performed this")
 	assertHumanWorkMarkupHides(t, projectHTML,
 		hiddenPrerequisite.Title, hiddenPullIssue.Title, hiddenRepo.Name,
@@ -147,7 +149,19 @@ func TestHumanWorkViewsUsePermissionFilteredProjection(t *testing.T) {
 	assert.Equal(t, 1, issueHTML.Find(contextSelector).Length())
 	assert.Equal(t, 1, issueHTML.Find(".work-undisclosed-prerequisite").Length())
 	assert.Equal(t, 1, issueHTML.Find(`[data-work-delivery="pull/2"]`).Length())
-	assert.Contains(t, issueHTML.doc.Text(), "Performed through MCP using @"+principal.Name+"'s authority; software actor unverified.")
+	assert.Contains(t, issueHTML.doc.Text(), "Performed through MCP using @"+principal.Name+"'s authority.")
+	for _, html := range []*HTMLDoc{projectHTML, issueHTML} {
+		provenance := html.doc.Find(".work-mcp-provenance")
+		assert.Contains(t, provenance.Text(), "Authorized client (registered metadata):")
+		assert.Contains(t, provenance.Text(), "Client reported:")
+		assert.Contains(t, provenance.Text(), "not verified by Forge")
+		assert.Contains(t, provenance.Text(), "<script>Client</script>")
+		assert.Contains(t, provenance.Text(), "<script>Harness</script>")
+		assert.Contains(t, provenance.Text(), "<img src=x onerror=alert(1)>")
+		assert.Empty(t, provenance.Find("script, img, b").Nodes)
+		assert.NotContains(t, provenance.Text(), "software actor unverified")
+		assert.NotContains(t, provenance.Text(), "77777777-7777-4777-8777-777777777777")
+	}
 	assertHumanWorkMarkupHides(t, issueHTML,
 		hiddenPrerequisite.Title, hiddenPullIssue.Title, hiddenRepo.Name,
 		fmt.Sprintf("/%s/issues/%d", hiddenRepo.FullName(), hiddenPrerequisite.Index),

@@ -243,8 +243,10 @@ func newNativeReceiptService(t *testing.T) *mcpwork_service.Service {
 func nativeReceiptRequest(key, marker string) mcpwork_service.Request {
 	return mcpwork_service.Request{
 		Tool: "work_plan.begin", SchemaVersion: "1", IdempotencyKey: key,
-		ExpandedInput: fmt.Appendf(nil, `{"idempotencyKey":%q,"marker":%q}`, key, marker),
+		ExpandedInput:     fmt.Appendf(nil, `{"idempotencyKey":%q,"marker":%q}`, key, marker),
+		ClientAttribution: mcpwork_service.ClientAttribution{Harness: "Example Harness", HarnessVersion: "1.0", Model: "Example Model", Source: "client-reported"},
 		Authority: mcpwork_service.Authority{
+			Profile: "work-planning", RegisteredClientLabel: "Example Client", RegisteredInstallationLabel: "Example Installation",
 			PrincipalID: 901, OAuthApplicationID: 902, OAuthGrantID: 903,
 			CredentialJTI: "99999999-9999-4999-8999-999999999999",
 			Audience:      "https://forge.example/mcp",
@@ -276,7 +278,13 @@ func assertNativeTombstone(t *testing.T, receipt *mcpwork_model.Receipt) {
 	assert.Zero(t, receipt.GrantID)
 	assert.Empty(t, receipt.CredentialID)
 	assert.Empty(t, receipt.Scope)
-	assert.Empty(t, receipt.ActorTrust)
+	assert.Empty(t, receipt.AttributionSource)
+	assert.Empty(t, receipt.Profile)
+	assert.Empty(t, receipt.RegisteredClientLabel)
+	assert.Empty(t, receipt.RegisteredInstallationLabel)
+	assert.Empty(t, receipt.Harness)
+	assert.Empty(t, receipt.HarnessVersion)
+	assert.Empty(t, receipt.Model)
 	assert.Empty(t, receipt.Origin)
 	assert.Empty(t, receipt.Outcome)
 	assert.Empty(t, receipt.ProblemCode)

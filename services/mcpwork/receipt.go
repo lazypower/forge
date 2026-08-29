@@ -28,9 +28,8 @@ import (
 )
 
 const (
-	actorTrustUnverified = "unverified"
-	originMCP            = "mcp"
-	recoveryTimeout      = 5 * time.Second
+	originMCP       = "mcp"
+	recoveryTimeout = 5 * time.Second
 )
 
 var (
@@ -49,14 +48,17 @@ var (
 var localReferencePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
 
 // Authority is the verified OAuth context captured at mutation time. The MCP
-// adapter must populate it from the fixed work-write profile, never client data.
+// adapter must populate it from the verified grant; registered labels are metadata, never authority.
 type Authority struct {
-	PrincipalID        int64
-	OAuthApplicationID int64
-	OAuthGrantID       int64
-	CredentialJTI      string
-	Audience           string
-	Scope              string
+	PrincipalID                 int64
+	OAuthApplicationID          int64
+	OAuthGrantID                int64
+	CredentialJTI               string
+	Audience                    string
+	Scope                       string
+	Profile                     string
+	RegisteredClientLabel       string
+	RegisteredInstallationLabel string
 }
 
 // Request contains the complete default-expanded tool input. RequestDigest
@@ -64,11 +66,12 @@ type Authority struct {
 // ExpandedInput must contain the same top-level idempotencyKey; the key is
 // removed before canonicalization and is never retained.
 type Request struct {
-	Tool           string
-	SchemaVersion  string
-	IdempotencyKey string
-	ExpandedInput  json.Value
-	Authority      Authority
+	Tool              string
+	SchemaVersion     string
+	IdempotencyKey    string
+	ExpandedInput     json.Value
+	Authority         Authority
+	ClientAttribution ClientAttribution
 }
 
 // Operation identifies the receipt being built inside the transaction.
@@ -113,12 +116,13 @@ type Mutation func(txCtx context.Context, operation Operation) (Completion, erro
 // artifact/event links are intentionally not exposed; Present rechecks current
 // permission before returning links.
 type Result struct {
-	OperationUUID string
-	Outcome       mcpwork_model.Outcome
-	ProblemCode   string
-	CommittedAt   time.Time
-	Replayed      bool
-	Tombstoned    bool
+	OperationUUID     string
+	Outcome           mcpwork_model.Outcome
+	ProblemCode       string
+	CommittedAt       time.Time
+	Replayed          bool
+	Tombstoned        bool
+	ClientAttribution ClientAttribution
 }
 
 type (
@@ -157,7 +161,10 @@ func NewService(secret []byte) (*Service, error) {
 // once as a complete serializable operation.
 func (s *Service) Execute(ctx context.Context, request Request, mutate Mutation) (*Result, error) {
 	prepared, err := s.prepare(request)
-	if err != nil || mutate == nil {
+	if err != nil {
+		return nil, err
+	}
+	if mutate == nil {
 		return nil, ErrInvalidRequest
 	}
 	operation := Operation{UUID: s.newUUID()}
@@ -205,9 +212,20 @@ type preparedRequest struct {
 }
 
 func (s *Service) prepare(request Request) (*preparedRequest, error) {
+	attribution, err := NewClientAttribution(request.ClientAttribution.Harness, request.ClientAttribution.HarnessVersion, request.ClientAttribution.Model)
+	if err != nil || request.ClientAttribution.Source != attribution.Source {
+		return nil, ErrClientAttributionRequired
+	}
+	request.ClientAttribution = attribution
+
 	if len(request.Tool) == 0 || len(request.Tool) > 64 || len(request.SchemaVersion) == 0 || len(request.SchemaVersion) > 16 ||
 		request.Authority.PrincipalID <= 0 || request.Authority.OAuthApplicationID <= 0 || request.Authority.OAuthGrantID <= 0 ||
-		request.Authority.Scope == "" || len(request.Authority.Scope) > 255 {
+		request.Authority.Scope == "" || len(request.Authority.Scope) > 255 ||
+		request.Authority.Profile == "" || len(request.Authority.Profile) > 32 ||
+		!validAttributionLabel(request.Authority.RegisteredClientLabel, 128, true) ||
+		!validAttributionLabel(request.Authority.RegisteredInstallationLabel, 128, false) ||
+		strings.TrimSpace(request.Authority.RegisteredClientLabel) != request.Authority.RegisteredClientLabel ||
+		strings.TrimSpace(request.Authority.RegisteredInstallationLabel) != request.Authority.RegisteredInstallationLabel {
 		return nil, ErrInvalidRequest
 	}
 	credentialID, err := uuid.Parse(request.Authority.CredentialJTI)
@@ -308,7 +326,12 @@ func (s *Service) executeOnce(ctx context.Context, prepared *preparedRequest, op
 			Tool: prepared.request.Tool, SchemaVersion: prepared.request.SchemaVersion,
 			ApplicationID: prepared.request.Authority.OAuthApplicationID, GrantID: prepared.request.Authority.OAuthGrantID,
 			CredentialID: prepared.request.Authority.CredentialJTI, Scope: prepared.request.Authority.Scope,
-			ActorTrust: actorTrustUnverified, Origin: originMCP, Outcome: mcpwork_model.OutcomePending,
+			Profile:                     prepared.request.Authority.Profile,
+			RegisteredClientLabel:       prepared.request.Authority.RegisteredClientLabel,
+			RegisteredInstallationLabel: prepared.request.Authority.RegisteredInstallationLabel,
+			Harness:                     prepared.request.ClientAttribution.Harness, HarnessVersion: prepared.request.ClientAttribution.HarnessVersion,
+			Model: prepared.request.ClientAttribution.Model, AttributionSource: prepared.request.ClientAttribution.Source,
+			Origin: originMCP, Outcome: mcpwork_model.OutcomePending,
 		}
 		if _, err := db.GetEngine(txCtx).Insert(receipt); err != nil {
 			return &receiptClaimError{err: err}
@@ -444,7 +467,12 @@ func resultFromReceipt(receipt *mcpwork_model.Receipt, replayed bool) *Result {
 	return &Result{
 		OperationUUID: receipt.OperationUUID, Outcome: receipt.Outcome, ProblemCode: receipt.ProblemCode,
 		CommittedAt: receipt.CommittedUnix.AsTime().UTC(), Replayed: replayed,
+		ClientAttribution: attributionFromReceipt(receipt),
 	}
+}
+
+func attributionFromReceipt(receipt *mcpwork_model.Receipt) ClientAttribution {
+	return ClientAttribution{Harness: receipt.Harness, HarnessVersion: receipt.HarnessVersion, Model: receipt.Model, Source: receipt.AttributionSource}
 }
 
 // ReferencePermission rechecks current native read permission for one stable
@@ -454,15 +482,17 @@ type ReferencePermission func(context.Context, ArtifactReference) (bool, error)
 // Presentation contains only human-safe provenance fields and currently
 // readable links. OAuth internals and receipt digests remain private.
 type Presentation struct {
-	Available     bool
-	OperationUUID string
-	PrincipalID   int64
-	CommittedAt   time.Time
-	Outcome       mcpwork_model.Outcome
-	Origin        string
-	ActorTrust    string
-	Artifacts     []ArtifactReference
-	Events        []EventReference
+	Available                   bool
+	OperationUUID               string
+	PrincipalID                 int64
+	CommittedAt                 time.Time
+	Outcome                     mcpwork_model.Outcome
+	Origin                      string
+	RegisteredClientLabel       string
+	RegisteredInstallationLabel string
+	ClientAttribution           ClientAttribution
+	Artifacts                   []ArtifactReference
+	Events                      []EventReference
 }
 
 // Present returns provenance only after current permission is rechecked. Event
@@ -507,7 +537,9 @@ func (s *Service) Present(ctx context.Context, operationUUID string, permitted R
 	return &Presentation{
 		Available: true, OperationUUID: receipt.OperationUUID, PrincipalID: receipt.PrincipalID,
 		CommittedAt: receipt.CommittedUnix.AsTime().UTC(), Outcome: receipt.Outcome,
-		Origin: receipt.Origin, ActorTrust: receipt.ActorTrust, Artifacts: visible, Events: visibleEvents,
+		Origin: receipt.Origin, Artifacts: visible, Events: visibleEvents,
+		RegisteredClientLabel: receipt.RegisteredClientLabel, RegisteredInstallationLabel: receipt.RegisteredInstallationLabel,
+		ClientAttribution: attributionFromReceipt(receipt),
 	}, nil
 }
 

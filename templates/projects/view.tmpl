@@ -156,7 +156,7 @@
 				<div class="ui info message work-mcp-provenance tw-mt-3">
 					<div class="header">{{ctx.Locale.Tr "repo.projects.work_planning.mcp_origin"}}</div>
 					{{range $workPlan.Provenance}}
-						<p>{{ctx.Locale.Tr "repo.projects.work_planning.mcp_provenance" .PrincipalName (DateUtils.TimeSince .CommittedAt)}}</p>
+						<p>{{template "shared/work_provenance" .}}</p>
 					{{end}}
 				</div>
 			{{end}}

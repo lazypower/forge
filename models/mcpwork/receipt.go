@@ -44,25 +44,31 @@ const (
 // Receipt is one final MCP Work mutation outcome. Digests are keyed, fixed-size
 // locators; request content and raw credentials are intentionally absent.
 type Receipt struct {
-	ID             int64              `xorm:"pk autoincr"`
-	OperationUUID  string             `xorm:"CHAR(36) INDEX NOT NULL"`
-	PrincipalID    int64              `xorm:"UNIQUE(mcp_work_key) INDEX NOT NULL"`
-	AudienceDigest string             `xorm:"CHAR(64) UNIQUE(mcp_work_key) NOT NULL"`
-	KeyDigest      string             `xorm:"CHAR(64) UNIQUE(mcp_work_key) NOT NULL"`
-	RequestDigest  string             `xorm:"CHAR(64) NOT NULL"`
-	Tool           string             `xorm:"VARCHAR(64) NOT NULL"`
-	SchemaVersion  string             `xorm:"VARCHAR(16) NOT NULL"`
-	ApplicationID  int64              `xorm:"INDEX NOT NULL"`
-	GrantID        int64              `xorm:"INDEX NOT NULL"`
-	CredentialID   string             `xorm:"CHAR(36) NOT NULL"`
-	Scope          string             `xorm:"VARCHAR(255) NOT NULL"`
-	ActorTrust     string             `xorm:"VARCHAR(16) NOT NULL"`
-	Origin         string             `xorm:"VARCHAR(16) NOT NULL"`
-	Outcome        Outcome            `xorm:"VARCHAR(16) NOT NULL"`
-	ProblemCode    string             `xorm:"VARCHAR(64) NOT NULL DEFAULT ''"`
-	CreatedUnix    timeutil.TimeStamp `xorm:"created"`
-	CommittedUnix  timeutil.TimeStamp `xorm:"INDEX"`
-	TombstonedUnix timeutil.TimeStamp `xorm:"INDEX"`
+	ID                          int64              `xorm:"pk autoincr"`
+	OperationUUID               string             `xorm:"CHAR(36) INDEX NOT NULL"`
+	PrincipalID                 int64              `xorm:"UNIQUE(mcp_work_key) INDEX NOT NULL"`
+	AudienceDigest              string             `xorm:"CHAR(64) UNIQUE(mcp_work_key) NOT NULL"`
+	KeyDigest                   string             `xorm:"CHAR(64) UNIQUE(mcp_work_key) NOT NULL"`
+	RequestDigest               string             `xorm:"CHAR(64) NOT NULL"`
+	Tool                        string             `xorm:"VARCHAR(64) NOT NULL"`
+	SchemaVersion               string             `xorm:"VARCHAR(16) NOT NULL"`
+	ApplicationID               int64              `xorm:"INDEX NOT NULL"`
+	GrantID                     int64              `xorm:"INDEX NOT NULL"`
+	CredentialID                string             `xorm:"CHAR(36) NOT NULL"`
+	Scope                       string             `xorm:"VARCHAR(255) NOT NULL"`
+	Origin                      string             `xorm:"VARCHAR(16) NOT NULL"`
+	Outcome                     Outcome            `xorm:"VARCHAR(16) NOT NULL"`
+	ProblemCode                 string             `xorm:"VARCHAR(64) NOT NULL DEFAULT ''"`
+	CreatedUnix                 timeutil.TimeStamp `xorm:"created"`
+	CommittedUnix               timeutil.TimeStamp `xorm:"INDEX"`
+	TombstonedUnix              timeutil.TimeStamp `xorm:"INDEX"`
+	Profile                     string             `xorm:"VARCHAR(32) NOT NULL"`
+	RegisteredClientLabel       string             `xorm:"VARCHAR(128) NOT NULL"`
+	RegisteredInstallationLabel string             `xorm:"VARCHAR(128) NOT NULL"`
+	Harness                     string             `xorm:"VARCHAR(128) NOT NULL"`
+	HarnessVersion              string             `xorm:"VARCHAR(64) NOT NULL"`
+	Model                       string             `xorm:"VARCHAR(128) NOT NULL"`
+	AttributionSource           string             `xorm:"VARCHAR(32) NOT NULL"`
 }
 
 func (*Receipt) TableName() string {
@@ -300,7 +306,8 @@ func minimizeReceipt(ctx context.Context, receiptID int64, tombstonedAt timeutil
 	}
 	_, err := db.GetEngine(ctx).Table(new(Receipt)).ID(receiptID).Where("tombstoned_unix = 0").Update(map[string]any{
 		"operation_uuid": "", "tool": "", "schema_version": "", "application_id": int64(0), "grant_id": int64(0),
-		"credential_id": "", "scope": "", "actor_trust": "", "origin": "", "outcome": "", "problem_code": "",
+		"credential_id": "", "scope": "", "profile": "", "registered_client_label": "", "registered_installation_label": "",
+		"harness": "", "harness_version": "", "model": "", "attribution_source": "", "origin": "", "outcome": "", "problem_code": "",
 		"created_unix": timeutil.TimeStamp(0), "committed_unix": timeutil.TimeStamp(0), "tombstoned_unix": tombstonedAt,
 	})
 	return err

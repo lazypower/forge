@@ -46,9 +46,11 @@ func TestWorkMutationSavepointRejection(t *testing.T) {
 		{Kind: work_service.PlanChangeEnsureDependency, Blocked: work_service.ItemSelector{LocalReference: "second"}, Prerequisite: work_service.ItemSelector{LocalReference: "first"}, Presence: work_service.PresencePresent},
 	}}
 	result, err := receipts.Execute(t.Context(), mcpwork_service.Request{
-		Tool: "work_plan.revise", SchemaVersion: "1", IdempotencyKey: "integration-savepoint-rejection",
+		ClientAttribution: mcpwork_service.ClientAttribution{Harness: "Example Harness", Model: "Example Model", Source: "client-reported"},
+		Tool:              "work_plan.revise", SchemaVersion: "1", IdempotencyKey: "integration-savepoint-rejection",
 		ExpandedInput: []byte(`{"idempotencyKey":"integration-savepoint-rejection"}`),
 		Authority: mcpwork_service.Authority{
+			Profile: "work-planning", RegisteredClientLabel: "Example Client", RegisteredInstallationLabel: "Example Installation",
 			PrincipalID: doer.ID, OAuthApplicationID: 501, OAuthGrantID: 502,
 			CredentialJTI: "55555555-5555-4555-8555-555555555555", Audience: "https://forge.example/mcp",
 			Scope: "read:repository write:issue write:repository",

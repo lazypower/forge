@@ -122,10 +122,13 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assert.Equal(t, "draft", revised["workPlan"].(map[string]any)["planningState"])
 
 	countsBeforeRevisionReplay := mcpWorkDogfoodNativeCounts(t)
-	replayed := callMCPWorkTool(t, writeSession, "work_plan.revise", revisionInput)
+	replayed := callMCPWorkToolWithMeta(t, writeSession, "work_plan.revise", revisionInput, mcpsdk.Meta{
+		mcpsdk.MetaKeyClientInfo:           map[string]any{"name": "Changed harness", "version": "2"},
+		"io.gitea.forge/clientAttribution": map[string]any{"model": "Changed model"},
+	})
 	assertCommittedMCPWorkResult(t, replayed, "applied", true, "available")
 	assert.Equal(t, created, replayed["createdReferences"])
-	assert.Equal(t, revised["operation"].(map[string]any)["id"], replayed["operation"].(map[string]any)["id"])
+	assertMCPWorkReplay(t, replayed, revised)
 	assert.Equal(t, countsBeforeRevisionReplay, mcpWorkDogfoodNativeCounts(t))
 
 	changedReplay := map[string]any{
@@ -243,7 +246,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	humanHTML := NewHTMLParser(t, humanResponse.Body)
 	assert.Equal(t, 1, humanHTML.Find(`.work-plan[data-work-plan-state="active"]`).Length())
 	assert.Equal(t, 1, humanHTML.Find(`[data-work-context="`+planRef+`/`+secondRef+`"]`).Length())
-	assert.Contains(t, humanHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority; software actor unverified.")
+	assert.Contains(t, humanHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority.")
 
 	countsBeforeFullReplay := mcpWorkDogfoodNativeCounts(t)
 	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_plan.begin", beginInput), begin)
@@ -266,7 +269,23 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	humanReplayHTML := NewHTMLParser(t, humanReplayResponse.Body)
 	assert.Equal(t, 1, humanReplayHTML.Find(`.work-plan[data-work-plan-state="active"]`).Length())
 	assert.Equal(t, 1, humanReplayHTML.Find(`[data-work-context="`+planRef+`/`+secondRef+`"]`).Length())
-	assert.Contains(t, humanReplayHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority; software actor unverified.")
+	assert.Contains(t, humanReplayHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority.")
+
+	countsBeforeOverride := mcpWorkDogfoodNativeCounts(t)
+	overridden := callMCPWorkToolWithMeta(t, writeSession, "work_item.revise", map[string]any{
+		"repository": beginInput["repository"], "workItem": firstRef, "idempotencyKey": "dogfood-client-override-00001",
+		"state": map[string]any{"desired": "closed"},
+	}, mcpsdk.Meta{
+		mcpsdk.MetaKeyClientInfo:           map[string]any{"name": "Per-request harness", "version": "2"},
+		"io.gitea.forge/clientAttribution": map[string]any{"model": "Per-request model"},
+	})
+	require.Equal(t, "unchanged", overridden["status"])
+	assert.Equal(t, map[string]any{
+		"harness": "Per-request harness", "harnessVersion": "2", "model": "Per-request model", "source": "client-reported",
+	}, overridden["operation"].(map[string]any)["clientAttribution"])
+	countsBeforeOverride["receipts"]++
+	countsBeforeOverride["artifacts"]++
+	assert.Equal(t, countsBeforeOverride, mcpWorkDogfoodNativeCounts(t))
 
 	setting.MCP.WorkMutationEnabled = false
 	productionRoutes = routers.NormalRoutes()
@@ -315,6 +334,7 @@ func assertMCPWorkReplay(t *testing.T, replay, original map[string]any) {
 	require.True(t, ok)
 	assert.True(t, replayedOperation["replayed"].(bool))
 	assert.Equal(t, originalOperation["id"], replayedOperation["id"])
+	assert.Equal(t, originalOperation["clientAttribution"], replayedOperation["clientAttribution"])
 }
 
 func connectMCPWorkProfile(t *testing.T, server *httptest.Server, scope string) (*mcpsdk.ClientSession, *auth_model.OAuth2Application) {
@@ -335,7 +355,17 @@ func connectMCPWorkProfile(t *testing.T, server *httptest.Server, scope string) 
 
 func callMCPWorkTool(t *testing.T, session *mcpsdk.ClientSession, name string, arguments map[string]any) map[string]any {
 	t.Helper()
-	result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: arguments})
+	var meta mcpsdk.Meta
+	switch name {
+	case "work_plan.begin", "work_plan.revise", "work_item.revise":
+		meta = mcpsdk.Meta{"io.gitea.forge/clientAttribution": map[string]any{"model": "Example Model"}}
+	}
+	return callMCPWorkToolWithMeta(t, session, name, arguments, meta)
+}
+
+func callMCPWorkToolWithMeta(t *testing.T, session *mcpsdk.ClientSession, name string, arguments map[string]any, meta mcpsdk.Meta) map[string]any {
+	t.Helper()
+	result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: arguments, Meta: meta})
 	require.NoError(t, err)
 	structured, ok := result.StructuredContent.(map[string]any)
 	require.True(t, ok)
@@ -362,6 +392,9 @@ func assertCommittedMCPWorkResult(t *testing.T, result map[string]any, status st
 	assert.Equal(t, replayed, operation["replayed"])
 	assert.NotEmpty(t, operation["id"])
 	assert.NotEmpty(t, operation["committedAt"])
+	assert.Equal(t, map[string]any{
+		"harness": "work-dogfood", "harnessVersion": "1", "model": "Example Model", "source": "client-reported",
+	}, operation["clientAttribution"])
 }
 
 func assertMCPReadyFrontier(t *testing.T, plan map[string]any, expected string) {

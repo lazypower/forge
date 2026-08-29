@@ -16,7 +16,7 @@ import (
 	"xorm.io/xorm/schemas"
 )
 
-type freshMCPWorkReceipt mcpwork_model.Receipt
+type freshMCPWorkReceipt mcpWorkReceipt
 
 func (*freshMCPWorkReceipt) TableName() string { return "fresh_mcp_work_receipt" }
 
@@ -102,7 +102,7 @@ func migrationReceiptFixture(principalID int64, operationUUID, requestDigest str
 		KeyDigest:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		RequestDigest:  requestDigest, Tool: "work_plan.begin", SchemaVersion: "1",
 		ApplicationID: 10, GrantID: 11, CredentialID: "11111111-1111-4111-8111-111111111111",
-		Scope: "read:repository write:issue write:repository", ActorTrust: "unverified", Origin: "mcp", Outcome: "applied",
+		Scope: "read:repository write:issue write:repository", Origin: "mcp", Outcome: "applied",
 	}
 }
 

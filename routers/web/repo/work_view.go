@@ -52,8 +52,11 @@ type humanPullWorkItem struct {
 }
 
 type humanWorkProvenance struct {
-	PrincipalName string
-	CommittedAt   time.Time
+	PrincipalName               string
+	CommittedAt                 time.Time
+	RegisteredClientLabel       string
+	RegisteredInstallationLabel string
+	ClientAttribution           mcpwork_service.ClientAttribution
 }
 
 type humanWorkProvenancePresenter interface {
@@ -262,7 +265,7 @@ func prepareIssueWorkProvenance(ctx *context.Context, issue *issues_model.Issue)
 func humanWorkProvenanceForPresentations(ctx *context.Context, presentations []*mcpwork_service.Presentation) []humanWorkProvenance {
 	principalIDs := make([]int64, 0, len(presentations))
 	for _, presentation := range presentations {
-		if presentation.Available && presentation.Origin == "mcp" && presentation.ActorTrust == "unverified" {
+		if presentation.Available && presentation.Origin == "mcp" {
 			principalIDs = append(principalIDs, presentation.PrincipalID)
 		}
 	}
@@ -274,11 +277,13 @@ func humanWorkProvenanceForPresentations(ctx *context.Context, presentations []*
 	provenance := make([]humanWorkProvenance, 0, len(presentations))
 	for _, presentation := range presentations {
 		principal := principals[presentation.PrincipalID]
-		if !presentation.Available || presentation.Origin != "mcp" || presentation.ActorTrust != "unverified" || principal == nil {
+		if !presentation.Available || presentation.Origin != "mcp" || principal == nil {
 			continue
 		}
 		provenance = append(provenance, humanWorkProvenance{
 			PrincipalName: principal.Name, CommittedAt: presentation.CommittedAt,
+			RegisteredClientLabel: presentation.RegisteredClientLabel, RegisteredInstallationLabel: presentation.RegisteredInstallationLabel,
+			ClientAttribution: presentation.ClientAttribution,
 		})
 	}
 	return provenance

@@ -75,7 +75,7 @@ func TestOfficialSDKCallsAllWorkMutationHandlers(t *testing.T) {
 	}
 	session := connectWorkMutationTestClient(t, mutations, reader, 1<<20)
 
-	begin, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workPlanBeginToolName, Arguments: map[string]any{
+	begin, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Meta: testClientAttributionMeta(), Name: workPlanBeginToolName, Arguments: map[string]any{
 		"repository": map[string]any{"owner": "octo", "name": "forge"}, "idempotencyKey": "begin-plan-key-0000000001",
 		"begin": map[string]any{"kind": "new", "title": "Plan"},
 	}})
@@ -83,7 +83,7 @@ func TestOfficialSDKCallsAllWorkMutationHandlers(t *testing.T) {
 	assert.False(t, begin.IsError)
 	assertMutationStructuredResult(t, begin, "applied", false, "available")
 
-	item, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workItemReviseToolName, Arguments: map[string]any{
+	item, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Meta: testClientAttributionMeta(), Name: workItemReviseToolName, Arguments: map[string]any{
 		"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",
 		"idempotencyKey": "revise-item-key-000000001", "markdown": map[string]any{"expectedContentVersion": 2, "desired": "updated"},
 	}})
@@ -91,7 +91,7 @@ func TestOfficialSDKCallsAllWorkMutationHandlers(t *testing.T) {
 	assert.False(t, item.IsError)
 	assertMutationStructuredResult(t, item, "applied", false, "available")
 
-	plan, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workPlanReviseToolName, Arguments: map[string]any{
+	plan, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Meta: testClientAttributionMeta(), Name: workPlanReviseToolName, Arguments: map[string]any{
 		"repository": map[string]any{"owner": "octo", "name": "forge"}, "workPlan": "project/9",
 		"idempotencyKey": "revise-plan-key-000000001", "changes": []any{map[string]any{"kind": "ensure_member", "workItem": "issue/7", "presence": "present"}},
 	}})
@@ -130,7 +130,7 @@ func TestOfficialSDKReopenKeepsDeliveryProjection(t *testing.T) {
 		},
 	}
 	session := connectWorkMutationTestClient(t, mutations, reader, 1<<20)
-	result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workItemReviseToolName, Arguments: map[string]any{
+	result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Meta: testClientAttributionMeta(), Name: workItemReviseToolName, Arguments: map[string]any{
 		"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",
 		"idempotencyKey": "validation-reopen-00000001", "state": map[string]any{"desired": "open"},
 	}})
@@ -165,7 +165,7 @@ func TestWorkMutationRequiresExactWriteProfileBeforeCallingService(t *testing.T)
 		credential.CanonicalScope = oauth2_provider.MCPReadScope
 		return credential, nil
 	}
-	_, output, err := tools.beginPlan(t.Context(), nil, workPlanBeginRequest{})
+	_, output, err := tools.beginPlan(t.Context(), testAttributedRequest(), workPlanBeginRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, "error", output.Status)
 	require.NotNil(t, output.Problem)
@@ -220,7 +220,7 @@ func TestWorkMutationCommittedProjectionFailuresPreserveReceipt(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, test.reader, testPrincipal, 1<<20)
 			tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
-			_, output, err := tools.beginPlan(t.Context(), nil, workPlanBeginRequest{
+			_, output, err := tools.beginPlan(t.Context(), testAttributedRequest(), workPlanBeginRequest{
 				Repository: WorkRepository{Owner: "octo", Name: "forge"}, IdempotencyKey: "projection-key-000000001",
 				Begin: workPlanBegin{Kind: "new", Title: "Plan"},
 			})
@@ -263,7 +263,7 @@ func TestWorkMutationOutcomeAndRecoveryErrorMapping(t *testing.T) {
 			}
 			tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, inertWorkReader(), testPrincipal, 1<<20)
 			tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
-			_, output, err := tools.beginPlan(t.Context(), nil, workPlanBeginRequest{})
+			_, output, err := tools.beginPlan(t.Context(), testAttributedRequest(), workPlanBeginRequest{})
 			require.NoError(t, err)
 			assert.Equal(t, test.status, output.Status)
 			require.NotNil(t, output.Problem)
@@ -307,7 +307,7 @@ func TestWorkMutationCancellationBoundary(t *testing.T) {
 		}
 		tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, inertWorkReader(), testPrincipal, 1<<20)
 		tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
-		_, output, err := tools.beginPlan(ctx, nil, workPlanBeginRequest{})
+		_, output, err := tools.beginPlan(ctx, testAttributedRequest(), workPlanBeginRequest{})
 		require.NoError(t, err)
 		assert.Equal(t, "error", output.Status)
 		assert.Equal(t, "cancelled", output.Problem.Code)
@@ -332,7 +332,7 @@ func TestWorkMutationCancellationBoundary(t *testing.T) {
 		}
 		tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, reader, testPrincipal, 1<<20)
 		tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
-		_, output, err := tools.beginPlan(ctx, nil, workPlanBeginRequest{})
+		_, output, err := tools.beginPlan(ctx, testAttributedRequest(), workPlanBeginRequest{})
 		require.NoError(t, err)
 		assert.Equal(t, "applied", output.Status)
 		require.NotNil(t, output.Operation)
@@ -350,7 +350,7 @@ func TestWorkMutationCancellationBoundary(t *testing.T) {
 		}
 		tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, inertWorkReader(), testPrincipal, 1<<20)
 		tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
-		_, output, err := tools.beginPlan(ctx, nil, workPlanBeginRequest{})
+		_, output, err := tools.beginPlan(ctx, testAttributedRequest(), workPlanBeginRequest{})
 		require.NoError(t, err)
 		assert.Equal(t, "error", output.Status)
 		assert.Equal(t, "outcome_unknown", output.Problem.Code)
@@ -383,7 +383,7 @@ func TestWorkMutationOutputLimitDropsOnlyPostCommitProjection(t *testing.T) {
 	}
 	tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, reader, testPrincipal, 512)
 	tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
-	_, output, err := tools.beginPlan(t.Context(), nil, workPlanBeginRequest{})
+	_, output, err := tools.beginPlan(t.Context(), testAttributedRequest(), workPlanBeginRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, "applied", output.Status)
 	require.NotNil(t, output.Operation)
@@ -422,7 +422,8 @@ func committedMutation(outcome mcpwork_model.Outcome, replayed bool, artifacts .
 	return &workMutationExecution{
 		Receipt: &mcpwork_service.Result{
 			OperationUUID: testOperationUUID, Outcome: outcome, Replayed: replayed,
-			CommittedAt: time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC),
+			CommittedAt:       time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC),
+			ClientAttribution: mcpwork_service.ClientAttribution{Harness: "Example Harness", HarnessVersion: "1", Model: "Example Model", Source: "client-reported"},
 		},
 		Artifacts: artifacts,
 	}
@@ -445,7 +446,7 @@ func issueMutationArtifact(number int64, local string) mcpwork_service.ArtifactR
 func testWriteCredential() *verifiedOAuthCredential {
 	return &verifiedOAuthCredential{
 		Principal:   &user_model.User{ID: 1, IsActive: true},
-		Application: &auth_model.OAuth2Application{ID: 8}, Grant: &auth_model.OAuth2Grant{ID: 9},
+		Application: &auth_model.OAuth2Application{ID: 8, Name: "Registered Client", MCPInstallationLabel: "Registered Installation"}, Grant: &auth_model.OAuth2Grant{ID: 9},
 		CredentialID: "22222222-2222-4222-8222-222222222222",
 		Profile:      auth_model.MCPProfileWorkPlanning, CanonicalScope: oauth2_provider.MCPWorkWriteScope,
 		Scopes: []string{"read:repository", "write:issue", "write:repository"},

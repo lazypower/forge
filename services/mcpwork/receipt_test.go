@@ -98,9 +98,11 @@ func TestExecuteConcurrentDuplicate(t *testing.T) {
 	results := make(chan *Result, workers)
 	errorsFound := make(chan error, workers)
 	var group sync.WaitGroup
-	for range workers {
+	for worker := range workers {
 		group.Go(func() {
-			result, err := service.Execute(t.Context(), request, mutate)
+			contender := request
+			contender.ClientAttribution.Model = fmt.Sprintf("Model %d", worker)
+			result, err := service.Execute(t.Context(), contender, mutate)
 			results <- result
 			errorsFound <- err
 		})
@@ -113,12 +115,15 @@ func TestExecuteConcurrentDuplicate(t *testing.T) {
 		require.NoError(t, err)
 	}
 	var operationUUID string
+	var attribution ClientAttribution
 	for result := range results {
 		require.NotNil(t, result)
 		if operationUUID == "" {
 			operationUUID = result.OperationUUID
+			attribution = result.ClientAttribution
 		}
 		assert.Equal(t, operationUUID, result.OperationUUID)
+		assert.Equal(t, attribution, result.ClientAttribution)
 	}
 	assert.EqualValues(t, 1, calls.Load())
 	assert.EqualValues(t, 1, countModel(t, new(mcpwork_model.Receipt)))
@@ -248,12 +253,15 @@ func TestReplayAndPresentationRecheckPermissions(t *testing.T) {
 	assert.False(t, presentation.Available)
 	assert.Empty(t, presentation.Artifacts)
 	assert.Zero(t, presentation.PrincipalID)
+	assert.Empty(t, presentation.ClientAttribution)
+	assert.Empty(t, presentation.RegisteredClientLabel)
+	assert.Empty(t, presentation.RegisteredInstallationLabel)
 	presentation, err = service.Present(t.Context(), first.OperationUUID, func(context.Context, ArtifactReference) (bool, error) { return true, nil })
 	require.NoError(t, err)
 	require.NotNil(t, presentation)
 	assert.True(t, presentation.Available)
 	assert.Equal(t, "mcp", presentation.Origin)
-	assert.Equal(t, "unverified", presentation.ActorTrust)
+	assert.Equal(t, request.ClientAttribution, presentation.ClientAttribution)
 	assert.Equal(t, completion.Artifacts, presentation.Artifacts)
 	assert.Equal(t, completion.Events, presentation.Events)
 	artifactPresentations, err := service.PresentArtifact(t.Context(), completion.Artifacts[0], func(context.Context, ArtifactReference) (bool, error) { return true, nil })
@@ -302,6 +310,13 @@ func TestRetirementPreventsKeyReuseAndClearsDetail(t *testing.T) {
 	assert.Zero(t, stored.ApplicationID)
 	assert.Empty(t, stored.CredentialID)
 	assert.Empty(t, stored.Scope)
+	assert.Empty(t, stored.Profile)
+	assert.Empty(t, stored.RegisteredClientLabel)
+	assert.Empty(t, stored.RegisteredInstallationLabel)
+	assert.Empty(t, stored.Harness)
+	assert.Empty(t, stored.HarnessVersion)
+	assert.Empty(t, stored.Model)
+	assert.Empty(t, stored.AttributionSource)
 	assert.Empty(t, stored.Origin)
 
 	_, err = service.Execute(t.Context(), request, func(context.Context, Operation) (Completion, error) {
@@ -339,7 +354,11 @@ func TestReceiptNeverPersistsSecretsOrRequestContent(t *testing.T) {
 	assert.Equal(t, request.Authority.OAuthGrantID, receipt.GrantID)
 	assert.Equal(t, request.Authority.CredentialJTI, receipt.CredentialID)
 	assert.Equal(t, request.Authority.Scope, receipt.Scope)
-	assert.Equal(t, "unverified", receipt.ActorTrust)
+	assert.Equal(t, request.Authority.Profile, receipt.Profile)
+	assert.Equal(t, request.Authority.RegisteredClientLabel, receipt.RegisteredClientLabel)
+	assert.Equal(t, request.Authority.RegisteredInstallationLabel, receipt.RegisteredInstallationLabel)
+	assert.Equal(t, request.ClientAttribution, result.ClientAttribution)
+	assert.Equal(t, request.ClientAttribution.Source, receipt.AttributionSource)
 	assert.Equal(t, "mcp", receipt.Origin)
 }
 
@@ -398,7 +417,9 @@ func prepareReceiptService(t *testing.T) *Service {
 func testReceiptRequest(key, input string) Request {
 	return Request{
 		Tool: "work_plan.begin", SchemaVersion: "1", IdempotencyKey: key, ExpandedInput: []byte(input),
+		ClientAttribution: ClientAttribution{Harness: "Example Harness", HarnessVersion: "1.0", Model: "Example Model", Source: "client-reported"},
 		Authority: Authority{
+			Profile: "work-planning", RegisteredClientLabel: "Example Client", RegisteredInstallationLabel: "Example Installation",
 			PrincipalID: 1, OAuthApplicationID: 2, OAuthGrantID: 3,
 			CredentialJTI: "22222222-2222-4222-8222-222222222222",
 			Audience:      "https://forge.example/mcp",
