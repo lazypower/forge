@@ -13,6 +13,7 @@
 	{{if .IsProjectsEnabled}}
 		{{template "repo/issue/sidebar/project_list" $.IssuePageMetaData}}
 	{{end}}
+	{{template "repo/issue/sidebar/work_context" $}}
 	{{template "repo/issue/sidebar/assignee_list" $.IssuePageMetaData}}
 
 	{{template "repo/issue/sidebar/participant_list" $}}
