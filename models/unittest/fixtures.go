@@ -102,6 +102,9 @@ func (f fixturesHookStruct) BeforeProcess(c *contexts.ContextHook) (context.Cont
 		util.AsciiEqualFold(cmdPart, "SET") ||
 		util.AsciiEqualFold(cmdPart, "sp_rename") ||
 		util.AsciiEqualFold(cmdPart, "BEGIN") ||
+		util.AsciiEqualFold(cmdPart, "SAVE") ||
+		util.AsciiEqualFold(cmdPart, "SAVEPOINT") ||
+		util.AsciiEqualFold(cmdPart, "RELEASE") ||
 		util.AsciiEqualFold(cmdPart, "ROLLBACK") ||
 		util.AsciiEqualFold(cmdPart, "COMMIT") {
 		return ctx, nil

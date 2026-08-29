@@ -86,97 +86,106 @@ func EnsureDependency(ctx context.Context, doer *user_model.User, blocked, prere
 // EnsureDependencyInWorkTx applies the same authority inside a caller-owned
 // db.WithWorkTx callback so a larger Work revision can remain atomic.
 func EnsureDependencyInWorkTx(ctx context.Context, doer *user_model.User, blocked, prerequisite *issues_model.Issue, presence DependencyPresence, scope DependencyScope) (bool, error) {
+	changed, _, err := EnsureDependencyWithEventsInWorkTx(ctx, doer, blocked, prerequisite, presence, scope)
+	return changed, err
+}
+
+// EnsureDependencyWithEventsInWorkTx applies WP2's authority and returns only
+// the native timeline rows created by this change for provenance linking.
+func EnsureDependencyWithEventsInWorkTx(ctx context.Context, doer *user_model.User, blocked, prerequisite *issues_model.Issue, presence DependencyPresence, scope DependencyScope) (bool, []*issues_model.Comment, error) {
 	if presence != DependencyPresent && presence != DependencyAbsent {
-		return false, ErrDependencyPresence
+		return false, nil, ErrDependencyPresence
 	}
 	if scope != IssueDependencyScope && scope != WorkDependencyScope {
-		return false, ErrDependencyScope
+		return false, nil, ErrDependencyScope
 	}
 	if blocked == nil || prerequisite == nil {
-		return false, ErrInvalidDependency
+		return false, nil, ErrInvalidDependency
 	}
 	return ensureDependency(ctx, doer, blocked.ID, prerequisite.ID, presence, scope)
 }
 
-func ensureDependency(ctx context.Context, doer *user_model.User, blockedID, prerequisiteID int64, presence DependencyPresence, scope DependencyScope) (bool, error) {
+func ensureDependency(ctx context.Context, doer *user_model.User, blockedID, prerequisiteID int64, presence DependencyPresence, scope DependencyScope) (bool, []*issues_model.Comment, error) {
 	blocked, err := issues_model.GetIssueByID(ctx, blockedID)
 	if err != nil {
-		return false, ErrDependencyNotPermitted
+		return false, nil, ErrDependencyNotPermitted
 	}
 	if err := blocked.LoadRepo(ctx); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	blockedPermission, err := access_model.GetDoerRepoPermission(ctx, blocked.Repo, doer)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if blocked.Repo.IsArchived || !blocked.Repo.IsDependenciesEnabled(ctx) || !blockedPermission.CanWriteIssuesOrPulls(blocked.IsPull) {
-		return false, ErrDependencyNotPermitted
+		return false, nil, ErrDependencyNotPermitted
 	}
 
 	prerequisite, err := issues_model.GetIssueByID(ctx, prerequisiteID)
 	if err != nil {
-		return false, ErrDependencyUnavailable
+		return false, nil, ErrDependencyUnavailable
 	}
 	if err := prerequisite.LoadRepo(ctx); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	prerequisitePermission, err := access_model.GetDoerRepoPermission(ctx, prerequisite.Repo, doer)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !prerequisitePermission.CanReadIssuesOrPulls(prerequisite.IsPull) {
-		return false, ErrDependencyUnavailable
+		return false, nil, ErrDependencyUnavailable
 	}
 
 	exists, err := issues_model.IssueDependencyExists(ctx, blocked.ID, prerequisite.ID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if presence == DependencyAbsent {
 		if !exists {
-			return false, nil
+			return false, nil, nil
 		}
-		if err := issues_model.RemoveIssueDependency(ctx, doer, blocked, prerequisite, issues_model.DependencyTypeBlockedBy); err != nil {
+		comments, err := issues_model.RemoveIssueDependencyWithComments(ctx, doer, blocked, prerequisite, issues_model.DependencyTypeBlockedBy)
+		if err != nil {
 			if issues_model.IsErrDependencyNotExists(err) {
-				return false, nil
+				return false, nil, nil
 			}
-			return false, err
+			return false, nil, err
 		}
-		return true, nil
+		return true, comments, nil
 	}
 	if exists {
-		return false, nil
+		return false, nil, nil
 	}
 
 	if blocked.ID == prerequisite.ID {
-		return false, ErrSelfDependency
+		return false, nil, ErrSelfDependency
 	}
 	if scope == WorkDependencyScope {
 		if blocked.IsPull || prerequisite.IsPull {
-			return false, ErrDependencyEndpoint
+			return false, nil, ErrDependencyEndpoint
 		}
 		if blocked.RepoID != prerequisite.RepoID {
-			return false, ErrCrossRepositoryDependency
+			return false, nil, ErrCrossRepositoryDependency
 		}
 	} else if blocked.RepoID != prerequisite.RepoID && !setting.Service.AllowCrossRepositoryDependencies {
-		return false, ErrCrossRepositoryDependency
+		return false, nil, ErrCrossRepositoryDependency
 	}
 
 	graph, err := loadDependencyGraph(ctx, doer, issues_model.IssueList{prerequisite}, scope, setting.Work.MaxGraphNodes)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if _, found := graph.nodes[blocked.ID]; found || graph.cyclic() {
-		return false, ErrInvalidDependency
+		return false, nil, ErrInvalidDependency
 	}
-	if err := issues_model.CreateIssueDependency(ctx, doer, blocked, prerequisite); err != nil {
+	comments, err := issues_model.CreateIssueDependencyWithComments(ctx, doer, blocked, prerequisite)
+	if err != nil {
 		if issues_model.IsErrDependencyExists(err) {
-			return false, nil
+			return false, nil, nil
 		}
-		return false, err
+		return false, nil, err
 	}
-	return true, nil
+	return true, comments, nil
 }
 
 // ValidateDependencyDAG validates the complete bounded prerequisite closure.

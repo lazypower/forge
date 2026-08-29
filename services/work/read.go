@@ -319,10 +319,14 @@ func (service *ReadService) InspectPlan(ctx context.Context, doer *user_model.Us
 
 	edges, edgeKeys, edgeRelated := compose.planEdges(issueIDs, issueNumbers, dependencyGraph)
 	excluded, excludedNumbers := compose.excludedMembers(ctx, excludedIDs, issueNumbers, byID)
+	planToken, err := makePlanToken(service.secret, compose.requestRepo, project, members, byID, dependencyGraph, memberBound)
+	if err != nil {
+		return nil, err
+	}
 	plan := WorkPlan{
 		Ref: "project/" + strconv.FormatInt(project.ID, 10), URL: projectHTMLURL(ctx, compose.requestRepo, project.ID), Title: project.Title,
 		Markdown: project.Description, PlanningState: string(project.PlanningState), ProjectState: projectState(project), Integrity: integrity,
-		ItemSummaries: itemSummaries, EdgeSummaries: bounded(edges), ReadyFrontier: bounded(ready), ExcludedMembers: bounded(excluded), PlanToken: "",
+		ItemSummaries: itemSummaries, EdgeSummaries: bounded(edges), ReadyFrontier: bounded(ready), ExcludedMembers: bounded(excluded), PlanToken: planToken,
 	}
 	inspection := &PlanInspection{Repository: projectRepository(ctx, compose.requestRepo), WorkPlan: plan}
 	cursorBase := pageCursor{

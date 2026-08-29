@@ -123,6 +123,19 @@ func TestNewProjectRejectsUnknownPlanningState(t *testing.T) {
 	assert.Zero(t, project.ID)
 }
 
+func TestDeleteProjectRejectsActiveWorkPlan(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	active := &Project{Type: TypeRepository, Title: "Active plan", RepoID: 1, CreatorID: 2, PlanningState: PlanningStateActive}
+	assert.NoError(t, NewProject(t.Context(), active))
+	assert.ErrorIs(t, DeleteProjectByID(t.Context(), active.ID), ErrActiveWorkPlan)
+	unittest.AssertExistsAndLoadBean(t, &Project{ID: active.ID})
+
+	draft := &Project{Type: TypeRepository, Title: "Draft plan", RepoID: 1, CreatorID: 2, PlanningState: PlanningStateDraft}
+	assert.NoError(t, NewProject(t.Context(), draft))
+	assert.NoError(t, DeleteProjectByID(t.Context(), draft.ID))
+	unittest.AssertNotExistsBean(t, &Project{ID: draft.ID})
+}
+
 func TestProjectsSort(t *testing.T) {
 	assert.NoError(t, unittest.PrepareTestDatabase())
 

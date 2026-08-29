@@ -5,6 +5,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 
@@ -25,6 +26,10 @@ var (
 	retireProjectMCPWorkReceipts     = mcpwork_model.RetireProject
 	retireRepoProjectMCPWorkReceipts = mcpwork_model.RetireRepositoryProjects
 )
+
+// ErrActiveWorkPlan prevents lifecycle changes that would make an active plan
+// unavailable to its human and agent interfaces.
+var ErrActiveWorkPlan = errors.New("active work plan must return to draft first")
 
 type (
 	// CardConfig is used to identify the type of column card that is being used
@@ -377,6 +382,22 @@ func GetProjectForRepoByID(ctx context.Context, repoID, id int64) (*Project, err
 	return p, nil
 }
 
+// HasActiveWorkPlan reports whether the repository currently owns an active
+// Work plan. Repository lifecycle services use this as their single guard.
+func HasActiveWorkPlan(ctx context.Context, repoID int64) (bool, error) {
+	return db.GetEngine(ctx).Where("repo_id = ? AND type = ? AND planning_state = ?", repoID, TypeRepository, PlanningStateActive).Exist(new(Project))
+}
+
+// StabilizePlanningStates serializes a surrounding transaction's membership
+// decision with planning-state transitions for the same Projects.
+func StabilizePlanningStates(ctx context.Context, projectIDs []int64) error {
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	_, err := db.GetEngine(ctx).In("id", projectIDs).SetExpr("planning_state", "planning_state").NoAutoTime().Update(new(Project))
+	return err
+}
+
 // GetAllProjectsIDsByOwnerID returns the all projects ids it owns
 func GetAllProjectsIDsByOwnerIDAndType(ctx context.Context, ownerID int64, projectType Type) ([]int64, error) {
 	projects := make([]int64, 0)
@@ -468,6 +489,9 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 			}
 			return err
 		}
+		if p.PlanningState == PlanningStateActive {
+			return ErrActiveWorkPlan
+		}
 
 		if err := deleteProjectIssuesByProjectID(ctx, id); err != nil {
 			return err
@@ -477,8 +501,12 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 			return err
 		}
 
-		if _, err = db.GetEngine(ctx).ID(p.ID).Delete(new(Project)); err != nil {
+		deleted, err := db.GetEngine(ctx).ID(p.ID).Where("planning_state != ?", PlanningStateActive).Delete(new(Project))
+		if err != nil {
 			return err
+		}
+		if deleted != 1 {
+			return ErrActiveWorkPlan
 		}
 		if err := retireProjectMCPWorkReceipts(ctx, p.RepoID, p.ID); err != nil {
 			return err

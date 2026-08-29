@@ -90,8 +90,6 @@ func NewIssue(ctx context.Context, repo *repo_model.Repository, issue *issues_mo
 // ChangeTitle changes the title of this issue, as the given user.
 func ChangeTitle(ctx context.Context, issue *issues_model.Issue, doer *user_model.User, title string) error {
 	oldTitle := issue.Title
-	issue.Title = title
-
 	if oldTitle == title {
 		return nil
 	}
@@ -106,7 +104,18 @@ func ChangeTitle(ctx context.Context, issue *issues_model.Issue, doer *user_mode
 		}
 	}
 
-	if err := issues_model.ChangeIssueTitle(ctx, issue, doer, oldTitle); err != nil {
+	var effects []PostCommitEffect
+	if err := db.WithTx(ctx, func(txCtx context.Context) error {
+		result, txEffects, err := ReviseWorkIssueInTx(txCtx, issue, doer, issues_model.ConditionalIssueRevision{
+			ExpectedTitle: &oldTitle, DesiredTitle: &title,
+		})
+		if err != nil {
+			return err
+		}
+		*issue = *result.Issue
+		effects = txEffects
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -123,7 +132,9 @@ func ChangeTitle(ctx context.Context, issue *issues_model.Issue, doer *user_mode
 		}
 	}
 
-	notify_service.IssueChangeTitle(ctx, doer, issue, oldTitle)
+	for _, effect := range effects {
+		effect.Run(ctx)
+	}
 	ReviewRequestNotify(ctx, issue, issue.Poster, reviewNotifiers)
 
 	return nil

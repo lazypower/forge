@@ -911,7 +911,9 @@ func EditIssue(ctx *context.APIContext) {
 	// Update projects if provided
 	if canWrite && form.Projects != nil {
 		if err := issues_model.IssueAssignOrRemoveProject(ctx, issue, ctx.Doer, *form.Projects); err != nil {
-			if errors.Is(err, util.ErrPermissionDenied) || errors.Is(err, util.ErrNotExist) {
+			if errors.Is(err, issues_model.ErrActivePlanMembership) {
+				ctx.APIError(http.StatusConflict, err.Error())
+			} else if errors.Is(err, util.ErrPermissionDenied) || errors.Is(err, util.ErrNotExist) {
 				ctx.APIError(http.StatusBadRequest, err.Error())
 			} else {
 				ctx.APIErrorInternal(err)
