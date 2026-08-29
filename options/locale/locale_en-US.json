@@ -444,6 +444,8 @@
   "auth.authorize_redirect_notice": "You will be redirected to %s if you authorize this application.",
   "auth.authorize_application_created_by": "This application was created by %s.",
   "auth.authorize_application_description": "If you grant access, it will be able to access and write to all your account information, including private repos and organizations.",
+  "auth.authorize_mcp_work_write_boundary": "This access cannot push or merge code, administer repositories, or run agents.",
+  "auth.authorize_mcp_work_write_description": "Where your current permissions allow, this access may create, edit, close, and reopen issues; change work-plan memberships and dependencies; and create, activate, return to draft, or delete repository work plans.",
   "auth.authorize_application_with_scopes": "With scopes: %s",
   "auth.authorize_title": "Authorize \"%s\" to access your account?",
   "auth.authorization_failed": "Authorization failed",

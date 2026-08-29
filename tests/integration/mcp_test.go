@@ -331,6 +331,7 @@ func TestMCPOAuthAuthenticationProfile(t *testing.T) {
 				Subject:   strconv.FormatInt(grant.UserID, 10),
 				Audience:  jwt.ClaimStrings{audience},
 				ExpiresAt: jwt.NewNumericDate(expiresAt),
+				ID:        "0f0f7a12-6657-4a3a-b8b2-a7d0d40f87b2",
 			},
 		}
 		signed, err := token.SignToken(oauth2_provider.DefaultSigningKey)
@@ -366,8 +367,8 @@ func TestMCPOAuthAuthenticationProfile(t *testing.T) {
 	grant.Scope = "read:user"
 	_, err = db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(grant)
 	require.NoError(t, err)
-	failure := MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusForbidden)
-	assert.Contains(t, failure.Header().Get("WWW-Authenticate"), `error="insufficient_scope"`)
+	failure := MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusUnauthorized)
+	assert.Contains(t, failure.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
 	grant.Scope = "read:repository"
 	_, err = db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(grant)
 	require.NoError(t, err)

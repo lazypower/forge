@@ -21,6 +21,7 @@ import (
 	"gitea.dev/modules/util"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // AccessTokenErrorCode represents an error code specified in RFC 6749
@@ -132,12 +133,19 @@ func NewAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, server
 	return newAccessTokenResponse(ctx, grant, "", setting.OAuth2.InvalidateRefreshTokens, serverKey, clientKey)
 }
 
-// NewMCPAccessTokenResponse issues tokens bound to the canonical MCP resource.
-func NewMCPAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {
-	if !setting.MCP.Enabled || setting.MCP.Authentication != setting.MCPAuthenticationProfileOAuth || grant == nil || grant.Scope != string(auth.AccessTokenScopeReadRepository) {
+// NewMCPAccessTokenResponse issues tokens bound to one fixed MCP client profile.
+func NewMCPAccessTokenResponse(ctx context.Context, app *auth.OAuth2Application, grant *auth.OAuth2Grant, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {
+	if _, err := MCPProfileForAccessToken(app, grant); err != nil {
 		return nil, &AccessTokenError{
 			ErrorCode:        AccessTokenErrorCodeInvalidGrant,
 			ErrorDescription: "grant does not match the MCP profile",
+		}
+	}
+	principal, err := user_model.GetUserByID(ctx, grant.UserID)
+	if err != nil || principal == nil || !principal.IsActive || principal.ProhibitLogin {
+		return nil, &AccessTokenError{
+			ErrorCode:        AccessTokenErrorCodeInvalidGrant,
+			ErrorDescription: "principal does not match the MCP profile",
 		}
 	}
 	return newAccessTokenResponse(ctx, grant, setting.MCPResource(), true, serverKey, clientKey)
@@ -161,6 +169,7 @@ func newAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, resour
 		accessClaims.Issuer = TokenIssuer()
 		accessClaims.Subject = strconv.FormatInt(grant.UserID, 10)
 		accessClaims.Audience = jwt.ClaimStrings{resource}
+		accessClaims.ID = uuid.NewString()
 	}
 	accessToken := &Token{
 		GrantID:          grant.ID,

@@ -149,7 +149,7 @@ func testMCPResourceProfile(t *testing.T) {
 	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
 	require.NoError(t, err)
 	require.False(t, app.ConfidentialClient)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"}, app.RedirectURIs)
+	assert.Equal(t, auth_model.BuiltinApplications()[auth_model.MCPBuiltinOAuth2ApplicationClientID].RedirectURIs, app.RedirectURIs)
 
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
 	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: user.ID, Scope: "read:repository"}

@@ -51,7 +51,7 @@ func ProtectedResourceMetadata() http.Handler {
 	return mcpauth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 		Resource:               setting.MCPResource(),
 		AuthorizationServers:   []string{oauth2_provider.TokenIssuer()},
-		ScopesSupported:        []string{string(readRepositoryScope)},
+		ScopesSupported:        oauth2_provider.MCPScopesSupported(),
 		BearerMethodsSupported: []string{"header"},
 		ResourceName:           "Forge MCP",
 	})

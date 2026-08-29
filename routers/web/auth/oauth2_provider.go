@@ -275,13 +275,19 @@ func AuthorizeOAuth(ctx *context.Context) {
 		}, form.RedirectURI)
 		return
 	}
-	if err := oauth2_provider.ValidateMCPAuthorizationRequest(app, form.Resource, form.Scope, form.CodeChallengeMethod, form.CodeChallenge, form.RedirectURI); err != nil {
-		errorCode := ErrorCodeInvalidRequest
-		if auth.IsMCPBuiltinOAuth2Application(app) && form.Scope != string(auth.AccessTokenScopeReadRepository) {
-			errorCode = ErrorCodeInvalidScope
-		}
+	canonicalScope, err := oauth2_provider.CanonicalMCPAuthorizationScope(app, form.Scope)
+	if err != nil {
 		handleAuthorizeError(ctx, AuthorizeError{
-			ErrorCode:        errorCode,
+			ErrorCode:        ErrorCodeInvalidScope,
+			ErrorDescription: "request does not match the registered client profile",
+			State:            form.State,
+		}, form.RedirectURI)
+		return
+	}
+	form.Scope = canonicalScope
+	if err := oauth2_provider.ValidateMCPAuthorizationRequest(app, form.Resource, form.Scope, form.CodeChallengeMethod, form.CodeChallenge, form.RedirectURI); err != nil {
+		handleAuthorizeError(ctx, AuthorizeError{
+			ErrorCode:        ErrorCodeInvalidRequest,
 			ErrorDescription: "request does not match the registered client profile",
 			State:            form.State,
 		}, form.RedirectURI)
@@ -378,6 +384,8 @@ func AuthorizeOAuth(ctx *context.Context) {
 
 	// check if additional scopes
 	ctx.Data["AdditionalScopes"] = oauth2_provider.GrantAdditionalScopes(form.Scope) != auth.AccessTokenScopeAll
+	profile, _ := auth.MCPBuiltinOAuth2ApplicationProfileOf(app)
+	ctx.Data["MCPWorkWriteConsent"] = profile == auth.MCPBuiltinOAuth2ApplicationProfileWorkWrite
 
 	// show authorize page to grant access
 	ctx.Data["Application"] = app
@@ -452,6 +460,16 @@ func GrantApplicationOAuth(ctx *context.Context) {
 		ctx.ServerError("GetOAuth2ApplicationByClientID", err)
 		return
 	}
+	canonicalScope, err := oauth2_provider.CanonicalMCPAuthorizationScope(app, form.Scope)
+	if err != nil {
+		handleAuthorizeError(ctx, AuthorizeError{
+			State:            form.State,
+			ErrorDescription: "request does not match the registered client profile",
+			ErrorCode:        ErrorCodeInvalidScope,
+		}, form.RedirectURI)
+		return
+	}
+	form.Scope = canonicalScope
 	if err := oauth2_provider.ValidateMCPAuthorizationRequest(app, form.Resource, form.Scope, oauthSessionString(ctx, "CodeChallengeMethod"), oauthSessionString(ctx, "CodeChallenge"), form.RedirectURI); err != nil {
 		handleAuthorizeError(ctx, AuthorizeError{
 			State:            form.State,
@@ -697,7 +715,7 @@ func handleRefreshToken(ctx *context.Context, form forms.AccessTokenForm, server
 	var accessToken *oauth2_provider.AccessTokenResponse
 	var tokenErr *oauth2_provider.AccessTokenError
 	if resource != "" {
-		accessToken, tokenErr = oauth2_provider.NewMCPAccessTokenResponse(ctx, grant, serverKey, clientKey)
+		accessToken, tokenErr = oauth2_provider.NewMCPAccessTokenResponse(ctx, app, grant, serverKey, clientKey)
 	} else {
 		accessToken, tokenErr = oauth2_provider.NewAccessTokenResponse(ctx, grant, serverKey, clientKey)
 	}
@@ -798,7 +816,7 @@ func handleAuthorizationCode(ctx *context.Context, form forms.AccessTokenForm, s
 	var resp *oauth2_provider.AccessTokenResponse
 	var tokenErr *oauth2_provider.AccessTokenError
 	if authorizationCode.Resource != "" {
-		resp, tokenErr = oauth2_provider.NewMCPAccessTokenResponse(ctx, authorizationCode.Grant, serverKey, clientKey)
+		resp, tokenErr = oauth2_provider.NewMCPAccessTokenResponse(ctx, app, authorizationCode.Grant, serverKey, clientKey)
 	} else {
 		resp, tokenErr = oauth2_provider.NewAccessTokenResponse(ctx, authorizationCode.Grant, serverKey, clientKey)
 	}

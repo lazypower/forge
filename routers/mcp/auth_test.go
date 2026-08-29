@@ -11,11 +11,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	auth_model "gitea.dev/models/auth"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/setting"
 	test_module "gitea.dev/modules/test"
+	"gitea.dev/services/oauth2_provider"
 
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -77,6 +79,50 @@ func TestPATVerifier(t *testing.T) {
 			assert.EqualError(t, err, "invalid bearer token")
 		})
 	}
+}
+
+func TestAuthenticatedOAuthCredentialContext(t *testing.T) {
+	principal := &user_model.User{ID: 7, IsActive: true, Type: user_model.UserTypeIndividual}
+	application := &auth_model.OAuth2Application{ID: 8, ClientID: auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID}
+	grant := &auth_model.OAuth2Grant{ID: 9, ApplicationID: application.ID, UserID: principal.ID, Scope: oauth2_provider.MCPWorkWriteScope}
+	credential := &verifiedOAuthCredential{
+		Principal:      principal,
+		Application:    application,
+		Grant:          grant,
+		CredentialID:   "0f0f7a12-6657-4a3a-b8b2-a7d0d40f87b2",
+		Profile:        auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite,
+		CanonicalScope: oauth2_provider.MCPWorkWriteScope,
+		Scopes:         []string{"read:repository", "write:issue", "write:repository"},
+	}
+	verifier := func(context.Context, string, *http.Request) (*mcpauth.TokenInfo, error) {
+		return &mcpauth.TokenInfo{
+			Scopes:     credential.Scopes,
+			Expiration: time.Now().Add(time.Minute),
+			Extra: map[string]any{
+				authenticatedUserKey:            principal,
+				authenticatedOAuthCredentialKey: credential,
+			},
+		}, nil
+	}
+	called := false
+	handler := mcpauth.RequireBearerToken(verifier, &mcpauth.RequireBearerTokenOptions{Scopes: []string{"read:repository"}})(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		got, err := authenticatedOAuthCredential(req.Context())
+		require.NoError(t, err)
+		assert.Same(t, credential, got)
+		user, err := authenticatedUser(req.Context())
+		require.NoError(t, err)
+		assert.Same(t, principal, user)
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer credential")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusNoContent, resp.Code)
+	assert.True(t, called)
 }
 
 func TestBearerHeaderBoundary(t *testing.T) {

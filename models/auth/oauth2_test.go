@@ -74,6 +74,15 @@ func TestMCPBuiltinOAuth2Application(t *testing.T) {
 	assert.True(t, builtin.MCPExclusive)
 	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe", "https://127.0.0.1"}, builtin.RedirectURIs)
 	assert.True(t, auth_model.IsMCPBuiltinOAuth2Application(&auth_model.OAuth2Application{ClientID: auth_model.MCPBuiltinOAuth2ApplicationClientID}))
+	writeBuiltin := auth_model.BuiltinApplications()[auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID]
+	require.NotNil(t, writeBuiltin)
+	assert.Equal(t, auth_model.MCPWorkWriteBuiltinOAuth2ApplicationName, writeBuiltin.ConfigName)
+	assert.Equal(t, "Forge MCP Work Planning", writeBuiltin.DisplayName)
+	assert.True(t, writeBuiltin.MCPExclusive)
+	assert.Equal(t, builtin.RedirectURIs, writeBuiltin.RedirectURIs)
+	profile, ok := auth_model.MCPBuiltinOAuth2ApplicationProfileOf(&auth_model.OAuth2Application{ClientID: auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID})
+	assert.True(t, ok)
+	assert.Equal(t, auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite, profile)
 }
 
 func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
@@ -81,6 +90,7 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/")()
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, false)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, false)()
 	expectedRedirects := []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe", "https://127.0.0.1"}
 
 	require.NoError(t, auth_model.Init(t.Context()))
@@ -93,6 +103,16 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, app.ConfidentialClient)
 	assert.Equal(t, expectedRedirects, app.RedirectURIs)
+	_, err = auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID)
+	require.True(t, auth_model.IsErrOauthClientIDInvalid(err))
+
+	setting.MCP.WorkMutationEnabled = true
+	require.NoError(t, auth_model.Init(t.Context()))
+	writeApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.False(t, writeApp.ConfidentialClient)
+	assert.Equal(t, expectedRedirects, writeApp.RedirectURIs)
+	assert.NotEqual(t, app.ID, writeApp.ID)
 
 	for _, legacyRedirects := range [][]string{
 		{"http://127.0.0.1", "https://127.0.0.1"},
@@ -114,10 +134,14 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/hM8DzwbydX6Q", "https://127.0.0.1"}, moved.RedirectURIs)
 
 	setting.MCP.Enabled = false
+	setting.MCP.WorkMutationEnabled = false
 	require.NoError(t, auth_model.Init(t.Context()))
 	disabled, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
 	require.NoError(t, err)
 	assert.Equal(t, app.ID, disabled.ID)
+	disabledWrite, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	assert.Equal(t, writeApp.ID, disabledWrite.ID)
 
 	setting.MCP.Enabled = true
 	setting.MCP.Authentication = setting.MCPAuthenticationProfilePAT
@@ -130,37 +154,42 @@ func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
 	defer func() { setting.OAuth2.DefaultApplications = originalDefaults }()
 	setting.OAuth2.DefaultApplications = append([]string{}, auth_model.MCPBuiltinOAuth2ApplicationName)
 	assert.EqualError(t, auth_model.Init(t.Context()), `unknown oauth2 application: "forge-mcp"`)
+	setting.OAuth2.DefaultApplications = append([]string{}, auth_model.MCPWorkWriteBuiltinOAuth2ApplicationName)
+	assert.EqualError(t, auth_model.Init(t.Context()), `unknown oauth2 application: "forge-mcp-work-write"`)
 }
 
 func TestMCPBuiltinOAuth2ApplicationRejectsDrift(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, true)()
 	require.NoError(t, auth_model.Init(t.Context()))
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
 
 	tests := []struct {
 		name         string
 		confidential bool
 		redirects    []string
 	}{
-		{name: "confidential client", confidential: true, redirects: app.RedirectURIs},
+		{name: "confidential client", confidential: true, redirects: auth_model.BuiltinApplications()[auth_model.MCPBuiltinOAuth2ApplicationClientID].RedirectURIs},
 		{name: "unexpected redirects", redirects: []string{"http://127.0.0.1", "https://attacker.example/callback"}},
 		{name: "malformed callback ID", redirects: []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/not-a-callback-id", "https://127.0.0.1"}},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			candidate := *app
-			candidate.ConfidentialClient = test.confidential
-			candidate.RedirectURIs = test.redirects
-			_, err := db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(&candidate)
-			require.NoError(t, err)
-			assert.EqualError(t, auth_model.Init(t.Context()), "the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
+	for _, clientID := range []string{auth_model.MCPBuiltinOAuth2ApplicationClientID, auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID} {
+		app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), clientID)
+		require.NoError(t, err)
+		for _, test := range tests {
+			t.Run(clientID+"/"+test.name, func(t *testing.T) {
+				candidate := *app
+				candidate.ConfidentialClient = test.confidential
+				candidate.RedirectURIs = test.redirects
+				_, err := db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(&candidate)
+				require.NoError(t, err)
+				assert.EqualError(t, auth_model.Init(t.Context()), "the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
 
-			_, err = db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(app)
-			require.NoError(t, err)
-		})
+				_, err = db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(app)
+				require.NoError(t, err)
+			})
+		}
 	}
 }
 

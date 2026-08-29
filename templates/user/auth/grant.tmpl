@@ -13,6 +13,10 @@
 				{{ctx.Locale.Tr "auth.authorize_application_created_by" .ApplicationCreatorLinkHTML}}<br>
 				{{ctx.Locale.Tr "auth.authorize_application_with_scopes" (HTMLFormat "<b>%s</b>" .Scope)}}
 			</p>
+			{{if .MCPWorkWriteConsent}}
+				<p><b>{{ctx.Locale.Tr "auth.authorize_mcp_work_write_description"}}</b></p>
+				<p>{{ctx.Locale.Tr "auth.authorize_mcp_work_write_boundary"}}</p>
+			{{end}}
 		</div>
 		<div class="ui attached segment">
 			<p>{{ctx.Locale.Tr "auth.authorize_redirect_notice" .ApplicationRedirectDomainHTML}}</p>

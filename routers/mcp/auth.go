@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	authenticatedUserKey = "forge.authenticated-user"
-	readRepositoryScope  = auth_model.AccessTokenScopeReadRepository
+	authenticatedUserKey            = "forge.authenticated-user"
+	authenticatedOAuthCredentialKey = "forge.authenticated-oauth-credential"
+	readRepositoryScope             = auth_model.AccessTokenScopeReadRepository
 )
 
 var bearerTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/\-]+={0,}$`)
@@ -39,6 +40,16 @@ type (
 	userLookup        func(context.Context, int64) (*user_model.User, error)
 )
 
+type verifiedOAuthCredential struct {
+	Principal      *user_model.User
+	Application    *auth_model.OAuth2Application
+	Grant          *auth_model.OAuth2Grant
+	CredentialID   string
+	Profile        auth_model.MCPBuiltinOAuth2ApplicationProfile
+	CanonicalScope string
+	Scopes         []string
+}
+
 func newPATVerifier() mcpauth.TokenVerifier {
 	return newPATVerifierWithLookups(auth_model.GetAccessTokenBySHA, user_model.GetUserByID)
 }
@@ -50,14 +61,30 @@ func newOAuthVerifier() mcpauth.TokenVerifier {
 			return nil, errInvalidBearerToken
 		}
 		app, err := auth_model.GetOAuth2ApplicationByID(ctx, verified.Grant.ApplicationID)
-		if err != nil || oauth2_provider.ValidateMCPAccessTokenClient(app) != nil {
+		if err != nil {
 			return nil, errInvalidBearerToken
 		}
+		profile, err := oauth2_provider.MCPProfileForAccessToken(app, verified.Grant)
+		if err != nil || verified.OAuthScope != profile.CanonicalScope {
+			return nil, errInvalidBearerToken
+		}
+		credential := &verifiedOAuthCredential{
+			Principal:      verified.Principal,
+			Application:    app,
+			Grant:          verified.Grant,
+			CredentialID:   verified.CredentialID,
+			Profile:        profile.Name,
+			CanonicalScope: profile.CanonicalScope,
+			Scopes:         append([]string(nil), profile.Scopes...),
+		}
 		return &mcpauth.TokenInfo{
-			Scopes:     strings.Split(string(verified.Scope), ","),
+			Scopes:     append([]string(nil), profile.Scopes...),
 			Expiration: verified.ExpiresAt,
 			UserID:     strconv.FormatInt(verified.Principal.ID, 10),
-			Extra:      map[string]any{authenticatedUserKey: verified.Principal},
+			Extra: map[string]any{
+				authenticatedUserKey:            verified.Principal,
+				authenticatedOAuthCredentialKey: credential,
+			},
 		}, nil
 	}
 }
@@ -97,6 +124,18 @@ func authenticatedUser(ctx context.Context) (*user_model.User, error) {
 		return nil, errors.New("authenticated principal unavailable")
 	}
 	return user, nil
+}
+
+func authenticatedOAuthCredential(ctx context.Context) (*verifiedOAuthCredential, error) {
+	tokenInfo := mcpauth.TokenInfoFromContext(ctx)
+	if tokenInfo == nil {
+		return nil, errors.New("verified OAuth credential unavailable")
+	}
+	credential, ok := tokenInfo.Extra[authenticatedOAuthCredentialKey].(*verifiedOAuthCredential)
+	if !ok || credential == nil || !validMCPPrincipal(credential.Principal) || credential.Application == nil || credential.Grant == nil || credential.CredentialID == "" || credential.CanonicalScope == "" {
+		return nil, errors.New("verified OAuth credential unavailable")
+	}
+	return credential, nil
 }
 
 func requireBearerHeader(next http.Handler) http.Handler {

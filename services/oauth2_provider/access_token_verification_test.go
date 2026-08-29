@@ -19,7 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testOAuthResource = "https://forge.example/mcp"
+const (
+	testOAuthResource     = "https://forge.example/mcp"
+	testOAuthCredentialID = "0f0f7a12-6657-4a3a-b8b2-a7d0d40f87b2"
+)
 
 func TestVerifyAccessToken(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/")()
@@ -40,6 +43,11 @@ func TestVerifyAccessToken(t *testing.T) {
 	resourceClaims.Issuer = TokenIssuer()
 	resourceClaims.Subject = "42"
 	resourceClaims.Audience = jwt.ClaimStrings{testOAuthResource}
+	resourceClaims.ID = testOAuthCredentialID
+	resourceClaimsWithoutCredentialID := resourceClaims
+	resourceClaimsWithoutCredentialID.ID = ""
+	resourceClaimsWithNonRandomCredentialID := resourceClaims
+	resourceClaimsWithNonRandomCredentialID.ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
 
 	tests := []struct {
 		name             string
@@ -72,6 +80,16 @@ func TestVerifyAccessToken(t *testing.T) {
 		{
 			name:             "unbound token at resource",
 			token:            signTestToken(t, signingKey, KindAccessToken, legacyClaims),
+			expectedResource: testOAuthResource,
+		},
+		{
+			name:             "missing resource credential ID",
+			token:            signTestToken(t, signingKey, KindAccessToken, resourceClaimsWithoutCredentialID),
+			expectedResource: testOAuthResource,
+		},
+		{
+			name:             "non-random resource credential ID",
+			token:            signTestToken(t, signingKey, KindAccessToken, resourceClaimsWithNonRandomCredentialID),
 			expectedResource: testOAuthResource,
 		},
 		{
@@ -202,6 +220,10 @@ func TestVerifyAccessToken(t *testing.T) {
 			assert.Equal(t, auth_model.AccessTokenScope("read:repository,read:user"), verified.Scope)
 			assert.Equal(t, now.Add(time.Hour).Unix(), verified.ExpiresAt.Unix())
 			assert.Equal(t, test.resource, verified.Resource)
+			if test.resource != "" {
+				assert.Equal(t, testOAuthCredentialID, verified.CredentialID)
+				assert.Equal(t, grant.Scope, verified.OAuthScope)
+			}
 		})
 	}
 }
@@ -237,6 +259,7 @@ func TestVerifyAccessTokenRejectsInvalidAudienceRepresentations(t *testing.T) {
 				"iss": TokenIssuer(),
 				"sub": "42",
 				"aud": audience,
+				"jti": testOAuthCredentialID,
 				"iat": now.Add(-time.Minute).Unix(),
 				"exp": now.Add(time.Hour).Unix(),
 			})
@@ -260,6 +283,7 @@ func TestVerifyAccessTokenPrincipalStateAndScopeFallback(t *testing.T) {
 		Issuer:    TokenIssuer(),
 		Subject:   "42",
 		Audience:  jwt.ClaimStrings{testOAuthResource},
+		ID:        testOAuthCredentialID,
 		IssuedAt:  jwt.NewNumericDate(now.Add(-time.Minute)),
 		ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 	})

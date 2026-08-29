@@ -34,9 +34,21 @@ import (
 const oauth2AuthorizationCodeValidity = 10 * time.Minute
 
 const (
-	// MCPBuiltinOAuth2ApplicationClientID identifies Forge's fixed public MCP client profile.
+	// MCPBuiltinOAuth2ApplicationClientID identifies Forge's fixed public MCP read profile.
 	MCPBuiltinOAuth2ApplicationClientID = "f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31"
 	MCPBuiltinOAuth2ApplicationName     = "forge-mcp"
+
+	// MCPWorkWriteBuiltinOAuth2ApplicationClientID identifies Forge's fixed public MCP work-write profile.
+	MCPWorkWriteBuiltinOAuth2ApplicationClientID = "92e7ae67-8fae-4d6f-a122-0e2f8b82ef1a"
+	MCPWorkWriteBuiltinOAuth2ApplicationName     = "forge-mcp-work-write"
+)
+
+// MCPBuiltinOAuth2ApplicationProfile identifies one fixed MCP-exclusive client profile.
+type MCPBuiltinOAuth2ApplicationProfile string
+
+const (
+	MCPBuiltinOAuth2ApplicationProfileRead      MCPBuiltinOAuth2ApplicationProfile = "read"
+	MCPBuiltinOAuth2ApplicationProfileWorkWrite MCPBuiltinOAuth2ApplicationProfile = "work-write"
 )
 
 var (
@@ -73,6 +85,7 @@ type BuiltinOAuth2Application struct {
 	DisplayName  string
 	RedirectURIs []string
 	MCPExclusive bool
+	MCPProfile   MCPBuiltinOAuth2ApplicationProfile
 }
 
 func BuiltinApplications() map[string]*BuiltinOAuth2Application {
@@ -97,6 +110,14 @@ func BuiltinApplications() map[string]*BuiltinOAuth2Application {
 		DisplayName:  "Forge MCP",
 		RedirectURIs: mcpBuiltinRedirectURIs(),
 		MCPExclusive: true,
+		MCPProfile:   MCPBuiltinOAuth2ApplicationProfileRead,
+	}
+	m[MCPWorkWriteBuiltinOAuth2ApplicationClientID] = &BuiltinOAuth2Application{
+		ConfigName:   MCPWorkWriteBuiltinOAuth2ApplicationName,
+		DisplayName:  "Forge MCP Work Planning",
+		RedirectURIs: mcpBuiltinRedirectURIs(),
+		MCPExclusive: true,
+		MCPProfile:   MCPBuiltinOAuth2ApplicationProfileWorkWrite,
 	}
 	return m
 }
@@ -144,11 +165,13 @@ func Init(ctx context.Context) error {
 	mcpOAuthEnabled := setting.MCP.Enabled && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth
 	if mcpOAuthEnabled {
 		clientIDsToAdd.Add(MCPBuiltinOAuth2ApplicationClientID)
+		if setting.MCP.WorkMutationEnabled {
+			clientIDsToAdd.Add(MCPWorkWriteBuiltinOAuth2ApplicationClientID)
+		}
 	}
 	for _, app := range registeredApps {
-		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID {
-			clientIDsToAdd.Add(MCPBuiltinOAuth2ApplicationClientID)
-			break
+		if IsMCPBuiltinOAuth2Application(app) {
+			clientIDsToAdd.Add(app.ClientID)
 		}
 	}
 	clientIDsToDelete := container.Set[string]{}
@@ -156,7 +179,8 @@ func Init(ctx context.Context) error {
 		if !clientIDsToAdd.Contains(app.ClientID) {
 			clientIDsToDelete.Add(app.ClientID) // if a registered app is not in the "add" list, it should be deleted
 		}
-		if app.ClientID == MCPBuiltinOAuth2ApplicationClientID && mcpOAuthEnabled && !validMCPBuiltinApplication(app) {
+		builtin := builtinApps[app.ClientID]
+		if builtin != nil && builtin.MCPExclusive && mcpBuiltinApplicationEnabled(builtin) && !validMCPBuiltinApplication(app) {
 			if err := upgradeMCPBuiltinApplication(ctx, app); err != nil {
 				return err
 			}
@@ -191,8 +215,19 @@ func validMCPBuiltinApplication(app *OAuth2Application) bool {
 	if app == nil || app.ConfidentialClient {
 		return false
 	}
-	want := BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
+	builtin := BuiltinApplications()[app.ClientID]
+	if builtin == nil || !builtin.MCPExclusive {
+		return false
+	}
+	want := builtin.RedirectURIs
 	return slices.Equal(app.RedirectURIs, want)
+}
+
+func mcpBuiltinApplicationEnabled(app *BuiltinOAuth2Application) bool {
+	if !setting.MCP.Enabled || setting.MCP.Authentication != setting.MCPAuthenticationProfileOAuth || app == nil {
+		return false
+	}
+	return app.MCPProfile != MCPBuiltinOAuth2ApplicationProfileWorkWrite || setting.MCP.WorkMutationEnabled
 }
 
 func upgradeMCPBuiltinApplication(ctx context.Context, app *OAuth2Application) error {
@@ -205,7 +240,11 @@ func upgradeMCPBuiltinApplication(ctx context.Context, app *OAuth2Application) e
 	}) || validPreviousMCPBuiltinRedirects(app.RedirectURIs)) {
 		return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
 	}
-	app.RedirectURIs = BuiltinApplications()[MCPBuiltinOAuth2ApplicationClientID].RedirectURIs
+	builtin := BuiltinApplications()[app.ClientID]
+	if builtin == nil || !builtin.MCPExclusive {
+		return errors.New("the built-in Forge MCP OAuth application is not recognized")
+	}
+	app.RedirectURIs = builtin.RedirectURIs
 	return updateOAuth2Application(ctx, app)
 }
 
@@ -221,9 +260,22 @@ func validPreviousMCPBuiltinRedirects(redirects []string) bool {
 	return err == nil && len(digestPrefix) == 9 && base64.RawURLEncoding.EncodeToString(digestPrefix) == callbackID
 }
 
-// IsMCPBuiltinOAuth2Application reports whether app is Forge's fixed MCP client.
+// MCPBuiltinOAuth2ApplicationProfileOf returns the fixed profile for an MCP-exclusive client.
+func MCPBuiltinOAuth2ApplicationProfileOf(app *OAuth2Application) (MCPBuiltinOAuth2ApplicationProfile, bool) {
+	if app == nil {
+		return "", false
+	}
+	builtin := BuiltinApplications()[app.ClientID]
+	if builtin == nil || !builtin.MCPExclusive || builtin.MCPProfile == "" {
+		return "", false
+	}
+	return builtin.MCPProfile, true
+}
+
+// IsMCPBuiltinOAuth2Application reports whether app is one of Forge's fixed MCP clients.
 func IsMCPBuiltinOAuth2Application(app *OAuth2Application) bool {
-	return app != nil && app.ClientID == MCPBuiltinOAuth2ApplicationClientID
+	_, ok := MCPBuiltinOAuth2ApplicationProfileOf(app)
+	return ok
 }
 
 // TableName sets the table name to `oauth2_application`
