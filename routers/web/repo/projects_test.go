@@ -25,3 +25,13 @@ func TestCheckProjectColumnChangePermissions(t *testing.T) {
 	assert.NotNil(t, column)
 	assert.False(t, ctx.Written())
 }
+
+func TestWorkMutationProblemLocaleKey(t *testing.T) {
+	for _, problemCode := range []string{
+		"invalid_input", "unavailable", "not_permitted", "conflict", "invalid_plan", "invalid_dependency", "limit_exceeded",
+	} {
+		assert.Equal(t, "repo.projects.work_planning.problem."+problemCode, workMutationProblemLocaleKey(problemCode))
+	}
+	assert.Equal(t, "repo.projects.work_planning.problem.mutation_failed", workMutationProblemLocaleKey("future_internal_code"))
+	assert.Equal(t, "repo.projects.work_planning.problem.mutation_failed", workMutationProblemLocaleKey(""))
+}

@@ -264,11 +264,20 @@ func flashWorkMutationResult(ctx *context.Context, commit work_service.MutationC
 		ctx.Flash.Success(ctx.Tr(successKey))
 		return true
 	case mcpwork_model.OutcomeRejected:
-		ctx.Flash.Error(ctx.Tr("repo.projects.work_planning.problem." + commit.Completion.ProblemCode))
+		ctx.Flash.Error(ctx.Tr(workMutationProblemLocaleKey(commit.Completion.ProblemCode)))
 		return false
 	default:
 		ctx.Flash.Error(ctx.Tr("repo.projects.work_planning.problem.mutation_failed"))
 		return false
+	}
+}
+
+func workMutationProblemLocaleKey(problemCode string) string {
+	switch problemCode {
+	case "invalid_input", "unavailable", "not_permitted", "conflict", "invalid_plan", "invalid_dependency", "limit_exceeded":
+		return "repo.projects.work_planning.problem." + problemCode
+	default:
+		return "repo.projects.work_planning.problem.mutation_failed"
 	}
 }
 
