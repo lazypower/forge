@@ -87,13 +87,26 @@ or crossing another package's semantic ownership.
 
 ### Reviewer
 
-Reviewers are read-only and from an opposing model family. They inspect the
-exact final diff against the assigned ADR and package obligations. Every
+Independent reviewers are read-only and from an opposing model family. Every
 finding is classified as `fix-now`, `prove-with-test`, `document-boundary`,
-`separate-decision`, or `decline` with evidence. After fixes, the reviewer
-checks the unchanged obligations and open findings on the new exact commit.
+`separate-decision`, or `decline` with evidence.
 
-The required floors are:
+Choose review depth by consequence, not by the existence of another edit or
+commit. Fable 5 is reserved for security, authorization, credential lineage,
+concurrency, atomicity, and comparably consequential cross-boundary decisions.
+Routine prose, fixtures, straightforward tests, and mechanical changes use
+Opus 5 when independent review is useful, or coordinator judgment when the
+existing evidence is sufficient. Test code that changes the meaning of a
+security or concurrency proof is assessed by that risk, not its file suffix.
+
+Review the stabilized risk-bearing diff once. A new commit SHA, commit-only
+change, or routine test/documentation follow-up does not automatically trigger
+another Fable pass. Re-review only the affected obligations when subsequent
+changes materially alter risk-bearing behavior or leave a consequential
+finding unresolved. Record the reviewed SHA and any later coordinator-checked
+delta honestly; never claim an exact-final verdict that was not obtained.
+
+The risk-bearing package gates are:
 
 | Package | Builder family | Review floor |
 | --- | --- | --- |
