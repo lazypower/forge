@@ -54,6 +54,72 @@ func TestWorkTransactionRetryRollsBackEveryAttempt(t *testing.T) {
 	assert.Zero(t, count)
 }
 
+func TestWorkTransactionRejectsOrdinaryTransactionParent(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	_, err := db.Exec(t.Context(), "DROP TABLE IF EXISTS work_transaction_nested_effect")
+	require.NoError(t, err)
+	_, err = db.Exec(t.Context(), "CREATE TABLE work_transaction_nested_effect (id INTEGER PRIMARY KEY)")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Exec(context.Background(), "DROP TABLE IF EXISTS work_transaction_nested_effect")
+	})
+
+	innerCalled := false
+	errOuterRollback := errors.New("outer rollback")
+	err = db.WithTx(t.Context(), func(ctx context.Context) error {
+		_, err := db.Exec(ctx, "INSERT INTO work_transaction_nested_effect (id) VALUES (?)", 1)
+		require.NoError(t, err)
+
+		err = db.WithWorkTx(ctx, func(context.Context) error {
+			innerCalled = true
+			return nil
+		})
+		require.ErrorIs(t, err, db.ErrWorkTransactionNested)
+		return errOuterRollback
+	})
+
+	require.ErrorIs(t, err, errOuterRollback)
+	assert.False(t, innerCalled)
+	var count int64
+	has, queryErr := db.GetEngine(t.Context()).SQL("SELECT COUNT(*) FROM work_transaction_nested_effect").Get(&count)
+	require.NoError(t, queryErr)
+	require.True(t, has)
+	assert.Zero(t, count)
+}
+
+func TestWorkTransactionRejectsWorkTransactionParent(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	innerCalled := false
+
+	err := db.WithWorkTx(t.Context(), func(ctx context.Context) error {
+		err := db.WithWorkTx(ctx, func(context.Context) error {
+			innerCalled = true
+			return nil
+		})
+		require.ErrorIs(t, err, db.ErrWorkTransactionNested)
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.False(t, innerCalled)
+}
+
+func TestOrdinaryTransactionJoinsWorkTransaction(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	var workEngine, ordinaryEngine db.Engine
+
+	err := db.WithWorkTx(t.Context(), func(ctx context.Context) error {
+		workEngine = db.GetEngine(ctx)
+		return db.WithTx(ctx, func(ctx context.Context) error {
+			ordinaryEngine = db.GetEngine(ctx)
+			return nil
+		})
+	})
+
+	require.NoError(t, err)
+	assert.Same(t, workEngine, ordinaryEngine)
+}
+
 func TestWorkTransactionCancellationReachesDatabase(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), db.ContextKeyTestFixtures, true))

@@ -118,3 +118,32 @@ func TestWorkTransactionCancellationPreventsRetry(t *testing.T) {
 	assert.Equal(t, 1, attempts)
 	assert.Zero(t, waits)
 }
+
+func TestWorkTransactionNestingRejectedBeforeAttempt(t *testing.T) {
+	sess := xormEngine.NewSession()
+	require.NoError(t, sess.Begin())
+	t.Cleanup(func() {
+		_ = sess.Close()
+	})
+	ctx := withContextEngine(t.Context(), sess)
+	attempts := 0
+	waits := 0
+
+	err := retryWorkTransaction(ctx, "mysql",
+		func(context.Context, func(context.Context) error) error {
+			attempts++
+			return nil
+		},
+		func(context.Context, time.Duration) error {
+			waits++
+			return nil
+		},
+		func(time.Duration) time.Duration { return 0 },
+		func(context.Context) error { return nil },
+	)
+
+	require.ErrorIs(t, err, ErrWorkTransactionNested)
+	assert.False(t, isRetryableWorkTransactionError("mysql", err))
+	assert.Zero(t, attempts)
+	assert.Zero(t, waits)
+}

@@ -23,6 +23,10 @@ const (
 	workTransactionRetryBudget = 30 * time.Millisecond
 )
 
+// ErrWorkTransactionNested means a work transaction was requested from
+// within an existing transaction.
+var ErrWorkTransactionNested = errors.New("work transaction cannot be nested")
+
 // WorkTransactionConflict means concurrent work could not be serialized within
 // the bounded retry budget. The complete operation is safe to retry.
 type WorkTransactionConflict struct{}
@@ -50,6 +54,10 @@ type (
 )
 
 func retryWorkTransaction(ctx context.Context, dbType setting.DatabaseType, attempt workTransactionAttempt, wait workTransactionWait, jitter workTransactionJitter, f func(context.Context) error) error {
+	if getTransactionSession(ctx) != nil {
+		return ErrWorkTransactionNested
+	}
+
 	waited := time.Duration(0)
 	for attemptIndex := range workTransactionMaxAttempts {
 		if err := ctx.Err(); err != nil {
