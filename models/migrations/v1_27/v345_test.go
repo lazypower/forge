@@ -9,6 +9,7 @@ import (
 
 	mcpwork_model "gitea.dev/models/mcpwork"
 	"gitea.dev/models/migrations/migrationtest"
+	project_model "gitea.dev/models/project"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,32 @@ func Test_AddMCPWorkReceiptSchema(t *testing.T) {
 		"work_projection", "readiness", "client_actor", "actor_name", "audit_payload",
 	} {
 		assert.Nil(t, receiptTable.GetColumn(forbidden), "security-sensitive column %q must not exist", forbidden)
+	}
+}
+
+func Test_PlanningStateThenMCPWorkReceiptSchema(t *testing.T) {
+	x, deferable := migrationtest.PrepareTestEnv(t, 0, new(projectBeforePlanningState))
+	defer deferable()
+	if x == nil || t.Failed() {
+		return
+	}
+
+	ordinary := &projectBeforePlanningState{Title: "Existing ordinary Project"}
+	_, err := x.Insert(ordinary)
+	require.NoError(t, err)
+	require.NoError(t, AddPlanningStateToProject(x))
+	require.NoError(t, AddMCPWorkReceiptSchema(x))
+
+	var upgraded projectAfterPlanningState
+	has, err := x.ID(ordinary.ID).Get(&upgraded)
+	require.NoError(t, err)
+	require.True(t, has)
+	assert.Equal(t, project_model.PlanningStateDisabled, upgraded.PlanningState)
+
+	tables := migrationtest.LoadTableSchemasMap(t, x)
+	require.NotNil(t, tables["project"].GetColumn("planning_state"))
+	for _, table := range []string{"mcp_work_receipt", "mcp_work_artifact_link", "mcp_work_event_link"} {
+		require.Contains(t, tables, table)
 	}
 }
 

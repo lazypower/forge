@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +14,9 @@ import (
 	"time"
 
 	auth_model "gitea.dev/models/auth"
+	issues_model "gitea.dev/models/issues"
+	mcpwork_model "gitea.dev/models/mcpwork"
+	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unit"
 	"gitea.dev/models/unittest"
@@ -72,6 +76,8 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	require.NoError(t, err)
 	assertMCPWorkToolNames(t, writeTools)
 
+	nativeCountsBefore := mcpWorkDogfoodNativeCounts(t)
+
 	beginInput := map[string]any{
 		"repository":     map[string]any{"owner": repo.OwnerName, "name": repo.Name},
 		"idempotencyKey": "dogfood-plan-begin-00000001",
@@ -83,6 +89,11 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	planRef := plan["ref"].(string)
 	planToken := plan["planToken"].(string)
 	assert.Equal(t, "draft", plan["planningState"])
+	readInspection := callMCPWorkTool(t, readSession, "work_plan.inspect", map[string]any{
+		"repository": beginInput["repository"], "workPlan": planRef,
+	})
+	assert.Equal(t, "available", readInspection["status"])
+	assert.Equal(t, planRef, readInspection["workPlan"].(map[string]any)["ref"])
 
 	inspectPlan := callMCPWorkTool(t, writeSession, "work_plan.inspect", map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef,
@@ -92,14 +103,13 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 
 	revisionInput := map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef,
-		"idempotencyKey": "dogfood-plan-revision-000001", "expectedPlanToken": planToken,
+		"idempotencyKey": "dogfood-plan-revision-000001",
 		"changes": []any{
 			map[string]any{"kind": "create_member", "localReference": "first", "title": "First dogfood item"},
 			map[string]any{"kind": "create_member", "localReference": "second", "title": "Second dogfood item"},
 			map[string]any{"kind": "create_member", "localReference": "third", "title": "Third dogfood item"},
 			map[string]any{"kind": "ensure_dependency", "blocked": "local/second", "prerequisite": "local/first", "presence": "present"},
 			map[string]any{"kind": "ensure_dependency", "blocked": "local/third", "prerequisite": "local/second", "presence": "present"},
-			map[string]any{"kind": "set_planning_state", "expected": "draft", "desired": "active"},
 		},
 	}
 	revised := callMCPWorkTool(t, writeSession, "work_plan.revise", revisionInput)
@@ -109,8 +119,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	firstRef := created["first"].(string)
 	secondRef := created["second"].(string)
 	thirdRef := created["third"].(string)
-	assert.Equal(t, "active", revised["workPlan"].(map[string]any)["planningState"])
-	assertMCPReadyFrontier(t, revised["workPlan"].(map[string]any), planRef+"/"+firstRef)
+	assert.Equal(t, "draft", revised["workPlan"].(map[string]any)["planningState"])
 
 	replayed := callMCPWorkTool(t, writeSession, "work_plan.revise", revisionInput)
 	assertCommittedMCPWorkResult(t, replayed, "applied", true, "available")
@@ -127,36 +136,34 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assert.Equal(t, "idempotency_conflict", conflict["problem"].(map[string]any)["code"])
 	assert.NotContains(t, conflict, "operation")
 
-	cycle := callMCPWorkTool(t, writeSession, "work_plan.revise", map[string]any{
+	cycleInput := map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-cycle-rejection-0001",
 		"changes": []any{map[string]any{"kind": "ensure_dependency", "blocked": firstRef, "prerequisite": thirdRef, "presence": "present"}},
-	})
+	}
+	cycle := callMCPWorkTool(t, writeSession, "work_plan.revise", cycleInput)
 	assert.Equal(t, "rejected", cycle["status"])
 	assert.Equal(t, "invalid_dependency", cycle["problem"].(map[string]any)["code"])
 	require.NotNil(t, cycle["operation"])
 
-	drafted := callMCPWorkTool(t, writeSession, "work_plan.revise", map[string]any{
-		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-review-draft-000001",
-		"expectedPlanToken": revised["workPlan"].(map[string]any)["planToken"],
-		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "active", "desired": "draft"}},
-	})
-	assertCommittedMCPWorkResult(t, drafted, "applied", false, "available")
-	assert.Equal(t, "draft", drafted["workPlan"].(map[string]any)["planningState"])
-	holeFilled := callMCPWorkTool(t, writeSession, "work_plan.revise", map[string]any{
-		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-review-hole-0000001",
-		"changes": []any{
-			map[string]any{"kind": "create_member", "localReference": "followup", "title": "Review follow-up"},
-			map[string]any{"kind": "ensure_dependency", "blocked": "local/followup", "prerequisite": thirdRef, "presence": "present"},
-		},
-	})
-	assertCommittedMCPWorkResult(t, holeFilled, "applied", false, "available")
-	activated := callMCPWorkTool(t, writeSession, "work_plan.revise", map[string]any{
-		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-review-activate-0001",
-		"expectedPlanToken": holeFilled["workPlan"].(map[string]any)["planToken"],
+	planToken = revised["workPlan"].(map[string]any)["planToken"].(string)
+	activationInput := map[string]any{
+		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-plan-activate-000001",
+		"expectedPlanToken": planToken,
 		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "draft", "desired": "active"}},
-	})
+	}
+	activated := callMCPWorkTool(t, writeSession, "work_plan.revise", activationInput)
 	assertCommittedMCPWorkResult(t, activated, "applied", false, "available")
 	assert.Equal(t, "active", activated["workPlan"].(map[string]any)["planningState"])
+	assertMCPReadyFrontier(t, activated["workPlan"].(map[string]any), planRef+"/"+firstRef)
+
+	staleActivationInput := map[string]any{
+		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-stale-plan-token-0001",
+		"expectedPlanToken": planToken,
+		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "draft", "desired": "active"}},
+	}
+	staleActivation := callMCPWorkTool(t, writeSession, "work_plan.revise", staleActivationInput)
+	assert.Equal(t, "rejected", staleActivation["status"])
+	assert.Equal(t, "conflict", staleActivation["problem"].(map[string]any)["code"])
 
 	inspectItem := callMCPWorkTool(t, writeSession, "work_item.inspect", map[string]any{
 		"repository": beginInput["repository"], "workItem": firstRef, "selectedPlan": planRef,
@@ -178,30 +185,21 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	})
 	assert.Equal(t, "Second item refined by a human path", afterHumanChange["workItem"].(map[string]any)["title"])
 
-	stale := callMCPWorkTool(t, writeSession, "work_item.revise", map[string]any{
+	staleItemInput := map[string]any{
 		"repository": beginInput["repository"], "workItem": firstRef, "idempotencyKey": "dogfood-stale-item-00000001",
 		"title": map[string]any{"expected": "stale title", "desired": "must not apply"},
-	})
+	}
+	stale := callMCPWorkTool(t, writeSession, "work_item.revise", staleItemInput)
 	assert.Equal(t, "rejected", stale["status"])
 	assert.Equal(t, "conflict", stale["problem"].(map[string]any)["code"])
 
-	closed := callMCPWorkTool(t, writeSession, "work_item.revise", map[string]any{
+	closeInput := map[string]any{
 		"repository": beginInput["repository"], "workItem": firstRef, "idempotencyKey": "dogfood-close-item-000000001",
 		"state": map[string]any{"desired": "closed"},
-	})
+	}
+	closed := callMCPWorkTool(t, writeSession, "work_item.revise", closeInput)
 	assertCommittedMCPWorkResult(t, closed, "applied", false, "available")
 	assert.Equal(t, "closed", closed["workItem"].(map[string]any)["state"])
-	reopened := callMCPWorkTool(t, writeSession, "work_item.revise", map[string]any{
-		"repository": beginInput["repository"], "workItem": firstRef, "idempotencyKey": "dogfood-reopen-item-00000001",
-		"state": map[string]any{"desired": "open"},
-	})
-	assertCommittedMCPWorkResult(t, reopened, "applied", false, "available")
-	assert.Equal(t, "open", reopened["workItem"].(map[string]any)["state"])
-	reclosed := callMCPWorkTool(t, writeSession, "work_item.revise", map[string]any{
-		"repository": beginInput["repository"], "workItem": firstRef, "idempotencyKey": "dogfood-reclose-item-0000001",
-		"state": map[string]any{"desired": "closed"},
-	})
-	assertCommittedMCPWorkResult(t, reclosed, "applied", false, "available")
 
 	frontier := callMCPWorkTool(t, writeSession, "work_plan.inspect", map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef, "pageKind": "ready_frontier",
@@ -222,8 +220,90 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assert.NotContains(t, denied, "workPlan")
 	assert.NotContains(t, denied, "repository")
 
+	projectID, err := strconv.ParseInt(strings.TrimPrefix(planRef, "project/"), 10, 64)
+	require.NoError(t, err)
+	project := unittest.AssertExistsAndLoadBean(t, &project_model.Project{ID: projectID, RepoID: repo.ID})
+	assert.Equal(t, project_model.PlanningStateActive, project.PlanningState)
+	for _, issueRef := range []string{firstRef, secondRef, thirdRef} {
+		issueNumber, err := strconv.ParseInt(strings.TrimPrefix(issueRef, "issue/"), 10, 64)
+		require.NoError(t, err)
+		_, err = issues_model.GetIssueByIndex(t.Context(), repo.ID, issueNumber)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, nativeCountsBefore["projects"]+1, unittest.GetCount(t, new(project_model.Project)))
+	assert.Equal(t, nativeCountsBefore["issues"]+3, unittest.GetCount(t, new(issues_model.Issue)))
+	assert.Equal(t, nativeCountsBefore["memberships"]+3, unittest.GetCount(t, new(project_model.ProjectIssue)))
+	assert.Equal(t, nativeCountsBefore["dependencies"]+2, unittest.GetCount(t, new(issues_model.IssueDependency)))
+	assert.Greater(t, unittest.GetCount(t, new(mcpwork_model.Receipt)), nativeCountsBefore["receipts"])
+
+	human := loginUser(t, doer.Name)
+	humanResponse := human.MakeRequest(t, NewRequest(t, http.MethodGet, fmt.Sprintf("/%s/projects/%d", repo.FullName(), projectID)), http.StatusOK)
+	humanHTML := NewHTMLParser(t, humanResponse.Body)
+	assert.Equal(t, 1, humanHTML.Find(`.work-plan[data-work-plan-state="active"]`).Length())
+	assert.Equal(t, 1, humanHTML.Find(`[data-work-context="`+planRef+`/`+secondRef+`"]`).Length())
+	assert.Contains(t, humanHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority; software actor unverified.")
+
+	countsBeforeFullReplay := mcpWorkDogfoodNativeCounts(t)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_plan.begin", beginInput), begin)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_plan.revise", revisionInput), revised)
+	conflictReplay := callMCPWorkTool(t, writeSession, "work_plan.revise", changedReplay)
+	assert.Equal(t, conflict, conflictReplay)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_plan.revise", cycleInput), cycle)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_plan.revise", activationInput), activated)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_plan.revise", staleActivationInput), staleActivation)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_item.revise", staleItemInput), stale)
+	assertMCPWorkReplay(t, callMCPWorkTool(t, writeSession, "work_item.revise", closeInput), closed)
+	assert.Equal(t, countsBeforeFullReplay, mcpWorkDogfoodNativeCounts(t))
+
+	writeApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID)
+	require.NoError(t, err)
+	setting.MCP.WorkMutationEnabled = false
+	productionRoutes = routers.NormalRoutes()
+	readOnlyTools, err := readSession.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	readOnlyNames := make([]string, 0, len(readOnlyTools.Tools))
+	for _, tool := range readOnlyTools.Tools {
+		readOnlyNames = append(readOnlyNames, tool.Name)
+	}
+	assert.ElementsMatch(t, []string{"pull_request.inspect", "work_item.inspect", "work_plan.inspect"}, readOnlyNames)
+	_, err = oauth2_provider.CanonicalMCPAuthorizationScope(writeApp, oauth2_provider.MCPWorkWriteScope)
+	require.ErrorIs(t, err, oauth2_provider.ErrInvalidMCPProfileRequest)
+	pullRepo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	pull, err := issues_model.GetPullRequestByIndex(t.Context(), pullRepo.ID, 3)
+	require.NoError(t, err)
+	pullResult, pullInspection := callMCPPullRequestInspect(t, readSession, map[string]any{
+		"owner": pullRepo.OwnerName, "repository": pullRepo.Name, "number": pull.Index,
+	})
+	assert.False(t, pullResult.IsError)
+	assert.Equal(t, "available", pullInspection["status"])
+
 	assert.NotEqual(t, firstRef, secondRef)
 	assert.NotEqual(t, secondRef, thirdRef)
+}
+
+func mcpWorkDogfoodNativeCounts(t *testing.T) map[string]int {
+	t.Helper()
+	return map[string]int{
+		"projects":     unittest.GetCount(t, new(project_model.Project)),
+		"issues":       unittest.GetCount(t, new(issues_model.Issue)),
+		"memberships":  unittest.GetCount(t, new(project_model.ProjectIssue)),
+		"dependencies": unittest.GetCount(t, new(issues_model.IssueDependency)),
+		"comments":     unittest.GetCount(t, new(issues_model.Comment)),
+		"receipts":     unittest.GetCount(t, new(mcpwork_model.Receipt)),
+		"artifacts":    unittest.GetCount(t, new(mcpwork_model.ArtifactLink)),
+		"events":       unittest.GetCount(t, new(mcpwork_model.EventLink)),
+	}
+}
+
+func assertMCPWorkReplay(t *testing.T, replay, original map[string]any) {
+	t.Helper()
+	assert.Equal(t, original["status"], replay["status"])
+	replayedOperation, ok := replay["operation"].(map[string]any)
+	require.True(t, ok)
+	originalOperation, ok := original["operation"].(map[string]any)
+	require.True(t, ok)
+	assert.True(t, replayedOperation["replayed"].(bool))
+	assert.Equal(t, originalOperation["id"], replayedOperation["id"])
 }
 
 func connectMCPWorkProfile(t *testing.T, server *httptest.Server, clientID, scope string) *mcpsdk.ClientSession {

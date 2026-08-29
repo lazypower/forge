@@ -1,8 +1,9 @@
 # Model Context Protocol
 
-Forge has an experimental, read-only Model Context Protocol (MCP) endpoint. It
-is disabled by default and currently provides only the `pull_request.inspect`
-tool over stateless Streamable HTTP.
+Forge has an experimental Model Context Protocol (MCP) endpoint over stateless
+Streamable HTTP. The endpoint, Work inspection, and Work mutation are separate
+capability layers. All three are disabled by default. Enabling the endpoint
+alone preserves the ADR 0002 read-only `pull_request.inspect` surface.
 
 ## Enablement and endpoint
 
@@ -23,6 +24,22 @@ ENABLED = true
 The endpoint is the configured subpath followed by `/mcp`; the example above is
 `https://forge.example/forge/mcp`. Forge refuses to enable MCP when `ROOT_URL`
 is not HTTPS.
+
+### Default-off capability layers
+
+| Configuration | Advertised tools |
+| --- | --- |
+| `ENABLED = false` | No MCP endpoint |
+| `ENABLED = true`, both Work flags false | `pull_request.inspect` only |
+| `WORK_INSPECTION_ENABLED = true` | Adds `work_item.inspect` and `work_plan.inspect` |
+| `WORK_MUTATION_ENABLED = true`, OAuth authentication | Adds `work_plan.begin`, `work_item.revise`, and `work_plan.revise` |
+
+Work inspection accepts the configured read OAuth profile or the explicitly
+selected read-only PAT fallback. Work mutation requires the separate OAuth
+write profile. A PAT never advertises or authorizes mutation tools even if the
+mutation flag is true. Enabling either Work flag does not opt a Project into
+planning; the Project remains an ordinary board until an authorized user
+explicitly begins a draft plan.
 
 ## Authentication profiles
 
@@ -73,8 +90,8 @@ ENABLED = true
 `/.well-known/oauth-authorization-server` endpoints are the
 authorization-server discovery authority. Both values must use HTTPS.
 
-When MCP is enabled with the OAuth profile, Forge registers one built-in public
-client named `Forge MCP`, with client ID
+When MCP is enabled with the OAuth profile, Forge registers the built-in public
+read client named `Forge MCP`, with client ID
 `f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. Endpoint-disabled installations do
 not create this registration merely because OAuth is the default. Once created,
 the registration is retained if MCP is later disabled or temporarily rolled
@@ -141,7 +158,133 @@ Dynamic Client Registration, Client ID Metadata Documents, external issuer
 aliases, per-installation refresh families, mutations, rate limiting, or
 broader MCP or OAuth conformance.
 
-## Tool and limits
+### Work mutation OAuth profile
+
+When `WORK_MUTATION_ENABLED = true`, Forge also registers the distinct public
+client `Forge MCP Work Planning`, with client ID
+`92e7ae67-8fae-4d6f-a122-0e2f8b82ef1a`. It requires the exact canonical scope
+set `read:repository write:issue write:repository`, the canonical MCP audience,
+PKCE `S256`, and explicit consent. Scope order in the request is immaterial,
+but missing, duplicate, unknown, or additional scopes fail closed.
+
+The consent explains that Work planning can create, edit, close, and reopen
+Issues; change plan membership and dependencies; and create, activate, return
+to draft, or delete repository plans wherever current native permissions allow.
+It cannot push or merge code, administer repositories, or run agents.
+
+The write application is separate so an existing read grant never gains write
+authority silently. Read OAuth and PAT credentials cannot invoke mutation
+tools. Write OAuth tokens cannot authorize REST, and general Forge OAuth tokens
+cannot authorize MCP. Every invocation rechecks repository state, Issues and
+Projects units, dependency configuration, and the principal's current native
+permissions. Disabling Work mutation makes the write profile unissuable and
+removes the mutation tools; a retained application or grant is not enabled
+authority.
+
+## Work planning
+
+### Explicit Project opt-in
+
+Database migration v344 adds a Project planning state whose default is
+`disabled`. Existing and newly created ordinary Projects therefore retain their
+board behavior after upgrade. An authorized `work_plan.begin` call either
+creates a new repository Project in `draft` or opts one selected disabled
+repository Project into `draft`. Activation is a separate guarded transition
+using a just-in-time plan token. Project columns, labels, assignments, and task
+checkboxes do not determine readiness.
+
+Work projections compose current native Project, Issue, Project-Issue,
+dependency, pull request, revision, and commit-status facts. Forge does not
+persist a Work projection or copied readiness. Closed or archived repositories,
+disabled required units, hidden prerequisites, invalid dependency graphs, and
+stale content versions or plan tokens fail closed as appropriate. New
+dependency creation is limited to Issues in the same repository.
+
+### Tools
+
+- `work_item.inspect` composes one Issue-centered item and an optional selected
+  plan context.
+- `work_plan.inspect` composes one bounded Project plan page and ready frontier.
+- `work_plan.begin` creates a draft plan or opts a disabled Project into draft.
+- `work_item.revise` conditionally changes one Issue title, Markdown, or state.
+- `work_plan.revise` atomically applies a bounded closed set of membership,
+  Issue creation, dependency, and plan-lifecycle changes.
+
+The tools expose semantic Work operations, not generic Project or Issue CRUD,
+consumer-defined queries, or a generic batch language. Read pages are
+permission-rechecked, signed, deterministic, non-snapshot views and must be
+reinspected before action.
+
+### Receipts, replay, and provenance
+
+Migration v345 adds narrow MCP Work receipts and stable links to affected native
+Projects, Issues, and timeline events. A receipt contains operation identity,
+domain-separated keyed request and idempotency digests, the verified principal
+and OAuth authority snapshot, an unverified actor classification, MCP origin,
+the final outcome, timestamps, and stable references. It does not contain a raw
+token, raw idempotency key, request Markdown, complete request body, serialized
+Work projection, copied readiness, or a client-claimed verified software actor.
+
+Replaying the same canonical request with the same key returns the same receipt
+and stable references, then composes a fresh permission-filtered projection.
+Changing the request while reusing the key returns `idempotency_conflict`
+without revealing the earlier target. Human Project and Issue views show that
+MCP used the verified principal's authority while the software actor remains
+unverified; they do not expose receipt internals.
+
+### Work bounds
+
+The `[work]` section contains limits only; it does not enable planning. Defaults
+are 1,000 dependency-graph nodes, 1,000 plan items, 100 materialized projection
+items, pages of 25 with a maximum of 100, 50 changes and 20 new Issues per plan
+revision, 255 title characters, 65,536 Markdown bytes, and a one-MiB serialized
+semantic Work result. Unsafe combinations and predictable over-limit requests
+are rejected before mutation.
+
+### Deliberate limitations
+
+Work planning does not provide copied or persisted Work state, generic CRUD or
+queries, claims, leases, adoption, semantic duplicate detection, verified agent
+identity, scheduling, dispatch, worktree creation, execution lifecycle, or
+cross-repository planning mutation. Existing readable external prerequisites
+remain observable and blocking, but new cross-repository Work dependencies are
+not created.
+
+Committed notification, webhook, and indexing effects are dispatched only
+after the authoritative transaction and are suppressed on replay. The current
+synchronous process-local notifier has no durable acknowledgement across a
+process crash between commit and fanout. The
+[WP4 post-commit delivery prerequisite](architecture/plans/0004-wp4-post-commit-delivery-prerequisite.md)
+therefore remains required before broad rollout or any configuration that
+requires crash-safe at-least-once effects. This local Work slice does not add a
+ready-work delivery mechanism or a general durable outbox.
+
+## Upgrade, staged enablement, and rollback
+
+Before upgrade, take a tested database backup. Migrations v344 and v345 are
+additive: v344 leaves every Project disabled, while v345 adds protocol receipts
+and native provenance links. Deploy with the MCP endpoint and both Work flags
+off first, verify ordinary Project and pull inspection behavior, then enable
+Work inspection independently if desired. Opt in only synthetic or explicitly
+selected repository Projects. Enable Work mutation only after the OAuth,
+permission, fault-injection, database, capacity, output-bound, proxy rate-limit,
+and recovery evidence has been reviewed for the deployment.
+
+The [WP10 local certification ledger](architecture/plans/0004-wp10-local-certification.md)
+records the supported-backend, security, dogfood, and remaining-prerequisite
+evidence for this off-by-default slice.
+
+For an operational rollback on the current schema, disable
+`WORK_MUTATION_ENABLED` first. Disable `WORK_INSPECTION_ENABLED` next to return
+to the ADR 0002 pull-only surface, or disable `ENABLED` to remove the endpoint.
+Project state and receipts remain native inert data; disabling an interface does
+not rewrite Projects or delete provenance. Do not run an older image against an
+upgraded database unless that exact downgrade is documented and tested. The
+safe old-image rollback is to stop Forge and restore the pre-upgrade database
+backup. The fixed read-client redirect rollback below is a separate,
+version-specific compatibility procedure.
+
+## Pull inspection tool and limits
 
 `pull_request.inspect` identifies one repository and pull request by owner,
 repository name, and pull request number. Optional bounded selections expose
