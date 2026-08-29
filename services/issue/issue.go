@@ -220,7 +220,7 @@ func deleteIssue(ctx context.Context, issue *issues_model.Issue) ([]string, erro
 
 func deleteIssueData(ctx context.Context, issue *issues_model.Issue, guardActivePlan bool) ([]string, error) {
 	return db.WithTx2(ctx, func(ctx context.Context) ([]string, error) {
-		if guardActivePlan {
+		if guardActivePlan && !issue.IsPull {
 			if err := project_model.RequireIssueOutsideActivePlan(ctx, issue.RepoID, issue.ID); err != nil {
 				return nil, err
 			}

@@ -146,6 +146,11 @@ func (service *MutationService) reviseItemInWorkTx(ctx context.Context, doer *us
 		(request.DesiredState != nil && *request.DesiredState != ItemStateOpen && *request.DesiredState != ItemStateClosed) {
 		return rejected("invalid_input"), nil
 	}
+	if request.DesiredState != nil {
+		if err := repo_model.StabilizeWorkPlanning(ctx, request.RepositoryID); err != nil {
+			return MutationCommit{}, err
+		}
+	}
 	repo, permission, rejection, err := mutationRepository(ctx, doer, request.RepositoryID, false, true)
 	if err != nil || rejection != "" {
 		return rejected(rejection), err
@@ -220,6 +225,11 @@ func (service *MutationService) revisePlanInWorkTx(ctx context.Context, doer *us
 	validated, problem := validatePlanRevision(request)
 	if problem != "" || doer == nil {
 		return rejected("invalid_input"), nil
+	}
+	if len(validated.creates) > 0 {
+		if err := repo_model.StabilizeWorkPlanning(ctx, request.RepositoryID); err != nil {
+			return MutationCommit{}, err
+		}
 	}
 	repo, permission, rejection, err := mutationRepository(ctx, doer, request.RepositoryID, true, true)
 	if err != nil || rejection != "" {

@@ -173,6 +173,9 @@ func CloseIssue(ctx context.Context, issue *Issue, doer *user_model.User) (*Comm
 	}
 
 	return db.WithTx2(ctx, func(ctx context.Context) (*Comment, error) {
+		if err := repo_model.StabilizeWorkPlanning(ctx, issue.RepoID); err != nil {
+			return nil, err
+		}
 		return SetIssueAsClosed(ctx, issue, doer, false)
 	})
 }
@@ -187,6 +190,9 @@ func ReopenIssue(ctx context.Context, issue *Issue, doer *user_model.User) (*Com
 	}
 
 	return db.WithTx2(ctx, func(ctx context.Context) (*Comment, error) {
+		if err := repo_model.StabilizeWorkPlanning(ctx, issue.RepoID); err != nil {
+			return nil, err
+		}
 		return setIssueAsReopen(ctx, issue, doer)
 	})
 }
@@ -196,6 +202,9 @@ func ReopenIssue(ctx context.Context, issue *Issue, doer *user_model.User) (*Com
 func SetIssueStateInWorkTx(ctx context.Context, issue *Issue, doer *user_model.User, closed bool) (*Comment, bool, error) {
 	if issue == nil || doer == nil {
 		return nil, false, util.ErrInvalidArgument
+	}
+	if err := repo_model.StabilizeWorkPlanning(ctx, issue.RepoID); err != nil {
+		return nil, false, err
 	}
 	current, err := GetIssueByID(ctx, issue.ID)
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"gitea.dev/models/unit"
 	"gitea.dev/models/unittest"
 	user_model "gitea.dev/models/user"
+	"gitea.dev/modules/setting"
 	mcpwork_service "gitea.dev/services/mcpwork"
 	work_service "gitea.dev/services/work"
 	"gitea.dev/tests"
@@ -192,4 +193,74 @@ func TestIssueDeletionSerializesWithPlanCreation(t *testing.T) {
 	require.Equal(t, mcpwork_model.OutcomeRejected, revision.Completion.Outcome)
 	require.Equal(t, "unavailable", revision.Completion.ProblemCode)
 	unittest.AssertNotExistsBean(t, &project_model.ProjectIssue{ProjectID: planID, IssueID: issue.ID})
+}
+
+func TestCreateMemberLocksRepositoryBeforeProject(t *testing.T) {
+	if !setting.Database.Type.IsPostgreSQL() {
+		t.Skip("row-level lock ordering requires PostgreSQL")
+	}
+	defer tests.PrepareTestEnv(t)()
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
+	plan := &project_model.Project{
+		RepoID: repo.ID, Type: project_model.TypeRepository, CreatorID: doer.ID,
+		Title: "Lock order plan", PlanningState: project_model.PlanningStateDraft,
+	}
+	require.NoError(t, project_model.NewProject(t.Context(), plan))
+
+	projectLocked := make(chan struct{})
+	releaseProject := make(chan struct{})
+	projectDone := make(chan error, 1)
+	go func() {
+		projectDone <- db.WithTx(t.Context(), func(ctx context.Context) error {
+			if err := project_model.StabilizePlanningStates(ctx, []int64{plan.ID}); err != nil {
+				return err
+			}
+			close(projectLocked)
+			<-releaseProject
+			return nil
+		})
+	}()
+	<-projectLocked
+
+	type revisionResult struct {
+		commit work_service.MutationCommit
+		err    error
+	}
+	revisionStarted := make(chan struct{})
+	revisionDone := make(chan revisionResult, 1)
+	go func() {
+		close(revisionStarted)
+		commit, err := work_service.NewMutationService().RevisePlan(t.Context(), doer, work_service.PlanRevisionRequest{
+			RepositoryID: repo.ID, ProjectID: plan.ID,
+			Changes: []work_service.PlanChange{{Kind: work_service.PlanChangeCreateMember, LocalReference: "created", Title: "Created member"}},
+		})
+		revisionDone <- revisionResult{commit: commit, err: err}
+	}()
+	<-revisionStarted
+	select {
+	case result := <-revisionDone:
+		close(releaseProject)
+		require.Failf(t, "plan revision did not wait for the project lock", "returned early: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	repositoryLockDone := make(chan error, 1)
+	go func() {
+		repositoryLockDone <- db.WithTx(t.Context(), func(ctx context.Context) error {
+			return repo_model.StabilizeWorkPlanning(ctx, repo.ID)
+		})
+	}()
+	select {
+	case err := <-repositoryLockDone:
+		close(releaseProject)
+		require.Failf(t, "create-member did not lock repository first", "repository lock remained available: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseProject)
+	require.NoError(t, <-projectDone)
+	result := <-revisionDone
+	require.NoError(t, result.err)
+	require.Equal(t, mcpwork_model.OutcomeApplied, result.commit.Completion.Outcome)
+	require.NoError(t, <-repositoryLockDone)
 }
