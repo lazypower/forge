@@ -107,7 +107,9 @@ func GetWorkProjectIssues(ctx context.Context, projectID int64, limit int) ([]Wo
 		Table("project_issue").
 		Select("project_issue.project_id, issue.id AS issue_id, issue.`index`, issue.is_pull").
 		Join("INNER", "issue", "issue.id = project_issue.issue_id").
+		Join("INNER", "project", "project.id = project_issue.project_id").
 		Where("project_issue.project_id = ?", projectID).
+		And("issue.repo_id = project.repo_id").
 		OrderBy("issue.`index` ASC").
 		Limit(limit).
 		Find(&entries)

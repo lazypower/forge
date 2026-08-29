@@ -127,6 +127,7 @@ func (service *ReadService) InspectItem(ctx context.Context, doer *user_model.Us
 	slices.Sort(projectKeys)
 	contexts := make([]PlanContext, 0, len(projectKeys))
 	contextKeys := make([]int64, 0, len(projectKeys))
+	membershipKeys := make([]int64, 0, len(projectKeys))
 	for _, projectID := range projectKeys {
 		project := projects[projectID]
 		if project.RepoID != compose.requestRepo.ID {
@@ -134,6 +135,7 @@ func (service *ReadService) InspectItem(ctx context.Context, doer *user_model.Us
 		}
 		if canReadProjects {
 			item.ProjectMemberships = append(item.ProjectMemberships, projectReference(repository, project))
+			membershipKeys = append(membershipKeys, project.ID)
 		}
 		if !canReadProjects || !project.IsPlanningEnabled() || !project.HasValidPlanningState() {
 			continue
@@ -156,6 +158,16 @@ func (service *ReadService) InspectItem(ctx context.Context, doer *user_model.Us
 		item.DependentSummaries = append(item.DependentSummaries, issueReference(ctx, dependent, dependentRepos[dependent.RepoID]))
 	}
 	item.DeliverySummaries = deliveries[issue.ID]
+	contextSummaries := item.ContextSummaries
+	projectMemberships := item.ProjectMemberships
+	prerequisiteSummaries := item.PrerequisiteSummaries
+	dependentSummaries := item.DependentSummaries
+	deliverySummaries := item.DeliverySummaries
+	item.ContextSummaries = bounded(item.ContextSummaries)
+	item.ProjectMemberships = bounded(item.ProjectMemberships)
+	item.PrerequisiteSummaries = bounded(item.PrerequisiteSummaries)
+	item.DependentSummaries = bounded(item.DependentSummaries)
+	item.DeliverySummaries = bounded(item.DeliverySummaries)
 
 	inspection := &ItemInspection{Repository: repository, WorkItem: item}
 	if request.SelectedProjectID > 0 {
@@ -180,20 +192,20 @@ func (service *ReadService) InspectItem(ctx context.Context, doer *user_model.Us
 		return nil, readFailure(ReadInvalidCursor, err)
 	}
 	var values []any
-	var keys []int64
+	var keys, related []int64
 	switch request.PageKind {
 	case "prerequisites":
-		values, keys = referencesPage(item.PrerequisiteSummaries, dependencyGraph.edges[issue.ID], dependencyGraph.nodes)
+		values, keys, related = referencesPage(prerequisiteSummaries, dependencyGraph.edges[issue.ID], dependencyGraph.nodes)
 	case "dependents":
-		values, keys = referencesPage(item.DependentSummaries, dependentIDs[issue.ID], mapIssues(dependents))
+		values, keys, related = referencesPage(dependentSummaries, dependentIDs[issue.ID], mapIssues(dependents))
 	case "memberships":
-		values, keys = referencesAny(item.ProjectMemberships), projectKeys
+		values, keys = referencesAny(projectMemberships), membershipKeys
 	case "contexts":
-		values, keys = contextsAny(item.ContextSummaries), contextKeys
+		values, keys = contextsAny(contextSummaries), contextKeys
 	case "deliveries":
-		values, keys = deliveriesAny(item.DeliverySummaries), deliveryKeys[issue.ID]
+		values, keys = deliveriesAny(deliverySummaries), deliveryKeys[issue.ID]
 	}
-	inspection.Page, err = service.page(cursorBase, position, limit, values, keys, nil)
+	inspection.Page, err = service.page(cursorBase, position, limit, values, keys, related)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +652,7 @@ func (compose *composition) planContext(project *project_model.Project, issue *i
 	itemRef := "issue/" + strconv.FormatInt(issue.Index, 10)
 	return PlanContext{
 		Ref: planRef + "/" + itemRef, WorkPlan: planRef, WorkItem: itemRef, DerivedState: state,
-		Integrity: integrity, PrerequisiteSummaries: compose.immediatePrerequisites(issue.ID, dependencyGraph), DeliverySummaries: deliveries,
+		Integrity: integrity, PrerequisiteSummaries: bounded(compose.immediatePrerequisites(issue.ID, dependencyGraph)), DeliverySummaries: bounded(deliveries),
 	}
 }
 
@@ -989,14 +1001,14 @@ func mapIssues(issues issues_model.IssueList) map[int64]*issues_model.Issue {
 	return result
 }
 
-func referencesPage(references []Reference, ids []int64, issues map[int64]*issues_model.Issue) ([]any, []int64) {
+func referencesPage(references []Reference, ids []int64, issues map[int64]*issues_model.Issue) ([]any, []int64, []int64) {
 	values := referencesAny(references)
 	keys := make([]int64, 0, len(ids))
 	for _, id := range ids {
 		if issue := issues[id]; issue != nil {
 			keys = append(keys, issue.Index)
 		} else {
-			keys = append(keys, id)
+			keys = append(keys, int64(^uint64(0)>>1))
 		}
 	}
 	order := make([]int, len(values))
@@ -1004,7 +1016,19 @@ func referencesPage(references []Reference, ids []int64, issues map[int64]*issue
 		order[i] = i
 	}
 	sort.SliceStable(order, func(i, j int) bool { return keys[order[i]] < keys[order[j]] })
-	return permute(values, order), permute(keys, order)
+	values = permute(values, order)
+	keys = permute(keys, order)
+	related := make([]int64, len(keys))
+	var previous, ordinal int64
+	for i, key := range keys {
+		if i == 0 || key != previous {
+			ordinal = 0
+		}
+		ordinal++
+		related[i] = ordinal
+		previous = key
+	}
+	return values, keys, related
 }
 
 func referencesAny(values []Reference) []any {

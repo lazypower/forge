@@ -172,6 +172,43 @@ func TestInspectPlanPaginationBinding(t *testing.T) {
 	assertReadFailure(t, err, ReadInvalidCursor)
 }
 
+func TestInspectItemReferencePaginationUsesRepositoryTieBreak(t *testing.T) {
+	source := newFakeSource()
+	item := source.addIssue(150, 10, false, false)
+	local := source.addIssue(151, 5, false, true)
+	external := source.addExternalIssue(152, 5, true)
+	source.dependencies[item.ID] = []int64{local.ID, external.ID}
+	service := &ReadService{source: source, secret: "test-secret"}
+	request := ItemRequest{Owner: "owner", Repository: "repo", IssueNumber: item.Index, PageKind: "prerequisites", Limit: 1}
+
+	first, err := service.InspectItem(t.Context(), nil, request)
+	require.NoError(t, err)
+	require.Len(t, first.Page.Items, 1)
+	require.NotEmpty(t, first.Page.NextCursor)
+	request.Cursor = first.Page.NextCursor
+	second, err := service.InspectItem(t.Context(), nil, request)
+	require.NoError(t, err)
+	require.Len(t, second.Page.Items, 1)
+	assert.Empty(t, second.Page.NextCursor)
+}
+
+func TestInspectItemBoundsProjectionCollections(t *testing.T) {
+	oldBound := setting.Work.MaxProjectionItems
+	setting.Work.MaxProjectionItems = 1
+	t.Cleanup(func() { setting.Work.MaxProjectionItems = oldBound })
+	source := newFakeSource()
+	item := source.addIssue(160, 10, false, false)
+	first := source.addIssue(161, 11, false, true)
+	second := source.addIssue(162, 12, false, true)
+	source.dependencies[item.ID] = []int64{first.ID, second.ID}
+	service := &ReadService{source: source, secret: "test-secret"}
+
+	inspection, err := service.InspectItem(t.Context(), nil, ItemRequest{Owner: "owner", Repository: "repo", IssueNumber: item.Index, PageKind: "prerequisites"})
+	require.NoError(t, err)
+	assert.Len(t, inspection.WorkItem.PrerequisiteSummaries, 1)
+	assert.Len(t, inspection.Page.Items, 2, "pagination retains the complete bounded source collection")
+}
+
 func TestInspectItemDeliveryUsesBaseEvidence(t *testing.T) {
 	source := newFakeSource()
 	issue := source.addIssue(200, 20, false, false)
@@ -202,6 +239,11 @@ func TestInspectPlanBatchesBySetNotItem(t *testing.T) {
 		for i := int64(1); i <= size; i++ {
 			issue := source.addIssue(300+i, i, false, false)
 			source.members[project.ID] = append(source.members[project.ID], project_model.WorkProjectIssue{ProjectID: project.ID, IssueID: issue.ID, Index: issue.Index})
+			pullIssue := source.addIssue(10_000+i, 1_000+i, true, false)
+			pull := &issues_model.PullRequest{ID: 20_000 + i, IssueID: pullIssue.ID, Index: pullIssue.Index, BaseRepoID: 1, HeadRepoID: 1}
+			source.pullList = append(source.pullList, pull)
+			source.closing[issue.ID] = []issues_model.WorkClosingPullReference{{IssueID: issue.ID, PullRepoID: 1, PullIssueID: pullIssue.ID}}
+			source.revisionByPull[pull.ID] = pull_service.WorkRevision{Revision: fmt.Sprintf("%040d", i)}
 		}
 		service := &ReadService{source: source, secret: "test-secret"}
 		_, err := service.InspectPlan(t.Context(), nil, PlanRequest{Owner: "owner", Repository: "repo", ProjectID: project.ID})
@@ -215,6 +257,9 @@ func TestInspectPlanBatchesBySetNotItem(t *testing.T) {
 	}
 	assert.Equal(t, 1, large["projectIssues"])
 	assert.Equal(t, 1, large["dependencyIDs"])
+	for _, operation := range []string{"closingPulls", "pulls", "statuses", "revisions"} {
+		assert.Equal(t, 1, large[operation], operation)
+	}
 }
 
 func TestInspectPlanCancellationInterruptsDependencyRead(t *testing.T) {
@@ -223,7 +268,8 @@ func TestInspectPlanCancellationInterruptsDependencyRead(t *testing.T) {
 	issue := source.addIssue(400, 1, false, false)
 	source.members[project.ID] = []project_model.WorkProjectIssue{{ProjectID: project.ID, IssueID: issue.ID, Index: issue.Index}}
 	source.blockDependencies = true
-	source.dependencyStarted = make(chan struct{})
+	dependencyStarted := make(chan struct{})
+	source.dependencyStarted = dependencyStarted
 	service := &ReadService{source: source, secret: "test-secret"}
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
@@ -231,7 +277,7 @@ func TestInspectPlanCancellationInterruptsDependencyRead(t *testing.T) {
 		_, err := service.InspectPlan(ctx, nil, PlanRequest{Owner: "owner", Repository: "repo", ProjectID: project.ID})
 		result <- err
 	}()
-	<-source.dependencyStarted
+	<-dependencyStarted
 	cancel()
 	err := <-result
 	assert.ErrorIs(t, err, context.Canceled)
@@ -399,7 +445,6 @@ func (source *fakeSource) dependencyIDs(ctx context.Context, ids []int64) (map[i
 	if source.blockDependencies {
 		if source.dependencyStarted != nil {
 			close(source.dependencyStarted)
-			source.dependencyStarted = nil
 		}
 		<-ctx.Done()
 		return nil, ctx.Err()
