@@ -128,7 +128,8 @@ bound principal from Applications settings.
 
 Bootstrap has separate request-body, in-flight, per-source, instance-rate,
 source-bucket, redirect-count, outstanding-registration, expiry, and bounded
-cleanup limits. The per-source bucket uses the direct connection address.
+cleanup limits. The per-source bucket uses the direct connection address;
+non-IP peers share one bucket.
 Source rotation can temporarily fill the instance-wide provisional cap and
 deny new onboarding; that bounded storage availability tradeoff does not affect
 approved clients. Turning bootstrap off stops new registrations and removes
@@ -168,6 +169,10 @@ request the `Work Planning` profile with the exact canonical scope set
 PKCE `S256`, and explicit consent. A registration itself does not select or own
 a profile. Scope order in the authorization request is immaterial, but missing,
 duplicate, unknown, or additional scopes fail closed.
+
+Until grant-profile replacement is implemented, changing profiles on an
+existing registration requires revoking its current grant and explicitly
+authorizing again.
 
 The consent explains that Work planning can create, edit, close, and reopen
 Issues; change plan membership and dependencies; and create, activate, return
