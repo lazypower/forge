@@ -20,8 +20,10 @@ import (
 
 // NewEndpoint returns Forge's stateless MCP endpoint.
 func NewEndpoint() http.Handler {
-	tool := newPullRequestInspectionTool(setting.MCP.MaxInFlightRequests, setting.MCP.ExecutionTimeout, pull_service.InspectPullRequest, authenticatedUser)
-	server := newServer(tool)
+	executor := newToolExecutor(setting.MCP.MaxInFlightRequests, setting.MCP.ExecutionTimeout)
+	pullTool := newPullRequestInspectionTool(executor, pull_service.InspectPullRequest, authenticatedUser)
+	workTools := newWorkInspectionTools(executor, unboundWorkReadService{}, authenticatedUser, setting.Work.MaxOutputBytes)
+	server := newServer(pullTool, workTools, setting.MCP.WorkInspectionEnabled)
 	if setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth {
 		return newOAuthAuthenticatedEndpoint(server, setting.MCP.MaxRequestBodyBytes, newOAuthVerifier())
 	}
@@ -57,14 +59,17 @@ func ProtectedResourceMetadata() http.Handler {
 	})
 }
 
-func newServer(tool *pullRequestInspectionTool) *mcpsdk.Server {
+func newServer(pullTool *pullRequestInspectionTool, workTools *workInspectionTools, workInspectionEnabled bool) *mcpsdk.Server {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "forge",
 		Version: setting.AppVer,
 	}, &mcpsdk.ServerOptions{
 		Capabilities: &mcpsdk.ServerCapabilities{},
 	})
-	registerPullRequestInspectionTool(server, tool)
+	registerPullRequestInspectionTool(server, pullTool)
+	if workInspectionEnabled {
+		registerWorkInspectionTools(server, workTools)
+	}
 	return server
 }
 

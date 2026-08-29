@@ -26,8 +26,7 @@ type (
 )
 
 type pullRequestInspectionTool struct {
-	capacity  chan struct{}
-	timeout   time.Duration
+	executor  *toolExecutor
 	inspect   pullRequestInspectionOperation
 	principal authenticatedUserLookup
 }
@@ -192,8 +191,8 @@ type pullRequestInspectionPolicy struct {
 	Blockers                  []pull_service.InspectionBlocker `json:"blockers"`
 }
 
-func newPullRequestInspectionTool(maxInFlight int, timeout time.Duration, inspect pullRequestInspectionOperation, principal authenticatedUserLookup) *pullRequestInspectionTool {
-	return &pullRequestInspectionTool{capacity: make(chan struct{}, maxInFlight), timeout: timeout, inspect: inspect, principal: principal}
+func newPullRequestInspectionTool(executor *toolExecutor, inspect pullRequestInspectionOperation, principal authenticatedUserLookup) *pullRequestInspectionTool {
+	return &pullRequestInspectionTool{executor: executor, inspect: inspect, principal: principal}
 }
 
 func registerPullRequestInspectionTool(server *mcpsdk.Server, tool *pullRequestInspectionTool) {
@@ -206,19 +205,19 @@ func registerPullRequestInspectionTool(server *mcpsdk.Server, tool *pullRequestI
 }
 
 func (t *pullRequestInspectionTool) call(ctx context.Context, _ *mcpsdk.CallToolRequest, input pullRequestInspectionInput) (*mcpsdk.CallToolResult, pullRequestInspectionOutput, error) {
-	select {
-	case t.capacity <- struct{}{}:
-		defer func() { <-t.capacity }()
-	default:
+	executionCtx, release, err := t.executor.begin(ctx)
+	if errors.Is(err, errToolCapacityUnavailable) {
 		return failedToolResult("busy", "pull request inspection capacity is currently unavailable")
 	}
+	if err != nil {
+		return failedToolResult("cancelled", "pull request inspection was cancelled")
+	}
+	defer release()
 
-	doer, err := t.principal(ctx)
+	doer, err := t.principal(executionCtx)
 	if err != nil {
 		return failedToolResult("authentication_failed", "authenticated principal unavailable")
 	}
-	executionCtx, cancel := context.WithTimeout(ctx, t.timeout)
-	defer cancel()
 	inspection, err := t.inspect(executionCtx, doer, input.serviceRequest())
 	if err != nil {
 		return mapPullRequestInspectionError(ctx, executionCtx, err)
@@ -251,10 +250,10 @@ func mapPullRequestInspectionError(parentCtx, executionCtx context.Context, err 
 	if errors.Is(err, pull_service.ErrPullRequestInspectionUnavailable) {
 		return pullRequestInspectionToolResult(false), pullRequestInspectionOutput{Status: "unavailable"}, nil
 	}
-	if errors.Is(parentCtx.Err(), context.Canceled) {
+	if executionFailureCode(parentCtx, executionCtx) == "cancelled" {
 		return failedToolResult("cancelled", "pull request inspection was cancelled")
 	}
-	if errors.Is(executionCtx.Err(), context.DeadlineExceeded) {
+	if executionFailureCode(parentCtx, executionCtx) == "timeout" {
 		return failedToolResult("timeout", "pull request inspection timed out")
 	}
 	if errors.Is(err, pull_service.ErrPullRequestInspectionLimit) {

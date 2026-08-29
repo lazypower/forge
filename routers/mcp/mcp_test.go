@@ -64,13 +64,13 @@ func TestEndpointDiscovery(t *testing.T) {
 	setting.AppVer = "compatibility-spike"
 	defer func() { setting.AppVer = originalVersion }()
 
-	tool := newPullRequestInspectionTool(1, time.Second,
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 			return nil, pull_service.ErrPullRequestInspectionUnavailable
 		},
 		func(context.Context) (*user_model.User, error) { return &user_model.User{ID: 1, IsActive: true}, nil },
 	)
-	httpServer := httptest.NewServer(testAuthenticatedEndpoint(newServer(tool), 1024))
+	httpServer := httptest.NewServer(testAuthenticatedEndpoint(newServer(tool, nil, false), 1024))
 	defer httpServer.Close()
 
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
@@ -96,6 +96,193 @@ func TestEndpointDiscovery(t *testing.T) {
 	assert.Equal(t, pullRequestInspectToolName, tools.Tools[0].Name)
 	require.NotNil(t, tools.Tools[0].Annotations)
 	assert.True(t, tools.Tools[0].Annotations.ReadOnlyHint)
+}
+
+func TestWorkToolDiscoveryIsFeatureGatedAndReadOnly(t *testing.T) {
+	executor := newToolExecutor(2, time.Second)
+	pullTool := newPullRequestInspectionTool(executor,
+		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
+			return nil, pull_service.ErrPullRequestInspectionUnavailable
+		}, testPrincipal)
+	reader := fakeWorkReadService{
+		item: func(context.Context, *user_model.User, WorkItemInspectRequest) (*WorkItemInspection, error) {
+			return validWorkItemInspection(), nil
+		},
+		plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+			return validWorkPlanInspection(), nil
+		},
+	}
+	workTools := newWorkInspectionTools(executor, reader, testPrincipal, 1<<20)
+
+	for _, test := range []struct {
+		name    string
+		enabled bool
+		want    []string
+	}{
+		{name: "disabled", want: []string{pullRequestInspectToolName}},
+		{name: "enabled", enabled: true, want: []string{pullRequestInspectToolName, workItemInspectToolName, workPlanInspectToolName}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := newServer(pullTool, workTools, test.enabled)
+			clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
+			serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+			require.NoError(t, err)
+			defer serverSession.Close()
+			client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
+			clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+			require.NoError(t, err)
+			defer clientSession.Close()
+
+			listed, err := clientSession.ListTools(t.Context(), nil)
+			require.NoError(t, err)
+			names := make([]string, 0, len(listed.Tools))
+			for _, tool := range listed.Tools {
+				names = append(names, tool.Name)
+			}
+			assert.ElementsMatch(t, test.want, names)
+			for _, mutation := range []string{workPlanBeginToolName, workItemReviseToolName, workPlanReviseToolName} {
+				assert.NotContains(t, names, mutation)
+			}
+		})
+	}
+}
+
+func TestOfficialSDKCallsShareEndpointCapacityAcrossToolTypes(t *testing.T) {
+	executor := newToolExecutor(1, time.Second)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	reader := fakeWorkReadService{
+		item: func(context.Context, *user_model.User, WorkItemInspectRequest) (*WorkItemInspection, error) {
+			close(started)
+			<-release
+			return validWorkItemInspection(), nil
+		},
+		plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+			return validWorkPlanInspection(), nil
+		},
+	}
+	pullTool := newPullRequestInspectionTool(executor,
+		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
+			return &pull_service.Inspection{}, nil
+		}, testPrincipal)
+	server := newServer(pullTool, newWorkInspectionTools(executor, reader, testPrincipal, 1<<20), true)
+	clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
+	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+	require.NoError(t, err)
+	defer serverSession.Close()
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	require.NoError(t, err)
+	defer clientSession.Close()
+
+	itemDone := make(chan error, 1)
+	go func() {
+		_, callErr := clientSession.CallTool(t.Context(), &mcpsdk.CallToolParams{
+			Name: workItemInspectToolName,
+			Arguments: map[string]any{
+				"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",
+			},
+		})
+		itemDone <- callErr
+	}()
+	<-started
+
+	busy, err := clientSession.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: pullRequestInspectToolName, Arguments: map[string]any{"owner": "octo", "repository": "forge", "number": 7},
+	})
+	require.NoError(t, err)
+	assert.True(t, busy.IsError)
+	structured, ok := busy.StructuredContent.(map[string]any)
+	require.True(t, ok)
+	failure, ok := structured["failure"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "busy", failure["code"])
+
+	close(release)
+	require.NoError(t, <-itemDone)
+	recovered, err := clientSession.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: workPlanInspectToolName,
+		Arguments: map[string]any{
+			"repository": map[string]any{"owner": "octo", "name": "forge"}, "workPlan": "project/9",
+		},
+	})
+	require.NoError(t, err)
+	assert.False(t, recovered.IsError)
+}
+
+func TestOfficialSDKWorkTimeoutAndCancellation(t *testing.T) {
+	connect := func(t *testing.T, executor *toolExecutor, reader WorkReadService) *mcpsdk.ClientSession {
+		t.Helper()
+		pullTool := newPullRequestInspectionTool(executor,
+			func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
+				return nil, pull_service.ErrPullRequestInspectionUnavailable
+			}, testPrincipal)
+		server := newServer(pullTool, newWorkInspectionTools(executor, reader, testPrincipal, 1<<20), true)
+		clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
+		serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, serverSession.Close()) })
+		client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
+		clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, clientSession.Close()) })
+		return clientSession
+	}
+	arguments := map[string]any{
+		"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",
+	}
+
+	t.Run("timeout mapping", func(t *testing.T) {
+		reader := fakeWorkReadService{
+			item: func(ctx context.Context, _ *user_model.User, _ WorkItemInspectRequest) (*WorkItemInspection, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+			plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+				return validWorkPlanInspection(), nil
+			},
+		}
+		session := connect(t, newToolExecutor(1, time.Millisecond), reader)
+		result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workItemInspectToolName, Arguments: arguments})
+		require.NoError(t, err)
+		assert.True(t, result.IsError)
+		structured, ok := result.StructuredContent.(map[string]any)
+		require.True(t, ok)
+		problem, ok := structured["problem"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "timeout", problem["code"])
+	})
+
+	t.Run("caller cancellation propagation", func(t *testing.T) {
+		started := make(chan struct{})
+		cancelled := make(chan struct{})
+		reader := fakeWorkReadService{
+			item: func(ctx context.Context, _ *user_model.User, _ WorkItemInspectRequest) (*WorkItemInspection, error) {
+				close(started)
+				<-ctx.Done()
+				close(cancelled)
+				return nil, ctx.Err()
+			},
+			plan: func(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
+				return validWorkPlanInspection(), nil
+			},
+		}
+		session := connect(t, newToolExecutor(1, time.Second), reader)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			_, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: workItemInspectToolName, Arguments: arguments})
+			done <- err
+		}()
+		<-started
+		cancel()
+		select {
+		case <-cancelled:
+		case <-time.After(5 * time.Second):
+			t.Fatal("caller cancellation did not reach Work inspection")
+		}
+		assert.ErrorIs(t, <-done, context.Canceled)
+	})
 }
 
 func TestEndpointHTTPRules(t *testing.T) {

@@ -41,7 +41,7 @@ func TestPullRequestInspectionToolTypedHappyPath(t *testing.T) {
 			Policy:    &pull_service.InspectionPolicy{Protected: true, RequiredContexts: []string{"ci"}},
 		}, nil
 	}
-	tool := newPullRequestInspectionTool(1, time.Second, operation, testPrincipal)
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second), operation, testPrincipal)
 	input := pullRequestInspectionInput{
 		Owner: "octo", Repository: "forge", Number: 7, ExpectedHeadRevision: "head",
 		ChangedFiles: &pullRequestInspectionPageInput{Limit: 3},
@@ -76,7 +76,7 @@ func TestPullRequestInspectionToolTypedHappyPath(t *testing.T) {
 func TestPullRequestInspectionToolUnavailableIsNeutral(t *testing.T) {
 	for _, resourceClass := range []string{"missing", "private", "denied"} {
 		t.Run(resourceClass, func(t *testing.T) {
-			tool := newPullRequestInspectionTool(1, time.Second,
+			tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 				func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 					return nil, pull_service.ErrPullRequestInspectionUnavailable
 				}, testPrincipal)
@@ -91,7 +91,7 @@ func TestPullRequestInspectionToolUnavailableIsNeutral(t *testing.T) {
 }
 
 func TestPullRequestInspectionToolRejectsOversizedProjection(t *testing.T) {
-	tool := newPullRequestInspectionTool(1, time.Second,
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 			return &pull_service.Inspection{
 				Diff: &pull_service.InspectionDiffPage{Files: []pull_service.InspectionDiffFile{{
@@ -112,7 +112,7 @@ func TestPullRequestInspectionToolRejectsOversizedProjection(t *testing.T) {
 func TestPullRequestInspectionSerializedResultBound(t *testing.T) {
 	payload := strings.Repeat("x", pull_service.MaxPullRequestInspectionDocumentBytes-pull_service.MaxPullRequestInspectionDescriptionBytes-(8<<10))
 	description := strings.Repeat("d", pull_service.MaxPullRequestInspectionDescriptionBytes)
-	tool := newPullRequestInspectionTool(1, time.Second,
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 			return &pull_service.Inspection{
 				Metadata: pull_service.InspectionMetadata{Description: description},
@@ -121,7 +121,7 @@ func TestPullRequestInspectionSerializedResultBound(t *testing.T) {
 				}}},
 			}, nil
 		}, testPrincipal)
-	server := newServer(tool)
+	server := newServer(tool, nil, false)
 	clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
 	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestPullRequestInspectionToolPreservesExpansionPermissionBoundary(t *testin
 		}
 		return &pull_service.Inspection{}, nil
 	}
-	tool := newPullRequestInspectionTool(1, time.Second, operation, testPrincipal)
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second), operation, testPrincipal)
 
 	_, metadata, err := tool.call(t.Context(), nil, pullRequestInspectionInput{Owner: "octo", Repository: "forge", Number: 1})
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestPullRequestInspectionToolPreservesActionsURLProjection(t *testing.T) {
 		{name: "Actions denied"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			tool := newPullRequestInspectionTool(1, time.Second,
+			tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 				func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 					return &pull_service.Inspection{Checks: &pull_service.InspectionChecks{Checks: []pull_service.InspectionCheck{{TargetURL: test.targetURL}}}}, nil
 				}, testPrincipal)
@@ -210,7 +210,7 @@ func TestPullRequestInspectionToolMapsControlledErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			tool := newPullRequestInspectionTool(1, time.Second,
+			tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 				func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 					return nil, test.err
 				},
@@ -232,7 +232,7 @@ func TestPullRequestInspectionToolTimeoutAndCancellation(t *testing.T) {
 		return nil, ctx.Err()
 	}
 	t.Run("timeout", func(t *testing.T) {
-		tool := newPullRequestInspectionTool(1, time.Millisecond, operation, testPrincipal)
+		tool := newPullRequestInspectionTool(newToolExecutor(1, time.Millisecond), operation, testPrincipal)
 		_, output, err := tool.call(t.Context(), nil, pullRequestInspectionInput{})
 		require.NoError(t, err)
 		assert.Equal(t, "timeout", output.Failure.Code)
@@ -240,7 +240,7 @@ func TestPullRequestInspectionToolTimeoutAndCancellation(t *testing.T) {
 	t.Run("caller cancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		tool := newPullRequestInspectionTool(1, time.Second, operation, testPrincipal)
+		tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second), operation, testPrincipal)
 		_, output, err := tool.call(ctx, nil, pullRequestInspectionInput{})
 		require.NoError(t, err)
 		assert.Equal(t, "cancelled", output.Failure.Code)
@@ -255,7 +255,7 @@ func TestPullRequestInspectionToolNonBlockingCapacityAndRecovery(t *testing.T) {
 		<-release
 		return &pull_service.Inspection{}, nil
 	}
-	tool := newPullRequestInspectionTool(1, time.Second, operation, testPrincipal)
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second), operation, testPrincipal)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -278,7 +278,7 @@ func TestPullRequestInspectionToolNonBlockingCapacityAndRecovery(t *testing.T) {
 }
 
 func TestPullRequestInspectionToolReleasesCapacityAfterPanic(t *testing.T) {
-	tool := newPullRequestInspectionTool(1, time.Second,
+	tool := newPullRequestInspectionTool(newToolExecutor(1, time.Second),
 		func(context.Context, *user_model.User, pull_service.InspectionRequest) (*pull_service.Inspection, error) {
 			panic("boom")
 		},
