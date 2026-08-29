@@ -204,6 +204,7 @@ func (service *ReadService) InspectItem(ctx context.Context, doer *user_model.Us
 		values, keys = contextsAny(contextSummaries), contextKeys
 	case "deliveries":
 		values, keys = deliveriesAny(deliverySummaries), deliveryKeys[issue.ID]
+		related = ordinalTieBreak(keys)
 	}
 	inspection.Page, err = service.page(cursorBase, position, limit, values, keys, related)
 	if err != nil {
@@ -792,16 +793,7 @@ func (compose *composition) planEdges(memberIDs []int64, issueNumbers map[int64]
 	})
 	edges = permute(edges, order)
 	keys = permute(keys, order)
-	related = make([]int64, len(edges))
-	var previous, ordinal int64
-	for i, key := range keys {
-		if i == 0 || key != previous {
-			ordinal = 0
-		}
-		ordinal++
-		related[i] = ordinal
-		previous = key
-	}
+	related = ordinalTieBreak(keys)
 	return edges, keys, related
 }
 
@@ -1018,6 +1010,10 @@ func referencesPage(references []Reference, ids []int64, issues map[int64]*issue
 	sort.SliceStable(order, func(i, j int) bool { return keys[order[i]] < keys[order[j]] })
 	values = permute(values, order)
 	keys = permute(keys, order)
+	return values, keys, ordinalTieBreak(keys)
+}
+
+func ordinalTieBreak(keys []int64) []int64 {
 	related := make([]int64, len(keys))
 	var previous, ordinal int64
 	for i, key := range keys {
@@ -1028,7 +1024,7 @@ func referencesPage(references []Reference, ids []int64, issues map[int64]*issue
 		related[i] = ordinal
 		previous = key
 	}
-	return values, keys, related
+	return related
 }
 
 func referencesAny(values []Reference) []any {

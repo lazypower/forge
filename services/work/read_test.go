@@ -192,6 +192,35 @@ func TestInspectItemReferencePaginationUsesRepositoryTieBreak(t *testing.T) {
 	assert.Empty(t, second.Page.NextCursor)
 }
 
+func TestInspectItemDeliveryPaginationUsesRepositoryTieBreak(t *testing.T) {
+	source := newFakeSource()
+	item := source.addIssue(170, 10, false, false)
+	localIssue := source.addIssue(171, 5, true, false)
+	externalIssue := source.addExternalIssue(172, 5, false)
+	externalIssue.IsPull = true
+	local := &issues_model.PullRequest{ID: 180, IssueID: localIssue.ID, Index: localIssue.Index, BaseRepoID: 1, HeadRepoID: 1}
+	external := &issues_model.PullRequest{ID: 181, IssueID: externalIssue.ID, Index: externalIssue.Index, BaseRepoID: 2, HeadRepoID: 2}
+	source.pullList = issues_model.PullRequestList{local, external}
+	source.closing[item.ID] = []issues_model.WorkClosingPullReference{
+		{IssueID: item.ID, PullRepoID: 1, PullIssueID: localIssue.ID},
+		{IssueID: item.ID, PullRepoID: 2, PullIssueID: externalIssue.ID},
+	}
+	source.revisionByPull[local.ID] = pull_service.WorkRevision{Revision: fmt.Sprintf("%040d", 1)}
+	source.revisionByPull[external.ID] = pull_service.WorkRevision{Revision: fmt.Sprintf("%040d", 2)}
+	service := &ReadService{source: source, secret: "test-secret"}
+	request := ItemRequest{Owner: "owner", Repository: "repo", IssueNumber: item.Index, PageKind: "deliveries", Limit: 1}
+
+	first, err := service.InspectItem(t.Context(), nil, request)
+	require.NoError(t, err)
+	require.Len(t, first.Page.Items, 1)
+	require.NotEmpty(t, first.Page.NextCursor)
+	request.Cursor = first.Page.NextCursor
+	second, err := service.InspectItem(t.Context(), nil, request)
+	require.NoError(t, err)
+	require.Len(t, second.Page.Items, 1)
+	assert.Empty(t, second.Page.NextCursor)
+}
+
 func TestInspectItemBoundsProjectionCollections(t *testing.T) {
 	oldBound := setting.Work.MaxProjectionItems
 	setting.Work.MaxProjectionItems = 1
