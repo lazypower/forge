@@ -161,7 +161,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	staleActivationInput := map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-stale-plan-token-0001",
 		"expectedPlanToken": planToken,
-		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "active", "desired": "draft"}},
+		"changes":           []any{map[string]any{"kind": "set_planning_state", "expected": "active", "desired": "active"}},
 	}
 	staleActivation := callMCPWorkTool(t, writeSession, "work_plan.revise", staleActivationInput)
 	assert.Equal(t, "rejected", staleActivation["status"])
