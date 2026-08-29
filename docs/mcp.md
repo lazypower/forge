@@ -344,7 +344,8 @@ the closed request `_meta` entry `io.gitea.forge/clientAttribution`:
 This illustrates a stateless `2026-07-28` request. Send it to the MCP resource
 with `Content-Type: application/json`, `Accept: application/json,
 text/event-stream`, `MCP-Protocol-Version: 2026-07-28`, `MCP-Method: tools/call`,
-and the OAuth bearer header. Use a fresh high-entropy idempotency key for a new
+`MCP-Name: work_plan.begin`, and the OAuth bearer header. Set `MCP-Name` to the
+called tool's name. Use a fresh high-entropy idempotency key for a new
 operation (for example, a randomly generated UUID), then retain the exact input
 and key for retries. The metadata belongs in `params._meta`, outside
 `arguments`; never put a model label into the Work semantic input. Older
