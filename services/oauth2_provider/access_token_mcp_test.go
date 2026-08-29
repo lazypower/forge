@@ -31,10 +31,17 @@ func TestNewMCPAccessTokenResponse(t *testing.T) {
 	grant.Scope = "read:repository"
 	app := testMCPApplication()
 	app.ID = grant.ApplicationID
+	app.MCPBoundUserID = grant.UserID
 	beforeCounter := grant.Counter
 	resource := setting.MCPResource()
+	provisional := *app
+	provisional.MCPRegistrationState = auth_model.MCPRegistrationStateProvisional
+	response, tokenErr := NewMCPAccessTokenResponse(t.Context(), &provisional, grant, key, key)
+	require.Nil(t, response)
+	require.NotNil(t, tokenErr)
+	assert.Equal(t, AccessTokenErrorCode(AccessTokenErrorCodeInvalidGrant), tokenErr.ErrorCode)
 
-	response, tokenErr := NewMCPAccessTokenResponse(t.Context(), app, grant, key, key)
+	response, tokenErr = NewMCPAccessTokenResponse(t.Context(), app, grant, key, key)
 	require.Nil(t, tokenErr)
 	require.NotNil(t, response)
 	assert.Equal(t, int64(300), response.ExpiresIn)
@@ -83,8 +90,9 @@ func TestNewMCPWorkWriteAccessTokenResponse(t *testing.T) {
 	key := newTestSigningKey(t, "01234567890123456789012345678901")
 	grant := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Grant{ID: 1})
 	grant.Scope = MCPWorkWriteScope
-	app := testMCPApplication(auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite)
+	app := testMCPApplication()
 	app.ID = grant.ApplicationID
+	app.MCPBoundUserID = grant.UserID
 
 	response, tokenErr := NewMCPAccessTokenResponse(t.Context(), app, grant, key, key)
 	require.Nil(t, tokenErr)

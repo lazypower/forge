@@ -161,7 +161,7 @@ func TestWorkMutationRequiresExactWriteProfileBeforeCallingService(t *testing.T)
 	tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, inertWorkReader(), testPrincipal, 1<<20)
 	tools.credential = func(context.Context) (*verifiedOAuthCredential, error) {
 		credential := testWriteCredential()
-		credential.Profile = auth_model.MCPBuiltinOAuth2ApplicationProfileRead
+		credential.Profile = auth_model.MCPProfileRead
 		credential.CanonicalScope = oauth2_provider.MCPReadScope
 		return credential, nil
 	}
@@ -447,7 +447,7 @@ func testWriteCredential() *verifiedOAuthCredential {
 		Principal:   &user_model.User{ID: 1, IsActive: true},
 		Application: &auth_model.OAuth2Application{ID: 8}, Grant: &auth_model.OAuth2Grant{ID: 9},
 		CredentialID: "22222222-2222-4222-8222-222222222222",
-		Profile:      auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite, CanonicalScope: oauth2_provider.MCPWorkWriteScope,
+		Profile:      auth_model.MCPProfileWorkPlanning, CanonicalScope: oauth2_provider.MCPWorkWriteScope,
 		Scopes: []string{"read:repository", "write:issue", "write:repository"},
 	}
 }

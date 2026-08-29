@@ -45,7 +45,7 @@ type verifiedOAuthCredential struct {
 	Application    *auth_model.OAuth2Application
 	Grant          *auth_model.OAuth2Grant
 	CredentialID   string
-	Profile        auth_model.MCPBuiltinOAuth2ApplicationProfile
+	Profile        auth_model.MCPProfile
 	CanonicalScope string
 	Scopes         []string
 }

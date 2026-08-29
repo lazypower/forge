@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"gitea.dev/models/auth"
 	user_model "gitea.dev/models/user"
@@ -249,6 +250,27 @@ func AuthorizeOAuth(ctx *context.Context) {
 		ctx.ServerError("GetOAuth2ApplicationByClientID", err)
 		return
 	}
+	if app.IsMCPClientRegistration() {
+		if app.IsMCPRegistrationExpired(time.Now()) {
+			if err := auth.DeleteProvisionalMCPRegistration(ctx, app.ClientID); err != nil && !errors.Is(err, auth.ErrMCPRegistrationNotProvisional) {
+				log.Error("Unable to delete expired MCP registration: %v", err)
+			}
+			handleAuthorizeError(ctx, AuthorizeError{
+				ErrorCode:        ErrorCodeUnauthorizedClient,
+				ErrorDescription: "Client registration expired; bootstrap again",
+				State:            form.State,
+			}, "")
+			return
+		}
+		if app.MCPRegistrationState == auth.MCPRegistrationStateFinalized && app.MCPBoundUserID != ctx.Doer.ID {
+			handleAuthorizeError(ctx, AuthorizeError{
+				ErrorCode:        ErrorCodeUnauthorizedClient,
+				ErrorDescription: "Client is not available to this principal; bootstrap again",
+				State:            form.State,
+			}, "")
+			return
+		}
+	}
 
 	var user *user_model.User
 	if app.UID != 0 {
@@ -259,7 +281,11 @@ func AuthorizeOAuth(ctx *context.Context) {
 		}
 	}
 
-	if !app.ContainsRedirectURI(form.RedirectURI) {
+	redirectRegistered := app.ContainsRedirectURI(form.RedirectURI)
+	if app.IsMCPClientRegistration() {
+		redirectRegistered = app.ContainsMCPRedirectURI(form.RedirectURI)
+	}
+	if !redirectRegistered {
 		handleAuthorizeError(ctx, AuthorizeError{
 			ErrorCode:        ErrorCodeInvalidRequest,
 			ErrorDescription: "Unregistered Redirect URI",
@@ -384,8 +410,17 @@ func AuthorizeOAuth(ctx *context.Context) {
 
 	// check if additional scopes
 	ctx.Data["AdditionalScopes"] = oauth2_provider.GrantAdditionalScopes(form.Scope) != auth.AccessTokenScopeAll
-	profile, _ := auth.MCPBuiltinOAuth2ApplicationProfileOf(app)
-	ctx.Data["MCPWorkWriteConsent"] = profile == auth.MCPBuiltinOAuth2ApplicationProfileWorkWrite
+	ctx.Data["MCPWorkWriteConsent"] = app.IsMCPClientRegistration() && form.Scope == oauth2_provider.MCPWorkWriteScope
+	if app.IsMCPClientRegistration() {
+		callbackContext, err := oauth2_provider.MCPConsentCallbackContext(app, form.RedirectURI)
+		if err != nil {
+			handleServerError(ctx, form.State, "")
+			return
+		}
+		ctx.Data["MCPClientProvided"] = true
+		ctx.Data["MCPInstallationLabel"] = app.MCPInstallationLabel
+		ctx.Data["MCPCallbackContext"] = callbackContext
+	}
 
 	// show authorize page to grant access
 	ctx.Data["Application"] = app
@@ -394,7 +429,9 @@ func AuthorizeOAuth(ctx *context.Context) {
 	ctx.Data["Scope"] = form.Scope
 	ctx.Data["Resource"] = form.Resource
 	ctx.Data["Nonce"] = form.Nonce
-	if user != nil {
+	if app.IsMCPClientRegistration() {
+		ctx.Data["ApplicationCreatorLinkHTML"] = ""
+	} else if user != nil {
 		ctx.Data["ApplicationCreatorLinkHTML"] = template.HTML(fmt.Sprintf(`<a href="%s">@%s</a>`, html.EscapeString(user.HomeLink()), html.EscapeString(user.Name)))
 	} else {
 		ctx.Data["ApplicationCreatorLinkHTML"] = template.HTML(fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(setting.AppSubURL+"/"), html.EscapeString(setting.AppName)))
@@ -425,6 +462,16 @@ func AuthorizeOAuth(ctx *context.Context) {
 		log.Error(err.Error())
 		return
 	}
+	mcpScope := ""
+	if app.IsMCPClientRegistration() {
+		mcpScope = form.Scope
+	}
+	err = ctx.Session.Set("mcp_scope", mcpScope)
+	if err != nil {
+		handleServerError(ctx, form.State, form.RedirectURI)
+		log.Error(err.Error())
+		return
+	}
 	// Here we're just going to try to release the session early
 	if err := ctx.Session.Release(); err != nil {
 		// we'll tolerate errors here as they *should* get saved elsewhere
@@ -441,12 +488,20 @@ func GrantApplicationOAuth(ctx *context.Context) {
 	}
 
 	if ctx.Session.Get("client_id") != form.ClientID || ctx.Session.Get("state") != form.State ||
-		ctx.Session.Get("redirect_uri") != form.RedirectURI || oauthSessionString(ctx, "resource") != form.Resource {
+		ctx.Session.Get("redirect_uri") != form.RedirectURI || oauthSessionString(ctx, "resource") != form.Resource ||
+		(oauthSessionString(ctx, "mcp_scope") != "" && oauthSessionString(ctx, "mcp_scope") != form.Scope) {
 		ctx.HTTPError(http.StatusBadRequest)
 		return
 	}
 
 	if !form.Granted {
+		mcpScope := oauthSessionString(ctx, "mcp_scope")
+		if mcpScope != "" {
+			if err := auth.DeleteProvisionalMCPRegistration(ctx, form.ClientID); err != nil &&
+				!errors.Is(err, auth.ErrMCPRegistrationNotProvisional) && !auth.IsErrOauthClientIDInvalid(err) {
+				log.Error("Unable to delete denied MCP registration: %v", err)
+			}
+		}
 		handleAuthorizeError(ctx, AuthorizeError{
 			State:            form.State,
 			ErrorDescription: "the request is denied",
@@ -457,7 +512,26 @@ func GrantApplicationOAuth(ctx *context.Context) {
 
 	app, err := auth.GetOAuth2ApplicationByClientID(ctx, form.ClientID)
 	if err != nil {
+		if auth.IsErrOauthClientIDInvalid(err) {
+			handleAuthorizeError(ctx, AuthorizeError{
+				State:            form.State,
+				ErrorDescription: "Client is unavailable; bootstrap again",
+				ErrorCode:        ErrorCodeUnauthorizedClient,
+			}, "")
+			return
+		}
 		ctx.ServerError("GetOAuth2ApplicationByClientID", err)
+		return
+	}
+	if app.IsMCPClientRegistration() && app.IsMCPRegistrationExpired(time.Now()) {
+		if err := auth.DeleteProvisionalMCPRegistration(ctx, app.ClientID); err != nil && !errors.Is(err, auth.ErrMCPRegistrationNotProvisional) {
+			log.Error("Unable to delete expired MCP registration: %v", err)
+		}
+		handleAuthorizeError(ctx, AuthorizeError{
+			State:            form.State,
+			ErrorDescription: "Client registration expired; bootstrap again",
+			ErrorCode:        ErrorCodeUnauthorizedClient,
+		}, "")
 		return
 	}
 	canonicalScope, err := oauth2_provider.CanonicalMCPAuthorizationScope(app, form.Scope)
@@ -478,6 +552,32 @@ func GrantApplicationOAuth(ctx *context.Context) {
 		}, form.RedirectURI)
 		return
 	}
+	var codeChallenge, codeChallengeMethod string
+	codeChallenge, _ = ctx.Session.Get("CodeChallenge").(string)
+	codeChallengeMethod, _ = ctx.Session.Get("CodeChallengeMethod").(string)
+
+	if app.IsMCPClientRegistration() {
+		_, _, code, err := auth.ApproveMCPClientRegistration(ctx, app.ID, ctx.Doer.ID, form.Scope, form.Nonce, form.RedirectURI, codeChallenge, codeChallengeMethod, form.Resource, time.Now())
+		if err != nil {
+			errorCode := ErrorCodeServerError
+			description := "cannot approve client registration"
+			if errors.Is(err, auth.ErrMCPRegistrationExpired) || errors.Is(err, auth.ErrMCPRegistrationWrongPrincipal) || errors.Is(err, auth.ErrMCPRegistrationNotProvisional) || auth.IsErrOauthClientIDInvalid(err) || auth.IsErrOAuthApplicationNotFound(err) {
+				errorCode = ErrorCodeUnauthorizedClient
+				description = "Client is unavailable; bootstrap again"
+			}
+			handleAuthorizeError(ctx, AuthorizeError{State: form.State, ErrorDescription: description, ErrorCode: errorCode}, "")
+			return
+		}
+		redirect, err := code.GenerateRedirectURI(form.State)
+		if err != nil {
+			handleServerError(ctx, form.State, form.RedirectURI)
+			return
+		}
+		addAuthorizationResponseIssuer(redirect)
+		ctx.Redirect(redirect.String(), http.StatusSeeOther)
+		return
+	}
+
 	grant, err := app.GetGrantByUserID(ctx, ctx.Doer.ID)
 	if err != nil {
 		handleServerError(ctx, form.State, form.RedirectURI)
@@ -509,10 +609,6 @@ func GrantApplicationOAuth(ctx *context.Context) {
 		}
 	}
 
-	var codeChallenge, codeChallengeMethod string
-	codeChallenge, _ = ctx.Session.Get("CodeChallenge").(string)
-	codeChallengeMethod, _ = ctx.Session.Get("CodeChallengeMethod").(string)
-
 	code, err := grant.GenerateNewAuthorizationCode(ctx, form.RedirectURI, codeChallenge, codeChallengeMethod, form.Resource)
 	if err != nil {
 		handleServerError(ctx, form.State, form.RedirectURI)
@@ -542,6 +638,7 @@ func OIDCWellKnown(ctx *context.Context) {
 	ctx.Data["OidcIssuer"] = jwtRegisteredClaims.Issuer // use the consistent issuer from the JWT registered claims
 	ctx.Data["OidcBaseUrl"] = strings.TrimSuffix(setting.AppURL, "/")
 	ctx.Data["SigningKeyMethodAlg"] = oauth2_provider.DefaultSigningKey.SigningMethod().Alg()
+	ctx.Data["MCPClientBootstrapEnabled"] = setting.MCP.ClientBootstrapEnabled
 	ctx.JSONTemplate("user/auth/oidc_wellknown")
 }
 
@@ -746,7 +843,11 @@ func handleAuthorizationCode(ctx *context.Context, form forms.AccessTokenForm, s
 		})
 		return
 	}
-	if form.RedirectURI != "" && !app.ContainsRedirectURI(form.RedirectURI) {
+	redirectRegistered := app.ContainsRedirectURI(form.RedirectURI)
+	if app.IsMCPClientRegistration() {
+		redirectRegistered = app.ContainsMCPRedirectURI(form.RedirectURI)
+	}
+	if form.RedirectURI != "" && !redirectRegistered {
 		handleAccessTokenError(ctx, oauth2_provider.AccessTokenError{
 			ErrorCode:        oauth2_provider.AccessTokenErrorCodeUnauthorizedClient,
 			ErrorDescription: "unexpected redirect URI",

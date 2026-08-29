@@ -602,6 +602,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 	m.Any("/user/events", routing.MarkLongPolling(), events.Events)
 
 	m.Group("/login/oauth", func() {
+		m.Methods("POST, OPTIONS", "/register", auth.RegisterMCPClient, optionsCorsHandler())
 		m.Group("", func() {
 			m.Get("/authorize", web.Bind(forms.AuthorizationForm{}), auth.AuthorizeOAuth)
 			m.Post("/grant", web.Bind(forms.GrantApplicationForm{}), auth.GrantApplicationOAuth)
@@ -664,6 +665,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 		})
 
 		m.Group("/applications", func() {
+			m.Post("/mcp/{id}/delete", user_setting.DeleteMCPRegistration, oauth2Enabled)
 			// oauth2 applications
 			m.Group("/oauth2", func() {
 				m.Get("/{id}", user_setting.OAuth2ApplicationShow)

@@ -133,7 +133,7 @@ func NewAccessTokenResponse(ctx context.Context, grant *auth.OAuth2Grant, server
 	return newAccessTokenResponse(ctx, grant, "", setting.OAuth2.InvalidateRefreshTokens, serverKey, clientKey)
 }
 
-// NewMCPAccessTokenResponse issues tokens bound to one fixed MCP client profile.
+// NewMCPAccessTokenResponse issues tokens bound to one finalized MCP client registration.
 func NewMCPAccessTokenResponse(ctx context.Context, app *auth.OAuth2Application, grant *auth.OAuth2Grant, serverKey, clientKey JWTSigningKey) (*AccessTokenResponse, *AccessTokenError) {
 	if _, err := MCPProfileForAccessToken(app, grant); err != nil {
 		return nil, &AccessTokenError{

@@ -60,7 +60,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	defer test.MockVariableValue(&testWebRoutes, routers.NormalRoutes())()
 	productionRoutes = testWebRoutes
 
-	readSession := connectMCPWorkProfile(t, forgeServer, auth_model.MCPBuiltinOAuth2ApplicationClientID, oauth2_provider.MCPReadScope)
+	readSession, _ := connectMCPWorkProfile(t, forgeServer, oauth2_provider.MCPReadScope)
 	readTools, err := readSession.ListTools(t.Context(), nil)
 	require.NoError(t, err)
 	assertMCPWorkToolNames(t, readTools)
@@ -71,7 +71,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assert.Equal(t, "error", readRejected["status"])
 	assert.Equal(t, "not_permitted", readRejected["problem"].(map[string]any)["code"])
 
-	writeSession := connectMCPWorkProfile(t, forgeServer, auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID, oauth2_provider.MCPWorkWriteScope)
+	writeSession, writeApp := connectMCPWorkProfile(t, forgeServer, oauth2_provider.MCPWorkWriteScope)
 	writeTools, err := writeSession.ListTools(t.Context(), nil)
 	require.NoError(t, err)
 	assertMCPWorkToolNames(t, writeTools)
@@ -268,8 +268,6 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assert.Equal(t, 1, humanReplayHTML.Find(`[data-work-context="`+planRef+`/`+secondRef+`"]`).Length())
 	assert.Contains(t, humanReplayHTML.doc.Text(), "Performed through MCP using @"+doer.Name+"'s authority; software actor unverified.")
 
-	writeApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
 	setting.MCP.WorkMutationEnabled = false
 	productionRoutes = routers.NormalRoutes()
 	readOnlyTools, err := readSession.ListTools(t.Context(), nil)
@@ -319,16 +317,9 @@ func assertMCPWorkReplay(t *testing.T, replay, original map[string]any) {
 	assert.Equal(t, originalOperation["id"], replayedOperation["id"])
 }
 
-func connectMCPWorkProfile(t *testing.T, server *httptest.Server, clientID, scope string) *mcpsdk.ClientSession {
+func connectMCPWorkProfile(t *testing.T, server *httptest.Server, scope string) (*mcpsdk.ClientSession, *auth_model.OAuth2Application) {
 	t.Helper()
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), clientID)
-	require.NoError(t, err)
-	grant, err := app.GetGrantByUserID(t.Context(), 5)
-	require.NoError(t, err)
-	if grant == nil {
-		grant, err = app.CreateGrant(t.Context(), 5, scope)
-		require.NoError(t, err)
-	}
+	app, grant := newFinalizedMCPRegistration(t, 5, scope, "http://127.0.0.1/callback")
 	token := signMCPConformanceAccessToken(t, grant.ID, oauth2_provider.TokenIssuer(), strconv.FormatInt(grant.UserID, 10), []string{setting.MCPResource()}, time.Now().Add(time.Hour))
 	httpClient := &http.Client{Transport: mcpAuthorizationTransport{token: token, base: server.Client().Transport}}
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "work-dogfood", Version: "1"}, nil)
@@ -339,7 +330,7 @@ func connectMCPWorkProfile(t *testing.T, server *httptest.Server, clientID, scop
 	}, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
-	return session
+	return session, app
 }
 
 func callMCPWorkTool(t *testing.T, session *mcpsdk.ClientSession, name string, arguments map[string]any) map[string]any {

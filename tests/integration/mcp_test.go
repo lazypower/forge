@@ -317,10 +317,7 @@ func TestMCPOAuthAuthenticationProfile(t *testing.T) {
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	require.NoError(t, auth_model.Init(t.Context()))
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: 2, Scope: "read:repository"}
-	require.NoError(t, db.Insert(t.Context(), grant))
+	_, grant := newFinalizedMCPRegistration(t, 2, oauth2_provider.MCPReadScope, "http://127.0.0.1/callback")
 	resource := setting.MCPResource()
 	sign := func(audience string, expiresAt time.Time) string {
 		token := &oauth2_provider.Token{
@@ -365,7 +362,7 @@ func TestMCPOAuthAuthenticationProfile(t *testing.T) {
 	}
 
 	grant.Scope = "read:user"
-	_, err = db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(grant)
+	_, err := db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(grant)
 	require.NoError(t, err)
 	failure := MakeRequest(t, newMCPDiscoverRequest(t, "/mcp").AddTokenAuth(accessToken), http.StatusUnauthorized)
 	assert.Contains(t, failure.Header().Get("WWW-Authenticate"), `error="invalid_token"`)

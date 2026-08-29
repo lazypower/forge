@@ -90,96 +90,97 @@ ENABLED = true
 `/.well-known/oauth-authorization-server` endpoints are the
 authorization-server discovery authority. Both values must use HTTPS.
 
-When MCP is enabled with the OAuth profile, Forge registers the built-in public
-read client named `Forge MCP`, with client ID
-`f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31`. Endpoint-disabled installations do
-not create this registration merely because OAuth is the default. Once created,
-the registration is retained if MCP is later disabled or temporarily rolled
-back to PAT. It accepts only the fixed loopback redirects
-`http://127.0.0.1`, `http://127.0.0.1/callback`,
-`http://127.0.0.1/callback/<callback-id>`, and `https://127.0.0.1`. Forge
-derives `<callback-id>` from the canonical MCP resource URL using Codex's
-SHA-256 callback binding. The existing public-client rule permits a dynamic
-port on the HTTP loopback redirects while preserving their paths. The
-`/callback` redirect supports Codex's stable pre-registered client callback;
-the derived redirect supports released Codex clients that still append the
-server-specific callback ID. Forge advertises
-authorization-response issuer support and includes its OAuth issuer in
-authorization responses so clients can bind the shared callback to this Forge
-instance. The client is not selected through `DEFAULT_APPLICATIONS` and cannot
-issue a general Forge API token.
+MCP client bootstrap is independently disabled by default. Enable it only with
+the OAuth MCP profile:
 
-The first startup with a newer callback profile upgrades a recognized earlier
-Forge MCP client registration in place. An older Forge release expects its
-previous redirect profile and will refuse to start after that upgrade. To roll
-back to v1.27.2.7, stop Forge, back up the database, and restore its redirect
-set before starting the older image:
-
-```sql
-UPDATE oauth2_application
-SET redirect_uris = '["http://127.0.0.1","http://127.0.0.1/callback","https://127.0.0.1"]'
-WHERE client_id = 'f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31';
+```ini
+[mcp]
+ENABLED = true
+AUTHENTICATION = oauth
+CLIENT_BOOTSTRAP_ENABLED = true
 ```
 
-For releases older than v1.27.2.7, restore the original two-redirect profile:
+When enabled, Forge advertises `/login/oauth/register` as its OAuth client
+registration endpoint. Each harness installation can silently obtain a
+high-entropy public client ID. Forge issues no client secret, accepts no scope,
+profile, repository, principal, confidential-client method, software
+statement, fetched URL, or other extension metadata at bootstrap, and creates
+no grant, code, token, or repository authority before consent.
 
-```sql
-UPDATE oauth2_application
-SET redirect_uris = '["http://127.0.0.1","https://127.0.0.1"]'
-WHERE client_id = 'f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31';
-```
+The closed registration profile accepts a bounded client name, an optional
+bounded installation label, `authorization_code` plus `refresh_token`, response
+type `code`, token authentication method `none`, and at most the configured
+number of redirects. Redirects must all belong to one class: exact HTTPS URLs,
+or native `http` URLs whose host is a literal IPv4 or IPv6 loopback address.
+User information, fragments, non-loopback HTTP, mixed redirect classes,
+duplicates, and malformed URLs are rejected without fetching them. HTTPS
+redirects match byte-for-byte. A loopback authorization may select a runtime
+port while every other component remains exact.
 
-This changes only the built-in client's registered redirects; its grants and
-tokens are retained.
+A new registration remains provisional and authority-free for 30 minutes by
+default. The configurable lifetime must remain between 10 and 60 minutes. The
+first successful login and consent atomically finalizes the registration and
+binds it to that principal. Another principal cannot reuse it. Denial or expiry
+deletes the provisional registration, and expiry during login or consent
+creates no grant. Finalized names, installation labels, redirect classes, and
+redirects are immutable. An ungranted registration can be deleted only by its
+bound principal from Applications settings.
 
-Authorization requires the exact MCP resource URL, `read:repository` as the
-only scope, and PKCE `S256`. The resource is the configured `ROOT_URL`,
-including its subpath, followed by `mcp`; the example resource is
+Bootstrap has separate request-body, in-flight, per-source, instance-rate,
+source-bucket, redirect-count, outstanding-registration, expiry, and bounded
+cleanup limits. The per-source bucket uses the direct connection address.
+Source rotation can temporarily fill the instance-wide provisional cap and
+deny new onboarding; that bounded storage availability tradeoff does not affect
+approved clients. Turning bootstrap off stops new registrations and removes
+the discovery advertisement without invalidating existing grants.
+
+The earlier pre-release shared read and work-planning clients are removed.
+They have no compatibility boundary: no aliases, backfills, fixed-client
+transitions, or credential-lineage migration are provided. Clean-slate
+evaluation must use a fresh database and fresh credentials.
+
+Authorization requires the exact MCP resource URL, one of the exact scope
+profiles described below, and PKCE `S256`. The resource is the configured
+`ROOT_URL`, including its subpath, followed by `mcp`; the example resource is
 `https://forge.example/forge/mcp`. Access and refresh tokens are signed and
-bound to that exact audience. Refresh-token use always rotates the existing
-grant counter for this client, even when global legacy rotation is disabled.
-Consequently, only one refresh lineage per principal and Forge MCP client is
-active; two installations can invalidate each other's refresh credentials.
-Clients may discard refresh tokens and repeat authorization after access-token
-expiry.
+bound to that exact audience. Refresh-token use rotates the grant counter even
+when global legacy rotation is disabled. Each finalized installation has its
+own independently revocable client and refresh lineage.
 
 OAuth Protected Resource Metadata is served by the official MCP Go SDK at the
 application-scoped `/.well-known/oauth-protected-resource/mcp` route and is
 advertised explicitly in bearer challenges. Forge's automated interoperability
-coverage drives the official MCP Go SDK v1.7.0 client from that challenge
-through protected-resource and Forge OpenID Connect discovery, authorization
-with the fixed public client and PKCE `S256`, loopback callback, token exchange,
+coverage drives the official MCP Go SDK client from that challenge through
+protected-resource and Forge OpenID Connect discovery, dynamic client
+bootstrap, authorization with PKCE `S256`, loopback callback, token exchange,
 an authenticated `pull_request.inspect` call, access-token refresh, refresh
-rotation and replay rejection. It also covers the fixed profile's scope,
-audience, credential-profile, unrelated-resource, configured-subpath, and TLS
-trust boundaries. This substantiates interoperability for the initial
-pre-registered, read-only Forge MCP OAuth profile only. It does not claim
-Dynamic Client Registration, Client ID Metadata Documents, external issuer
-aliases, per-installation refresh families, mutations, rate limiting, or
-broader MCP or OAuth conformance.
+rotation, and replay rejection. It also covers closed metadata, redirect,
+scope, audience, credential-profile, unrelated-resource, configured-subpath,
+and TLS trust boundaries. This does not claim Client ID Metadata Documents,
+external issuer aliases, or broader MCP or OAuth conformance.
 
 ### Work mutation OAuth profile
 
-When `WORK_MUTATION_ENABLED = true`, Forge also registers the distinct public
-client `Forge MCP Work Planning`, with client ID
-`92e7ae67-8fae-4d6f-a122-0e2f8b82ef1a`. It requires the exact canonical scope
-set `read:repository write:issue write:repository`, the canonical MCP audience,
-PKCE `S256`, and explicit consent. Scope order in the request is immaterial,
-but missing, duplicate, unknown, or additional scopes fail closed.
+`Read` requires exactly `read:repository`. When
+`WORK_MUTATION_ENABLED = true`, a separately bootstrapped installation may
+request the `Work Planning` profile with the exact canonical scope set
+`read:repository write:issue write:repository`, the canonical MCP audience,
+PKCE `S256`, and explicit consent. A registration itself does not select or own
+a profile. Scope order in the authorization request is immaterial, but missing,
+duplicate, unknown, or additional scopes fail closed.
 
 The consent explains that Work planning can create, edit, close, and reopen
 Issues; change plan membership and dependencies; and create, activate, return
 to draft, or delete repository plans wherever current native permissions allow.
 It cannot push or merge code, administer repositories, or run agents.
 
-The write application is separate so an existing read grant never gains write
-authority silently. Read OAuth and PAT credentials cannot invoke mutation
-tools. Write OAuth tokens cannot authorize REST, and general Forge OAuth tokens
-cannot authorize MCP. Every invocation rechecks repository state, Issues and
-Projects units, dependency configuration, and the principal's current native
-permissions. Disabling Work mutation makes the write profile unissuable and
-removes the mutation tools; a retained application or grant is not enabled
-authority.
+Read OAuth and PAT credentials cannot invoke mutation tools. Work Planning
+OAuth tokens cannot authorize REST, and general Forge OAuth tokens cannot
+authorize MCP. Every invocation rechecks repository state, Issues and Projects
+units, dependency configuration, and the principal's current native
+permissions. Disabling Work mutation makes the Work Planning profile
+unissuable and removes the mutation tools; a retained registration or grant is
+not enabled authority.
 
 ## Work planning
 
@@ -261,9 +262,10 @@ ready-work delivery mechanism or a general durable outbox.
 
 ## Upgrade, staged enablement, and rollback
 
-Before upgrade, take a tested database backup. Migrations v344 and v345 are
-additive: v344 leaves every Project disabled, while v345 adds protocol receipts
-and native provenance links. Deploy with the MCP endpoint and both Work flags
+Before upgrade, take a tested database backup. Migrations v344-v346 are
+additive: v344 leaves every Project disabled, v345 adds protocol receipts and
+native provenance links, and v346 adds the clean-slate MCP registration
+lifecycle. Deploy with the MCP endpoint, client bootstrap, and both Work flags
 off first, verify ordinary Project and pull inspection behavior, then enable
 Work inspection independently if desired. Opt in only synthetic or explicitly
 selected repository Projects. Enable Work mutation only after the OAuth,
@@ -281,8 +283,7 @@ Project state and receipts remain native inert data; disabling an interface does
 not rewrite Projects or delete provenance. Do not run an older image against an
 upgraded database unless that exact downgrade is documented and tested. The
 safe old-image rollback is to stop Forge and restore the pre-upgrade database
-backup. The fixed read-client redirect rollback documented earlier is a
-separate, version-specific compatibility procedure.
+backup.
 
 ## Pull inspection tool and limits
 

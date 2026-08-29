@@ -8,9 +8,14 @@
 			{{template "base/alert" .}}
 			<p>
 				{{if not .AdditionalScopes}}
-				<b>{{ctx.Locale.Tr "auth.authorize_application_description"}}</b><br>
+					<b>{{ctx.Locale.Tr "auth.authorize_application_description"}}</b><br>
 				{{end}}
-				{{ctx.Locale.Tr "auth.authorize_application_created_by" .ApplicationCreatorLinkHTML}}<br>
+				{{if .MCPClientProvided}}
+					{{ctx.Locale.Tr "auth.authorize_mcp_client_unverified"}}<br>
+					{{if .MCPInstallationLabel}}{{ctx.Locale.Tr "auth.authorize_mcp_installation_label" .MCPInstallationLabel}}<br>{{end}}
+				{{else}}
+					{{ctx.Locale.Tr "auth.authorize_application_created_by" .ApplicationCreatorLinkHTML}}<br>
+				{{end}}
 				{{ctx.Locale.Tr "auth.authorize_application_with_scopes" (HTMLFormat "<b>%s</b>" .Scope)}}
 			</p>
 			{{if .MCPWorkWriteConsent}}
@@ -19,7 +24,11 @@
 			{{end}}
 		</div>
 		<div class="ui attached segment">
-			<p>{{ctx.Locale.Tr "auth.authorize_redirect_notice" .ApplicationRedirectDomainHTML}}</p>
+			{{if .MCPClientProvided}}
+				<p>{{ctx.Locale.Tr "auth.authorize_mcp_callback_context" .MCPCallbackContext}}</p>
+			{{else}}
+				<p>{{ctx.Locale.Tr "auth.authorize_redirect_notice" .ApplicationRedirectDomainHTML}}</p>
+			{{end}}
 		</div>
 		<div class="ui attached segment tw-text-center">
 			<form method="post" action="{{AppSubUrl}}/login/oauth/grant">

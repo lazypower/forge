@@ -83,14 +83,14 @@ func TestPATVerifier(t *testing.T) {
 
 func TestAuthenticatedOAuthCredentialContext(t *testing.T) {
 	principal := &user_model.User{ID: 7, IsActive: true, Type: user_model.UserTypeIndividual}
-	application := &auth_model.OAuth2Application{ID: 8, ClientID: auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID}
+	application := &auth_model.OAuth2Application{ID: 8, ClientID: "mcp_test_client", MCPRegistrationState: auth_model.MCPRegistrationStateFinalized, MCPBoundUserID: principal.ID}
 	grant := &auth_model.OAuth2Grant{ID: 9, ApplicationID: application.ID, UserID: principal.ID, Scope: oauth2_provider.MCPWorkWriteScope}
 	credential := &verifiedOAuthCredential{
 		Principal:      principal,
 		Application:    application,
 		Grant:          grant,
 		CredentialID:   "0f0f7a12-6657-4a3a-b8b2-a7d0d40f87b2",
-		Profile:        auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite,
+		Profile:        auth_model.MCPProfileWorkPlanning,
 		CanonicalScope: oauth2_provider.MCPWorkWriteScope,
 		Scopes:         []string{"read:repository", "write:issue", "write:repository"},
 	}

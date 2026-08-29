@@ -155,5 +155,10 @@ func loadApplicationsData(ctx *context.Context) {
 			ctx.ServerError("GetOAuth2GrantsByUserID", err)
 			return
 		}
+		ctx.Data["MCPRegistrations"], err = auth_model.ListUngrantFinalizedMCPRegistrations(ctx, ctx.Doer.ID)
+		if err != nil {
+			ctx.ServerError("ListUngrantFinalizedMCPRegistrations", err)
+			return
+		}
 	}
 }

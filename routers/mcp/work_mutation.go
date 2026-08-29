@@ -318,7 +318,7 @@ func (tools *workMutationTools) execute(ctx context.Context, content string, mut
 	}
 	credential, err := tools.credential(executionCtx)
 	if err != nil || credential.Principal.ID != doer.ID ||
-		credential.Profile != auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite || credential.CanonicalScope != oauth2_provider.MCPWorkWriteScope {
+		credential.Profile != auth_model.MCPProfileWorkPlanning || credential.CanonicalScope != oauth2_provider.MCPWorkWriteScope {
 		return workMutationErrorResult(content, "not_permitted", "work mutation is not permitted", false)
 	}
 	authority := workMutationAuthority{

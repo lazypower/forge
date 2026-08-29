@@ -15,20 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testMCPApplication(profiles ...auth_model.MCPBuiltinOAuth2ApplicationProfile) *auth_model.OAuth2Application {
-	profile := auth_model.MCPBuiltinOAuth2ApplicationProfileRead
-	if len(profiles) > 0 {
-		profile = profiles[0]
-	}
-	clientID := auth_model.MCPBuiltinOAuth2ApplicationClientID
-	if profile == auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite {
-		clientID = auth_model.MCPWorkWriteBuiltinOAuth2ApplicationClientID
-	}
-	builtin := auth_model.BuiltinApplications()[clientID]
+func testMCPApplication() *auth_model.OAuth2Application {
 	return &auth_model.OAuth2Application{
-		ID:           9,
-		ClientID:     clientID,
-		RedirectURIs: builtin.RedirectURIs,
+		ID:                   9,
+		ClientID:             "mcp_test_public_client",
+		RedirectURIs:         []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe"},
+		MCPRegistrationState: auth_model.MCPRegistrationStateFinalized,
+		MCPRedirectClass:     auth_model.MCPRedirectClassLoopback,
+		MCPBoundUserID:       42,
 	}
 }
 
@@ -43,7 +37,6 @@ func TestValidateMCPAuthorizationRequest(t *testing.T) {
 	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "http://127.0.0.1:49152"))
 	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "http://127.0.0.1:49152/callback"))
 	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "http://127.0.0.1:49152/callback/kiPXe-El69xe"))
-	require.NoError(t, ValidateMCPAuthorizationRequest(app, resource, "read:repository", "S256", "challenge", "https://127.0.0.1"))
 
 	tests := []struct {
 		name, resource, scope, method, challenge, redirect string
@@ -81,7 +74,7 @@ func TestCanonicalMCPWorkWriteScope(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, true)()
-	app := testMCPApplication(auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite)
+	app := testMCPApplication()
 
 	for _, scope := range []string{
 		"read:repository write:issue write:repository",
@@ -126,7 +119,7 @@ func TestValidateMCPWorkWriteExchangeAndRefresh(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, true)()
-	app := testMCPApplication(auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite)
+	app := testMCPApplication()
 	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: 42, Scope: MCPWorkWriteScope}
 	resource := setting.MCPResource()
 	token := &Token{Kind: KindRefreshToken, Counter: 2, RegisteredClaims: jwt.RegisteredClaims{
@@ -162,7 +155,7 @@ func TestMCPWorkWriteProfileRequiresMutationEnablement(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, false)()
-	app := testMCPApplication(auth_model.MCPBuiltinOAuth2ApplicationProfileWorkWrite)
+	app := testMCPApplication()
 	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: 42, Scope: MCPWorkWriteScope}
 	resource := setting.MCPResource()
 	token := &Token{Kind: KindRefreshToken, Counter: 1, RegisteredClaims: jwt.RegisteredClaims{
@@ -195,7 +188,7 @@ func TestValidateMCPAuthorizationCodeExchange(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	app := testMCPApplication()
-	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, Scope: "read:repository"}
+	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: 42, Scope: "read:repository"}
 	resource := setting.MCPResource()
 	require.NoError(t, ValidateMCPAuthorizationCodeExchange(app, grant, resource, resource))
 	assert.ErrorIs(t, ValidateMCPAuthorizationCodeExchange(app, grant, "", resource), ErrInvalidMCPProfileRequest)

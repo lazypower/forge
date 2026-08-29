@@ -5,10 +5,8 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base32"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -33,22 +31,12 @@ import (
 // Authorization codes should expire within 10 minutes per https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.2
 const oauth2AuthorizationCodeValidity = 10 * time.Minute
 
-const (
-	// MCPBuiltinOAuth2ApplicationClientID identifies Forge's fixed public MCP read profile.
-	MCPBuiltinOAuth2ApplicationClientID = "f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31"
-	MCPBuiltinOAuth2ApplicationName     = "forge-mcp"
-
-	// MCPWorkWriteBuiltinOAuth2ApplicationClientID identifies Forge's fixed public MCP work-write profile.
-	MCPWorkWriteBuiltinOAuth2ApplicationClientID = "92e7ae67-8fae-4d6f-a122-0e2f8b82ef1a"
-	MCPWorkWriteBuiltinOAuth2ApplicationName     = "forge-mcp-work-write"
-)
-
-// MCPBuiltinOAuth2ApplicationProfile identifies one fixed MCP-exclusive client profile.
-type MCPBuiltinOAuth2ApplicationProfile string
+// MCPProfile identifies an exact server-defined MCP consent profile.
+type MCPProfile string
 
 const (
-	MCPBuiltinOAuth2ApplicationProfileRead      MCPBuiltinOAuth2ApplicationProfile = "read"
-	MCPBuiltinOAuth2ApplicationProfileWorkWrite MCPBuiltinOAuth2ApplicationProfile = "work-write"
+	MCPProfileRead         MCPProfile = "read"
+	MCPProfileWorkPlanning MCPProfile = "work-planning"
 )
 
 var (
@@ -67,11 +55,16 @@ type OAuth2Application struct {
 	// https://datatracker.ietf.org/doc/html/rfc6749#section-2.1
 	// "Authorization servers MUST record the client type in the client registration details"
 	// https://datatracker.ietf.org/doc/html/rfc8252#section-8.4
-	ConfidentialClient         bool               `xorm:"NOT NULL DEFAULT TRUE"`
-	SkipSecondaryAuthorization bool               `xorm:"NOT NULL DEFAULT FALSE"`
-	RedirectURIs               []string           `xorm:"redirect_uris JSON TEXT"`
-	CreatedUnix                timeutil.TimeStamp `xorm:"INDEX created"`
-	UpdatedUnix                timeutil.TimeStamp `xorm:"INDEX updated"`
+	ConfidentialClient         bool                 `xorm:"NOT NULL DEFAULT TRUE"`
+	SkipSecondaryAuthorization bool                 `xorm:"NOT NULL DEFAULT FALSE"`
+	RedirectURIs               []string             `xorm:"redirect_uris JSON TEXT"`
+	MCPRegistrationState       MCPRegistrationState `xorm:"VARCHAR(16) NOT NULL DEFAULT '' INDEX"`
+	MCPInstallationLabel       string               `xorm:"VARCHAR(128)"`
+	MCPRedirectClass           MCPRedirectClass     `xorm:"VARCHAR(16)"`
+	MCPBoundUserID             int64                `xorm:"INDEX"`
+	MCPExpiresUnix             timeutil.TimeStamp   `xorm:"INDEX"`
+	CreatedUnix                timeutil.TimeStamp   `xorm:"INDEX created"`
+	UpdatedUnix                timeutil.TimeStamp   `xorm:"INDEX updated"`
 }
 
 func init() {
@@ -84,8 +77,6 @@ type BuiltinOAuth2Application struct {
 	ConfigName   string
 	DisplayName  string
 	RedirectURIs []string
-	MCPExclusive bool
-	MCPProfile   MCPBuiltinOAuth2ApplicationProfile
 }
 
 func BuiltinApplications() map[string]*BuiltinOAuth2Application {
@@ -105,33 +96,7 @@ func BuiltinApplications() map[string]*BuiltinOAuth2Application {
 		DisplayName:  "tea",
 		RedirectURIs: []string{"http://127.0.0.1", "https://127.0.0.1"},
 	}
-	m[MCPBuiltinOAuth2ApplicationClientID] = &BuiltinOAuth2Application{
-		ConfigName:   MCPBuiltinOAuth2ApplicationName,
-		DisplayName:  "Forge MCP",
-		RedirectURIs: mcpBuiltinRedirectURIs(),
-		MCPExclusive: true,
-		MCPProfile:   MCPBuiltinOAuth2ApplicationProfileRead,
-	}
-	m[MCPWorkWriteBuiltinOAuth2ApplicationClientID] = &BuiltinOAuth2Application{
-		ConfigName:   MCPWorkWriteBuiltinOAuth2ApplicationName,
-		DisplayName:  "Forge MCP Work Planning",
-		RedirectURIs: mcpBuiltinRedirectURIs(),
-		MCPExclusive: true,
-		MCPProfile:   MCPBuiltinOAuth2ApplicationProfileWorkWrite,
-	}
 	return m
-}
-
-func mcpBuiltinRedirectURIs() []string {
-	// Released Codex clients append the callback ID even when issuer-bound authorization responses are advertised.
-	digest := sha256.Sum256([]byte(setting.MCPResource()))
-	callbackID := base64.RawURLEncoding.EncodeToString(digest[:9])
-	return []string{
-		"http://127.0.0.1",
-		"http://127.0.0.1/callback",
-		"http://127.0.0.1/callback/" + callbackID,
-		"https://127.0.0.1",
-	}
 }
 
 func Init(ctx context.Context) error {
@@ -150,9 +115,6 @@ func Init(ctx context.Context) error {
 	for _, configName := range setting.OAuth2.DefaultApplications {
 		found := false
 		for clientID, builtinApp := range builtinApps {
-			if builtinApp.MCPExclusive {
-				continue
-			}
 			if builtinApp.ConfigName == configName {
 				clientIDsToAdd.Add(clientID) // add all user-configured apps to the "add" list
 				found = true
@@ -162,28 +124,10 @@ func Init(ctx context.Context) error {
 			return fmt.Errorf("unknown oauth2 application: %q", configName)
 		}
 	}
-	mcpOAuthEnabled := setting.MCP.Enabled && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth
-	if mcpOAuthEnabled {
-		clientIDsToAdd.Add(MCPBuiltinOAuth2ApplicationClientID)
-		if setting.MCP.WorkMutationEnabled {
-			clientIDsToAdd.Add(MCPWorkWriteBuiltinOAuth2ApplicationClientID)
-		}
-	}
-	for _, app := range registeredApps {
-		if IsMCPBuiltinOAuth2Application(app) {
-			clientIDsToAdd.Add(app.ClientID)
-		}
-	}
 	clientIDsToDelete := container.Set[string]{}
 	for _, app := range registeredApps {
 		if !clientIDsToAdd.Contains(app.ClientID) {
 			clientIDsToDelete.Add(app.ClientID) // if a registered app is not in the "add" list, it should be deleted
-		}
-		builtin := builtinApps[app.ClientID]
-		if builtin != nil && builtin.MCPExclusive && mcpBuiltinApplicationEnabled(builtin) && !validMCPBuiltinApplication(app) {
-			if err := upgradeMCPBuiltinApplication(ctx, app); err != nil {
-				return err
-			}
 		}
 	}
 	for _, app := range registeredApps {
@@ -207,75 +151,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 	}
-
-	return nil
-}
-
-func validMCPBuiltinApplication(app *OAuth2Application) bool {
-	if app == nil || app.ConfidentialClient {
-		return false
-	}
-	builtin := BuiltinApplications()[app.ClientID]
-	if builtin == nil || !builtin.MCPExclusive {
-		return false
-	}
-	want := builtin.RedirectURIs
-	return slices.Equal(app.RedirectURIs, want)
-}
-
-func mcpBuiltinApplicationEnabled(app *BuiltinOAuth2Application) bool {
-	if !setting.MCP.Enabled || setting.MCP.Authentication != setting.MCPAuthenticationProfileOAuth || app == nil {
-		return false
-	}
-	return app.MCPProfile != MCPBuiltinOAuth2ApplicationProfileWorkWrite || setting.MCP.WorkMutationEnabled
-}
-
-func upgradeMCPBuiltinApplication(ctx context.Context, app *OAuth2Application) error {
-	legacyRedirects := [][]string{
-		{"http://127.0.0.1", "https://127.0.0.1"},
-		{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
-	}
-	if app == nil || app.ConfidentialClient || !(slices.ContainsFunc(legacyRedirects, func(redirects []string) bool {
-		return slices.Equal(app.RedirectURIs, redirects)
-	}) || validPreviousMCPBuiltinRedirects(app.RedirectURIs)) {
-		return errors.New("the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
-	}
-	builtin := BuiltinApplications()[app.ClientID]
-	if builtin == nil || !builtin.MCPExclusive {
-		return errors.New("the built-in Forge MCP OAuth application is not recognized")
-	}
-	app.RedirectURIs = builtin.RedirectURIs
-	return updateOAuth2Application(ctx, app)
-}
-
-func validPreviousMCPBuiltinRedirects(redirects []string) bool {
-	if len(redirects) != 4 || redirects[0] != "http://127.0.0.1" || redirects[1] != "http://127.0.0.1/callback" || redirects[3] != "https://127.0.0.1" {
-		return false
-	}
-	callbackID, ok := strings.CutPrefix(redirects[2], "http://127.0.0.1/callback/")
-	if !ok {
-		return false
-	}
-	digestPrefix, err := base64.RawURLEncoding.DecodeString(callbackID)
-	return err == nil && len(digestPrefix) == 9 && base64.RawURLEncoding.EncodeToString(digestPrefix) == callbackID
-}
-
-// MCPBuiltinOAuth2ApplicationProfileOf returns the fixed profile for an MCP-exclusive client.
-func MCPBuiltinOAuth2ApplicationProfileOf(app *OAuth2Application) (MCPBuiltinOAuth2ApplicationProfile, bool) {
-	if app == nil {
-		return "", false
-	}
-	builtin := BuiltinApplications()[app.ClientID]
-	if builtin == nil || !builtin.MCPExclusive || builtin.MCPProfile == "" {
-		return "", false
-	}
-	return builtin.MCPProfile, true
-}
-
-// IsMCPBuiltinOAuth2Application reports whether app is one of Forge's fixed MCP clients.
-func IsMCPBuiltinOAuth2Application(app *OAuth2Application) bool {
-	_, ok := MCPBuiltinOAuth2ApplicationProfileOf(app)
-	return ok
+	return ensureMCPRegistrationAdmission(ctx)
 }
 
 // TableName sets the table name to `oauth2_application`
@@ -334,6 +210,9 @@ var base32Lower = base32.NewEncoding(lowerBase32Chars).WithPadding(base32.NoPadd
 
 // GenerateClientSecret will generate the client secret and returns the plaintext and saves the hash at the database
 func (app *OAuth2Application) GenerateClientSecret(ctx context.Context) (string, error) {
+	if app.IsMCPClientRegistration() {
+		return "", errors.New("MCP public client registrations cannot have a client secret")
+	}
 	rBytes := util.CryptoRandomBytes(32)
 	// Add a prefix to the base32, this is in order to make it easier
 	// for code scanners to grab sensitive tokens.
@@ -453,6 +332,9 @@ func UpdateOAuth2Application(ctx context.Context, opts UpdateOAuth2ApplicationOp
 		if _, builtin := builtinApps[app.ClientID]; builtin {
 			return nil, fmt.Errorf("failed to edit OAuth2 application: application is locked: %s", app.ClientID)
 		}
+		if app.IsMCPClientRegistration() {
+			return nil, errors.New("failed to edit OAuth2 application: MCP registration metadata is immutable")
+		}
 
 		app.Name = opts.Name
 		app.RedirectURIs = opts.RedirectURIs
@@ -514,6 +396,9 @@ func DeleteOAuth2Application(ctx context.Context, id, userid int64) error {
 		builtinApps := BuiltinApplications()
 		if _, builtin := builtinApps[app.ClientID]; builtin {
 			return fmt.Errorf("failed to delete OAuth2 application: application is locked: %s", app.ClientID)
+		}
+		if app.IsMCPClientRegistration() {
+			return errors.New("failed to delete OAuth2 application: use the MCP registration lifecycle")
 		}
 		return deleteOAuth2Application(ctx, id, userid)
 	})
@@ -738,8 +623,24 @@ func GetOAuth2GrantsByUserID(ctx context.Context, uid int64) ([]*OAuth2Grant, er
 
 // RevokeOAuth2Grant deletes the grant with grantID and userID
 func RevokeOAuth2Grant(ctx context.Context, grantID, userID int64) error {
-	_, err := db.GetEngine(ctx).Where(builder.Eq{"id": grantID, "user_id": userID}).Delete(&OAuth2Grant{})
-	return err
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		grant := new(OAuth2Grant)
+		has, err := db.GetEngine(ctx).Where(builder.Eq{"id": grantID, "user_id": userID}).Get(grant)
+		if err != nil || !has {
+			return err
+		}
+		app, err := GetOAuth2ApplicationByID(ctx, grant.ApplicationID)
+		if err != nil {
+			return err
+		}
+		if app.IsMCPClientRegistration() {
+			if _, err := db.GetEngine(ctx).Where("grant_id = ?", grantID).Delete(new(OAuth2AuthorizationCode)); err != nil {
+				return err
+			}
+		}
+		_, err = db.GetEngine(ctx).Where(builder.Eq{"id": grantID, "user_id": userID}).Delete(new(OAuth2Grant))
+		return err
+	})
 }
 
 // ErrOAuthClientIDInvalid will be thrown if client id cannot be found
@@ -809,6 +710,7 @@ func DeleteOAuth2RelictsByUserID(ctx context.Context, userID int64) error {
 
 	if err := db.DeleteBeans(ctx,
 		&OAuth2Application{UID: userID},
+		&OAuth2Application{MCPBoundUserID: userID},
 		&OAuth2Grant{UserID: userID},
 	); err != nil {
 		return fmt.Errorf("DeleteBeans: %w", err)

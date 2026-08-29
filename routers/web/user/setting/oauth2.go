@@ -4,6 +4,7 @@
 package setting
 
 import (
+	auth_model "gitea.dev/models/auth"
 	"gitea.dev/modules/setting"
 	"gitea.dev/modules/templates"
 	"gitea.dev/services/context"
@@ -59,6 +60,16 @@ func OAuth2ApplicationShow(ctx *context.Context) {
 func DeleteOAuth2Application(ctx *context.Context) {
 	oa := newOAuth2CommonHandlers(ctx.Doer.ID)
 	oa.DeleteApp(ctx)
+}
+
+// DeleteMCPRegistration deletes an inert finalized registration bound to the current principal.
+func DeleteMCPRegistration(ctx *context.Context) {
+	if err := auth_model.DeleteFinalizedMCPRegistration(ctx, ctx.PathParamInt64("id"), ctx.Doer.ID); err != nil {
+		ctx.Flash.Error(ctx.Tr("settings.mcp_registration_delete_failed"))
+	} else {
+		ctx.Flash.Success(ctx.Tr("settings.mcp_registration_delete_success"))
+	}
+	ctx.JSONRedirect(setting.AppSubURL + "/user/settings/applications")
 }
 
 // RevokeOAuth2Grant revokes the grant with the given id
