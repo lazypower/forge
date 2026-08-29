@@ -1,6 +1,6 @@
 # ADR 0002: Provide a native semantic MCP projection
 
-- Status: Proposed
+- Status: Implemented
 - Date: 2026-08-26
 - Decision owner: Forge maintainer
 - Depends on: [ADR 0001](0001-agent-native-forge-domain.md)
