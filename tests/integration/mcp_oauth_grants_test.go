@@ -51,6 +51,22 @@ func newMCPGrantRegistration(t *testing.T, label, installation string) *auth_mod
 	return app
 }
 
+func bootstrapMCPGrantRegistration(t *testing.T, label, installation string) *auth_model.OAuth2Application {
+	t.Helper()
+	response := MakeRequest(t, NewRequestWithJSON(t, http.MethodPost, "/login/oauth/register", oauth2_provider.MCPClientRegistrationRequest{
+		ClientName: label, InstallationName: installation, RedirectURIs: []string{mcpGrantCallback},
+		TokenEndpointAuthMethod: "none", ApplicationType: "native",
+	}), http.StatusCreated)
+	registration := DecodeJSON(t, response, &oauth2_provider.MCPClientRegistrationResponse{})
+	require.NotEmpty(t, registration.ClientID)
+	assert.NotContains(t, response.Body.String(), "client_secret")
+	app := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Application{ClientID: registration.ClientID})
+	assert.Equal(t, auth_model.MCPRegistrationStateProvisional, app.MCPRegistrationState)
+	assert.Zero(t, app.MCPBoundUserID)
+	unittest.AssertNotExistsBean(t, &auth_model.OAuth2Grant{ApplicationID: app.ID})
+	return app
+}
+
 func consentMCPGrant(t *testing.T, login *TestSession, app *auth_model.OAuth2Application, scope string, approve bool) (string, *goquery.Document) {
 	t.Helper()
 	query := url.Values{
@@ -174,13 +190,17 @@ func TestMCPGrantProfileReplacement(t *testing.T) {
 
 func TestMCPGrantInstallationIsolation(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
+	defer test.MockVariableValue(&setting.MCP.ClientBootstrapEnabled, true)()
 	login := prepareMCPGrantBrowser(t)
-	first := newMCPGrantRegistration(t, "Same harness", "Same installation label")
-	second := newMCPGrantRegistration(t, "Same harness", "Same installation label")
+	first := bootstrapMCPGrantRegistration(t, "Same harness", "Same installation label")
+	second := bootstrapMCPGrantRegistration(t, "Same harness", "Same installation label")
+	require.NotEqual(t, first.ID, second.ID)
+	require.NotEqual(t, first.ClientID, second.ClientID)
 	firstCode, _ := consentMCPGrant(t, login, first, oauth2_provider.MCPReadScope, true)
 	secondCode, _ := consentMCPGrant(t, login, second, oauth2_provider.MCPReadScope, true)
 	firstTokens := exchangeMCPGrantCode(t, first, firstCode, http.StatusOK)
 	secondTokens := exchangeMCPGrantCode(t, second, secondCode, http.StatusOK)
+	assert.NotEqual(t, firstTokens.RefreshToken, secondTokens.RefreshToken)
 	firstGrant := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Grant{ApplicationID: first.ID, UserID: 2})
 	secondGrant := unittest.AssertExistsAndLoadBean(t, &auth_model.OAuth2Grant{ApplicationID: second.ID, UserID: 2})
 	require.NotEqual(t, firstGrant.ID, secondGrant.ID)

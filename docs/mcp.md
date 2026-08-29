@@ -1,9 +1,9 @@
 # Model Context Protocol
 
 Forge has an experimental Model Context Protocol (MCP) endpoint over stateless
-Streamable HTTP. The endpoint, Work inspection, and Work mutation are separate
-capability layers. All three are disabled by default. Enabling the endpoint
-alone preserves the ADR 0002 read-only `pull_request.inspect` surface.
+Streamable HTTP. The endpoint, client bootstrap, Work inspection, and Work
+mutation are separate capability layers, all disabled by default. Enabling the
+endpoint alone preserves the ADR 0002 read-only `pull_request.inspect` surface.
 
 ## Enablement and endpoint
 
@@ -11,6 +11,7 @@ Configure an externally correct HTTPS `ROOT_URL`, including any installation
 subpath, configure Forge's matching OAuth issuer, and enable the endpoint:
 
 ```ini
+[server]
 ROOT_URL = https://forge.example/forge/
 
 [oauth2]
@@ -34,9 +35,9 @@ is not HTTPS.
 | `WORK_INSPECTION_ENABLED = true` | Adds `work_item.inspect` and `work_plan.inspect` |
 | `WORK_MUTATION_ENABLED = true`, OAuth authentication | Adds `work_plan.begin`, `work_item.revise`, and `work_plan.revise` |
 
-Work inspection accepts the configured read OAuth profile or the explicitly
-selected read-only PAT fallback. Work mutation requires the separate OAuth
-write profile. A PAT never advertises or authorizes mutation tools even if the
+Work inspection accepts an enabled OAuth MCP profile or the explicitly
+selected read-only PAT fallback. Work mutation requires the exact OAuth
+Work Planning profile. A PAT never advertises or authorizes mutation tools even if the
 mutation flag is true. Enabling either Work flag does not opt a Project into
 planning; the Project remains an ordinary board until an authorized user
 explicitly begins a draft plan.
@@ -74,6 +75,7 @@ The OAuth profile described below is not active while `AUTHENTICATION = pat`.
 OAuth is the primary and default profile:
 
 ```ini
+[server]
 ROOT_URL = https://forge.example/forge/
 
 [oauth2]
@@ -163,16 +165,19 @@ external issuer aliases, or broader MCP or OAuth conformance.
 ### Work mutation OAuth profile
 
 `Read` requires exactly `read:repository`. When
-`WORK_MUTATION_ENABLED = true`, a separately bootstrapped installation may
+`WORK_MUTATION_ENABLED = true`, a bootstrapped installation may
 request the `Work Planning` profile with the exact canonical scope set
 `read:repository write:issue write:repository`, the canonical MCP audience,
 PKCE `S256`, and explicit consent. A registration itself does not select or own
 a profile. Scope order in the authorization request is immaterial, but missing,
 duplicate, unknown, or additional scopes fail closed.
 
-Until grant-profile replacement is implemented, changing profiles on an
-existing registration requires revoking its current grant and explicitly
-authorizing again.
+Changing an existing registration from Read to Work Planning, or back, opens
+new browser consent. Approval atomically replaces its grant and invalidates
+every old authorization code, access token, and refresh token. Old credentials
+cannot inherit the new profile or restore the previous one. Denial or failed
+replacement leaves the previous grant and credentials unchanged. Do not revoke
+first just to change profiles; the approved replacement is the boundary.
 
 The consent explains that Work planning can create, edit, close, and reopen
 Issues; change plan membership and dependencies; and create, activate, return
@@ -186,6 +191,92 @@ units, dependency configuration, and the principal's current native
 permissions. Disabling Work mutation makes the Work Planning profile
 unissuable and removes the mutation tools; a retained registration or grant is
 not enabled authority.
+
+## Client onboarding and reconnect
+
+Point a conforming client at `https://forge.example/forge/mcp` and use automatic
+OAuth discovery and registration. The normal user flow is connect, browser
+login when needed, review the Read or Work Planning consent, and approve or
+deny. Users do not create an application in settings or copy a client ID.
+Treat all registered names as client-provided and unverified: check the
+requested profile, exact scopes, and loopback class or HTTPS callback origin,
+not just a familiar-looking client label.
+
+Client implementers can reproduce the bootstrap request below. The response
+contains public registration metadata and a generated `client_id`, never a
+client secret. Use the discovered `registration_endpoint`; this URL illustrates
+the configured subpath. A harness should perform this step itself and persist
+the response for that installation.
+
+```sh
+umask 077
+cat > registration.json <<'JSON'
+{
+  "client_name": "Example Harness",
+  "installation_name": "Example laptop",
+  "redirect_uris": ["http://127.0.0.1/callback"],
+  "application_type": "native",
+  "token_endpoint_auth_method": "none",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"]
+}
+JSON
+curl --fail-with-body --silent --show-error \
+  --header 'Content-Type: application/json' \
+  --data-binary @registration.json \
+  --output installation-registration.json \
+  https://forge.example/forge/login/oauth/register
+```
+
+Use `application_type: "web"` and, for example,
+`https://client.example/oauth/callback` for an HTTPS client. Do not mix HTTPS and
+loopback redirects in one registration. Client and installation names are at
+most 128 characters, with no surrounding whitespace or control/format
+characters; redirects are at most 2,048 bytes each. Omit an unused optional
+installation name. No `scope`, `resource`, principal, or repository field is
+accepted in the registration body: the MCP audience is server-defined.
+
+After registration, the client performs the authorization-code flow:
+
+1. Listen on the registered callback path (a native client may choose a free
+   loopback port). Generate a fresh random `state` and PKCE verifier; send its
+   S256 challenge, `response_type=code`, the saved `client_id`, exact
+   `redirect_uri`, `resource=https://forge.example/forge/mcp`, and the desired
+   exact scope set to the discovered authorization endpoint.
+2. Open that request in the browser. Validate the callback `state`; exchange
+   its one-use code at the discovered token endpoint using the same client ID,
+   redirect URI, resource, and PKCE verifier. Do not send a client secret.
+3. Store access and refresh credentials in the installation's secret storage.
+   Send the access token only in the bearer header. Refresh at the token
+   endpoint with `grant_type=refresh_token`, the client ID, refresh token, and
+   exact resource; atomically save the new pair. Serialize refreshes within an
+   installation so two local callers do not race the rotating refresh token.
+
+Normal credential reuse and successful refresh require no additional browser
+gate. Do not bootstrap or request consent before every operation. Two
+installations, even with identical client and installation labels, must each
+bootstrap once and keep separate client IDs and credential stores. Labels do
+not deduplicate registrations or share grants.
+
+| Event | Client and user action |
+| --- | --- |
+| Access expires, refresh is valid | Refresh silently and replace the stored pair. |
+| Local logout or loss of access/refresh credentials | Keep the saved client ID if available; reconnect through browser authorization. This does not itself revoke the server grant. |
+| Client ID is also lost, or the provisional registration expired | Bootstrap again and obtain consent; revoke any abandoned grant in Applications settings. |
+| Server grant revoked | Stop using its credentials. The inert registration remains; reconnect with it through new browser consent. |
+| Profile changes | Ask for the other exact profile and obtain new consent; discard all credentials from the replaced grant after success. |
+| Registered name, installation label, or callback must change | Bootstrap a new registration, consent, then revoke the old grant and delete the inert old registration. There is no registration-edit endpoint. |
+
+Applications settings answer **what authority is currently delegated**:
+registered client/installation metadata, server-defined profile, exact scopes,
+authorization time, last credential issuance/rotation time, current enabled
+state, public client/PKCE and redirect class, and revoke. Rotation time is not
+last use. Ungranted finalized registrations appear separately and remain inert
+until reauthorized or deleted by the bound principal. Deletion is unavailable
+while a grant exists and invalidates remaining codes; it does not rewrite
+historical receipt labels. Operation history instead answers **what happened**
+using principal authority, registered metadata, and explicitly client-reported
+harness/model snapshots. Models do not belong on the grant.
 
 ## Work planning
 
@@ -230,12 +321,35 @@ the closed request `_meta` entry `io.gitea.forge/clientAttribution`:
 
 ```json
 {
-  "_meta": {
-    "io.modelcontextprotocol/clientInfo": {"name": "Example harness", "version": "1.0"},
-    "io.gitea.forge/clientAttribution": {"model": "Example model"}
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "work_plan.begin",
+    "arguments": {
+      "repository": {"owner": "example-owner", "name": "example-repo"},
+      "idempotencyKey": "replace-with-a-fresh-random-key",
+      "begin": {"kind": "new", "title": "Example plan"}
+    },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {},
+      "io.modelcontextprotocol/clientInfo": {"name": "Example Harness", "version": "1.0"},
+      "io.gitea.forge/clientAttribution": {"model": "Example Model"}
+    }
   }
 }
 ```
+
+This illustrates a stateless `2026-07-28` request. Send it to the MCP resource
+with `Content-Type: application/json`, `Accept: application/json,
+text/event-stream`, `MCP-Protocol-Version: 2026-07-28`, `MCP-Method: tools/call`,
+and the OAuth bearer header. Use a fresh high-entropy idempotency key for a new
+operation (for example, a randomly generated UUID), then retain the exact input
+and key for retries. The metadata belongs in `params._meta`, outside
+`arguments`; never put a model label into the Work semantic input. Older
+negotiated sessions use their initialized client information when no
+per-request override is present.
 
 Forge trims the decoded labels and requires nonempty harness and model strings
 of at most 128 UTF-8 characters each, with no control characters. A supplied
@@ -303,22 +417,37 @@ ready-work delivery mechanism or a general durable outbox.
 
 ## Upgrade, staged enablement, and rollback
 
-Before upgrade, take a tested database backup. Migrations v344-v346 are
-additive: v344 leaves every Project disabled, v345 adds protocol receipts and
-native provenance links, and v346 adds the clean-slate MCP registration
-lifecycle. Deploy with the MCP endpoint, client bootstrap, and both Work flags
-off first, verify ordinary Project and pull inspection behavior, then enable
-Work inspection independently if desired. Opt in only synthetic or explicitly
-selected repository Projects. Enable Work mutation only after the OAuth,
-permission, fault-injection, database, capacity, output-bound, proxy rate-limit,
-and recovery evidence has been reviewed for the deployment.
+Before any supported upgrade, take a tested database backup. The unreleased
+fixed-client and pre-amendment receipt database is **not** a supported upgrade
+source: discard that disposable substrate and its credentials and reconstruct
+from an empty database. Do not run v348 over pre-amendment receipts. The static
+empty schema sequence is v344 (disabled Project planning state), amended v345
+(receipts and native provenance links), v346 (registration lifecycle), v347
+(grant credential-rotation time), and v348 (receipt attribution). Fresh installs
+create current models; there is no old-row conversion or compatibility path.
+
+Deploy with the MCP endpoint, client bootstrap, and both Work flags off first.
+Verify ordinary Projects, then enable the endpoint for pull inspection and
+bootstrap separately for new clients. Enable Work inspection independently if
+desired. Opt in only synthetic or explicitly selected repository Projects.
+Enable Work mutation only after the OAuth, permission, fault-injection,
+database, capacity, output-bound, proxy rate-limit, and recovery evidence has
+been reviewed for the deployment. See the
+[operator and clean-slate checklist](mcp-operations.md) for configuration,
+admission limits, security, and rollback details.
 
 The [WP10 local certification ledger](architecture/plans/0004-wp10-local-certification.md)
-records the supported-backend, security, dogfood, and remaining-prerequisite
-evidence for this off-by-default slice.
+records the historical fixed-client slice, not certification of amended
+onboarding. The [WP14 acceptance scope](architecture/plans/0004-mcp-work-planning-implementation.md#wp14-amended-onboarding-security-and-dogfood-certification)
+requires fresh two-installation evidence and final coordinator review. ADR 0004
+remains Proposed; this documentation does not certify a running service.
 
 For an operational rollback on the current schema, disable
-`WORK_MUTATION_ENABLED` first. Disable `WORK_INSPECTION_ENABLED` next to return
+`WORK_MUTATION_ENABLED` first. Independently disable `CLIENT_BOOTSTRAP_ENABLED`
+to stop new onboarding while approved Read grants continue. Disabling a flag
+does not revoke a grant; re-enabling can make retained authority usable again.
+Revoke grants when permanent credential invalidation is intended.
+Disable `WORK_INSPECTION_ENABLED` next to return
 to the ADR 0002 pull-only surface, or disable `ENABLED` to remove the endpoint.
 Project state and receipts remain native inert data; disabling an interface does
 not rewrite Projects or delete provenance. Do not run an older image against an

@@ -6,6 +6,7 @@ package mcpwork_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -271,12 +272,12 @@ func assertNativeTombstone(t *testing.T, receipt *mcpwork_model.Receipt) {
 	assert.Len(t, receipt.AudienceDigest, 64)
 	assert.Len(t, receipt.KeyDigest, 64)
 	assert.Len(t, receipt.RequestDigest, 64)
-	assert.Empty(t, receipt.OperationUUID)
+	assert.Empty(t, strings.TrimRight(receipt.OperationUUID, " ")) // PostgreSQL pads cleared CHAR(36) columns.
 	assert.Empty(t, receipt.Tool)
 	assert.Empty(t, receipt.SchemaVersion)
 	assert.Zero(t, receipt.ApplicationID)
 	assert.Zero(t, receipt.GrantID)
-	assert.Empty(t, receipt.CredentialID)
+	assert.Empty(t, strings.TrimRight(receipt.CredentialID, " "))
 	assert.Empty(t, receipt.Scope)
 	assert.Empty(t, receipt.AttributionSource)
 	assert.Empty(t, receipt.Profile)

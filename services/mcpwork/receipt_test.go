@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -305,10 +306,10 @@ func TestRetirementPreventsKeyReuseAndClearsDetail(t *testing.T) {
 	assert.Len(t, stored.KeyDigest, 64)
 	assert.Len(t, stored.RequestDigest, 64)
 	assert.Positive(t, stored.TombstonedUnix)
-	assert.Empty(t, stored.OperationUUID)
+	assert.Empty(t, strings.TrimRight(stored.OperationUUID, " ")) // PostgreSQL pads cleared CHAR(36) columns.
 	assert.Empty(t, stored.Tool)
 	assert.Zero(t, stored.ApplicationID)
-	assert.Empty(t, stored.CredentialID)
+	assert.Empty(t, strings.TrimRight(stored.CredentialID, " "))
 	assert.Empty(t, stored.Scope)
 	assert.Empty(t, stored.Profile)
 	assert.Empty(t, stored.RegisteredClientLabel)
