@@ -1,4 +1,5 @@
 {{$canWriteProject := and .CanWriteProjects (or (not .Repository) (not .Repository.IsArchived))}}
+{{$canBeginWorkPlan := and .CanBeginWorkPlan $canWriteProject}}
 {{$canManageWorkPlan := and .CanManageWorkPlan $canWriteProject}}
 {{$workPlan := .HumanWorkPlan}}
 
@@ -27,7 +28,7 @@
 		</div>
 		{{if $canWriteProject}}
 			<div class="ui compact mini menu">
-				{{if and (not .Project.IsPlanningEnabled) $canManageWorkPlan}}
+				{{if and (not .Project.IsPlanningEnabled) $canBeginWorkPlan}}
 					<button class="item btn link-action" data-url="{{.Link}}/planning/begin">
 						{{svg "octicon-project"}}
 						{{ctx.Locale.Tr "repo.projects.work_planning.begin"}}

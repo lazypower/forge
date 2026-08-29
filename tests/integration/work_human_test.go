@@ -181,7 +181,13 @@ func assertHumanWorkMarkupHides(t *testing.T, html *HTMLDoc, identities ...strin
 func TestDisabledProjectRetainsOrdinaryControls(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	project := unittest.AssertExistsAndLoadBean(t, &project_model.Project{ID: 1, RepoID: 1})
+	repository := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
 	require.Equal(t, project_model.PlanningStateDisabled, project.PlanningState)
+	ordinaryIssue := &issues_model.Issue{
+		RepoID: repository.ID, Repo: repository, Index: 98_505, PosterID: 2,
+		Title: "Ordinary issue without planning context",
+	}
+	require.NoError(t, db.Insert(t.Context(), ordinaryIssue))
 
 	sess := loginUser(t, "user2")
 	resp := sess.MakeRequest(t, NewRequest(t, "GET", "/user2/repo1/projects/1"), http.StatusOK)
@@ -192,6 +198,14 @@ func TestDisabledProjectRetainsOrdinaryControls(t *testing.T) {
 	assert.Equal(t, 1, html.Find(`[data-url$="/projects/1/planning/begin"]`).Length())
 	assert.Equal(t, 0, html.Find(`[data-url*="/planning/active"]`).Length())
 	assert.NotContains(t, html.doc.Text(), "Ready work")
+	for _, forbidden := range []string{"Adopt work", "Claim work", "Lease work", "Executor", "Dispatcher", "Scheduler"} {
+		assert.NotContains(t, html.doc.Text(), forbidden)
+	}
+
+	resp = sess.MakeRequest(t, NewRequest(t, "GET", fmt.Sprintf("/%s/issues/%d", repository.FullName(), ordinaryIssue.Index)), http.StatusOK)
+	html = NewHTMLParser(t, resp.Body)
+	assert.Equal(t, 0, html.Find(".work-item-context").Length())
+	assert.NotContains(t, html.doc.Text(), "Work planning")
 }
 
 func TestHumanWorkPlanningLifecycleUsesGuardedMutations(t *testing.T) {

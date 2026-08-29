@@ -508,6 +508,7 @@ func ViewProject(ctx *context.Context) {
 	ctx.Data["Title"] = project.Title
 	ctx.Data["IsProjectsPage"] = true
 	ctx.Data["CanWriteProjects"] = ctx.Repo.Permission.CanWrite(unit.TypeProjects)
+	ctx.Data["CanBeginWorkPlan"] = ctx.Repo.Permission.CanWrite(unit.TypeProjects)
 	ctx.Data["CanManageWorkPlan"] = ctx.Repo.Permission.CanWrite(unit.TypeProjects) && ctx.Repo.Permission.CanWrite(unit.TypeIssues)
 	ctx.Data["Project"] = project
 	ctx.Data["IssuesMap"] = issuesMap

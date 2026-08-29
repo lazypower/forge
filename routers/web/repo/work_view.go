@@ -116,7 +116,10 @@ func prepareIssueWorkView(ctx *context.Context, issue *issues_model.Issue) {
 		}
 		return
 	}
-	ctx.Data["HumanWorkItem"] = makeHumanWorkItem(inspection)
+	humanItem := makeHumanWorkItem(inspection)
+	if len(humanItem.Contexts) > 0 || humanItem.SelectedContext != nil || len(humanItem.Item.DeliverySummaries) > 0 {
+		ctx.Data["HumanWorkItem"] = humanItem
+	}
 	prepareIssueWorkProvenance(ctx, issue)
 }
 
