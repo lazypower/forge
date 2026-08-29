@@ -10,6 +10,7 @@ import (
 	activities_model "gitea.dev/models/activities"
 	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	access_model "gitea.dev/models/perm/access"
 	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
@@ -21,6 +22,8 @@ import (
 	"gitea.dev/modules/storage"
 	notify_service "gitea.dev/services/notify"
 )
+
+var retireIssueMCPWorkReceipts = mcpwork_model.RetireIssue
 
 // NewIssue creates new issue with labels for repository.
 func NewIssue(ctx context.Context, repo *repo_model.Repository, issue *issues_model.Issue, labelIDs []int64, uuids []string, assigneeIDs, projectIDs []int64) error {
@@ -247,6 +250,9 @@ func deleteIssue(ctx context.Context, issue *issues_model.Issue) ([]string, erro
 			&issues_model.Comment{DependentIssueID: issue.ID},
 			&issues_model.IssuePin{IssueID: issue.ID},
 		); err != nil {
+			return nil, err
+		}
+		if err := retireIssueMCPWorkReceipts(ctx, issue.RepoID, issue.ID); err != nil {
 			return nil, err
 		}
 

@@ -4,14 +4,20 @@
 package issue
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	issues_model "gitea.dev/models/issues"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unittest"
 	user_model "gitea.dev/models/user"
+	"gitea.dev/modules/test"
+	mcpwork_service "gitea.dev/services/mcpwork"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetRefEndNamesAndURLs(t *testing.T) {
@@ -82,4 +88,42 @@ func TestIssue_DeleteIssue(t *testing.T) {
 	left, err = issues_model.IssueNoDependenciesLeft(t.Context(), issue1)
 	assert.NoError(t, err)
 	assert.True(t, left)
+}
+
+func TestDeleteIssueMCPReceiptRetirementFailureRollsBack(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 5})
+	receipts, err := mcpwork_service.NewService([]byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	requestKey := "rollback-receipt-key-000000000001"
+	result, err := receipts.Execute(t.Context(), mcpwork_service.Request{
+		Tool: "work_plan.begin", SchemaVersion: "1", IdempotencyKey: requestKey,
+		ExpandedInput: []byte(`{"idempotencyKey":"rollback-receipt-key-000000000001"}`),
+		Authority: mcpwork_service.Authority{
+			PrincipalID: 801, OAuthApplicationID: 802, OAuthGrantID: 803,
+			CredentialJTI: "88888888-8888-4888-8888-888888888888", Audience: "https://forge.example/mcp",
+			Scope: "read:repository write:issue write:repository",
+		},
+	}, func(context.Context, mcpwork_service.Operation) (mcpwork_service.Completion, error) {
+		return mcpwork_service.Completion{
+			Outcome: mcpwork_model.OutcomeApplied,
+			Artifacts: []mcpwork_service.ArtifactReference{{
+				RepositoryID: issue.RepoID, Kind: mcpwork_model.ArtifactKindIssue, ArtifactID: issue.ID, ArtifactNumber: issue.Index,
+			}},
+		}, nil
+	})
+	require.NoError(t, err)
+	injected := errors.New("receipt retirement unavailable")
+	defer test.MockVariableValue(&retireIssueMCPWorkReceipts, func(context.Context, int64, int64) error {
+		return injected
+	})()
+
+	_, err = deleteIssue(t.Context(), issue)
+	require.ErrorIs(t, err, injected)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: issue.ID, RepoID: issue.RepoID})
+	receipt, links, _, err := mcpwork_model.GetReceiptByUUID(t.Context(), result.OperationUUID)
+	require.NoError(t, err)
+	assert.Zero(t, receipt.TombstonedUnix)
+	assert.NotEmpty(t, receipt.Tool)
+	assert.Len(t, links, 1)
 }

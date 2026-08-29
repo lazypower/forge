@@ -202,3 +202,106 @@ func operationUUIDsForLinks(ctx context.Context, artifacts []*ArtifactLink, even
 	}
 	return operationUUIDs, nil
 }
+
+// RetireIssue removes one deleted Issue from receipt provenance. It must be
+// called after the native Issue row is deleted in the same transaction. If the
+// row still exists, receipt detail is retained.
+func RetireIssue(ctx context.Context, repositoryID, issueID int64) error {
+	if repositoryID <= 0 || issueID <= 0 {
+		return nil
+	}
+	exists, err := db.GetEngine(ctx).Table("issue").Where("id = ? AND repo_id = ?", issueID, repositoryID).Exist()
+	if err != nil || exists {
+		return err
+	}
+	if _, err := db.GetEngine(ctx).
+		Where("repository_id = ? AND artifact_kind = ? AND artifact_id = ?", repositoryID, ArtifactKindIssue, issueID).
+		Delete(new(EventLink)); err != nil {
+		return err
+	}
+	return retireArtifactLinks(ctx, "repository_id = ? AND kind = ? AND artifact_id = ?", repositoryID, ArtifactKindIssue, issueID)
+}
+
+// RetireProject removes one deleted repository Project from receipt
+// provenance. It must be called after the native Project row is deleted in the
+// same transaction. If the row still exists, receipt detail is retained.
+// Organization and user Projects are outside MCP Work.
+func RetireProject(ctx context.Context, repositoryID, projectID int64) error {
+	if repositoryID <= 0 || projectID <= 0 {
+		return nil
+	}
+	exists, err := db.GetEngine(ctx).Table("project").Where("id = ? AND repo_id = ?", projectID, repositoryID).Exist()
+	if err != nil || exists {
+		return err
+	}
+	return retireArtifactLinks(ctx, "repository_id = ? AND kind = ? AND artifact_id = ?", repositoryID, ArtifactKindProject, projectID)
+}
+
+// RetireRepository removes every artifact and event link owned by a deleted
+// repository. It must be called after the native Repository row is deleted in
+// the same transaction. If the row still exists, receipt detail is retained.
+func RetireRepository(ctx context.Context, repositoryID int64) error {
+	if repositoryID <= 0 {
+		return nil
+	}
+	exists, err := db.GetEngine(ctx).Table("repository").Where("id = ?", repositoryID).Exist()
+	if err != nil || exists {
+		return err
+	}
+	if _, err := db.GetEngine(ctx).Where("repository_id = ?", repositoryID).Delete(new(EventLink)); err != nil {
+		return err
+	}
+	return retireArtifactLinks(ctx, "repository_id = ?", repositoryID)
+}
+
+// RetireRepositoryProjects removes repository Project links during the native
+// bulk Project deletion path without retiring surviving Issue links. If any
+// repository Project remains, receipt detail is retained.
+func RetireRepositoryProjects(ctx context.Context, repositoryID int64) error {
+	if repositoryID <= 0 {
+		return nil
+	}
+	exists, err := db.GetEngine(ctx).Table("project").Where("repo_id = ?", repositoryID).Exist()
+	if err != nil || exists {
+		return err
+	}
+	return retireArtifactLinks(ctx, "repository_id = ? AND kind = ?", repositoryID, ArtifactKindProject)
+}
+
+func retireArtifactLinks(ctx context.Context, condition string, args ...any) error {
+	receiptIDs := make([]int64, 0)
+	if err := db.GetEngine(ctx).Table(new(ArtifactLink)).Where(condition, args...).Distinct("receipt_id").Find(&receiptIDs); err != nil {
+		return err
+	}
+	if len(receiptIDs) == 0 {
+		return nil
+	}
+	if _, err := db.GetEngine(ctx).Where(condition, args...).Delete(new(ArtifactLink)); err != nil {
+		return err
+	}
+	for _, receiptID := range receiptIDs {
+		remaining, err := db.GetEngine(ctx).Where("receipt_id = ?", receiptID).Count(new(ArtifactLink))
+		if err != nil {
+			return err
+		}
+		if remaining != 0 {
+			continue
+		}
+		if err := minimizeReceipt(ctx, receiptID, timeutil.TimeStampNow()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func minimizeReceipt(ctx context.Context, receiptID int64, tombstonedAt timeutil.TimeStamp) error {
+	if _, err := db.GetEngine(ctx).Where("receipt_id = ?", receiptID).Delete(new(EventLink)); err != nil {
+		return err
+	}
+	_, err := db.GetEngine(ctx).Table(new(Receipt)).ID(receiptID).Where("tombstoned_unix = 0").Update(map[string]any{
+		"operation_uuid": "", "tool": "", "schema_version": "", "application_id": int64(0), "grant_id": int64(0),
+		"credential_id": "", "scope": "", "actor_trust": "", "origin": "", "outcome": "", "problem_code": "",
+		"created_unix": timeutil.TimeStamp(0), "committed_unix": timeutil.TimeStamp(0), "tombstoned_unix": tombstonedAt,
+	})
+	return err
+}

@@ -56,6 +56,31 @@ func TestExecuteCanonicalReplayAndConflict(t *testing.T) {
 	assert.EqualValues(t, 2, calls.Load())
 }
 
+func TestRequestDigestBindsToolSchemaAndCanonicalKeylessInput(t *testing.T) {
+	service := prepareReceiptService(t)
+	request := testReceiptRequest(testReceiptKey, fmt.Sprintf(`{"idempotencyKey":%q,"value":1}`, testReceiptKey))
+	var calls atomic.Int64
+	mutate := func(context.Context, Operation) (Completion, error) {
+		calls.Add(1)
+		return Completion{Outcome: mcpwork_model.OutcomeApplied}, nil
+	}
+	_, err := service.Execute(t.Context(), request, mutate)
+	require.NoError(t, err)
+
+	differentTool := request
+	differentTool.Tool = "work_plan.revise"
+	_, err = service.Execute(t.Context(), differentTool, mutate)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
+	differentSchema := request
+	differentSchema.SchemaVersion = "2"
+	_, err = service.Execute(t.Context(), differentSchema, mutate)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
+	differentInput := testReceiptRequest(testReceiptKey, fmt.Sprintf(`{"idempotencyKey":%q,"value":2}`, testReceiptKey))
+	_, err = service.Execute(t.Context(), differentInput, mutate)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
+	assert.EqualValues(t, 1, calls.Load())
+}
+
 func TestExecuteConcurrentDuplicate(t *testing.T) {
 	service := prepareReceiptService(t)
 	request := testReceiptRequest(testReceiptKey, fmt.Sprintf(`{"idempotencyKey":%q,"title":"same"}`, testReceiptKey))
@@ -244,11 +269,11 @@ func TestReplayAndPresentationRecheckPermissions(t *testing.T) {
 	assert.Empty(t, deniedPresentations)
 }
 
-func TestTombstoneRetentionPreventsKeyReuseAndClearsDetail(t *testing.T) {
+func TestRetirementPreventsKeyReuseAndClearsDetail(t *testing.T) {
 	service := prepareReceiptService(t)
 	request := testReceiptRequest(testReceiptKey, fmt.Sprintf(`{"idempotencyKey":%q,"markdown":%q}`, testReceiptKey, testMarkdown))
 	var calls atomic.Int64
-	first, err := service.Execute(t.Context(), request, func(context.Context, Operation) (Completion, error) {
+	_, err := service.Execute(t.Context(), request, func(context.Context, Operation) (Completion, error) {
 		calls.Add(1)
 		return Completion{
 			Outcome:   mcpwork_model.OutcomeApplied,
@@ -258,18 +283,7 @@ func TestTombstoneRetentionPreventsKeyReuseAndClearsDetail(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = service.Tombstone(t.Context(), first.OperationUUID, func(context.Context, []ArtifactReference) (bool, error) {
-		return false, nil
-	})
-	require.ErrorIs(t, err, ErrReceiptRetentionRequired)
-	assert.EqualValues(t, 1, countModel(t, new(mcpwork_model.Receipt)))
-	assert.EqualValues(t, 1, countModel(t, new(mcpwork_model.ArtifactLink)))
-	assert.EqualValues(t, 1, countModel(t, new(mcpwork_model.EventLink)))
-
-	err = service.Tombstone(t.Context(), first.OperationUUID, func(_ context.Context, artifacts []ArtifactReference) (bool, error) {
-		assert.Len(t, artifacts, 1)
-		return true, nil
-	})
+	err = mcpwork_model.RetireIssue(t.Context(), 11, 44)
 	require.NoError(t, err)
 	assert.Zero(t, countModel(t, new(mcpwork_model.ArtifactLink)))
 	assert.Zero(t, countModel(t, new(mcpwork_model.EventLink)))

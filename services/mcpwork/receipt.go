@@ -44,8 +44,6 @@ var (
 	ErrOutcomeUnknown = errors.New("MCP Work mutation outcome is unknown")
 	// ErrReceiptTombstoned means detail was minimized while the key remains reserved.
 	ErrReceiptTombstoned = errors.New("MCP Work mutation receipt was retained as a tombstone")
-	// ErrReceiptRetentionRequired means policy did not authorize detail minimization.
-	ErrReceiptRetentionRequired = errors.New("MCP Work receipt detail must be retained")
 )
 
 var localReferencePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
@@ -61,9 +59,10 @@ type Authority struct {
 	Scope              string
 }
 
-// Request contains the complete default-expanded tool input. ExpandedInput
-// must be a JSON object containing the same top-level idempotencyKey; the key is
-// removed before RFC 8785 canonicalization and is never retained.
+// Request contains the complete default-expanded tool input. RequestDigest
+// binds Tool, SchemaVersion, and the RFC 8785 canonical keyless ExpandedInput.
+// ExpandedInput must contain the same top-level idempotencyKey; the key is
+// removed before canonicalization and is never retained.
 type Request struct {
 	Tool           string
 	SchemaVersion  string
@@ -565,60 +564,4 @@ func (s *Service) presentOperations(ctx context.Context, operationUUIDs []string
 
 func artifactKey(repositoryID int64, kind mcpwork_model.ArtifactKind, artifactID int64) string {
 	return fmt.Sprintf("%d:%s:%d", repositoryID, kind, artifactID)
-}
-
-// RetentionApproval verifies inside the transaction that detailed provenance
-// is eligible for minimization, normally because every affected artifact is
-// gone under the native lifecycle authority.
-type RetentionApproval func(context.Context, []ArtifactReference) (bool, error)
-
-// Tombstone deletes stable links and clears receipt detail while permanently
-// reserving the principal/audience/key and request digest tuple.
-func (s *Service) Tombstone(ctx context.Context, operationUUID string, approve RetentionApproval) error {
-	if operationUUID == "" || approve == nil {
-		return ErrInvalidRequest
-	}
-	return db.WithWorkTx(ctx, func(txCtx context.Context) error {
-		receipt, artifactLinks, _, err := mcpwork_model.GetReceiptByUUID(txCtx, operationUUID)
-		if err != nil || receipt == nil {
-			return err
-		}
-		if receipt.TombstonedUnix > 0 {
-			return nil
-		}
-		artifacts := make([]ArtifactReference, 0, len(artifactLinks))
-		for _, link := range artifactLinks {
-			artifacts = append(artifacts, ArtifactReference{RepositoryID: link.RepositoryID, Kind: link.Kind, ArtifactID: link.ArtifactID, ArtifactNumber: link.ArtifactNumber, LocalReference: link.LocalReference})
-		}
-		allowed, err := approve(txCtx, artifacts)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrReceiptRetentionRequired
-		}
-		if _, err := db.GetEngine(txCtx).Where("receipt_id = ?", receipt.ID).Delete(new(mcpwork_model.EventLink)); err != nil {
-			return err
-		}
-		if _, err := db.GetEngine(txCtx).Where("receipt_id = ?", receipt.ID).Delete(new(mcpwork_model.ArtifactLink)); err != nil {
-			return err
-		}
-		tombstonedAt := timeutil.TimeStamp(s.now().UTC().Unix())
-		cleared := &mcpwork_model.Receipt{
-			OperationUUID: "", Tool: "", SchemaVersion: "", ApplicationID: 0, GrantID: 0,
-			CredentialID: "", Scope: "", ActorTrust: "", Origin: "", Outcome: "", ProblemCode: "",
-			CreatedUnix: 0, CommittedUnix: 0, TombstonedUnix: tombstonedAt,
-		}
-		updated, err := db.GetEngine(txCtx).ID(receipt.ID).Cols(
-			"operation_uuid", "tool", "schema_version", "application_id", "grant_id", "credential_id", "scope",
-			"actor_trust", "origin", "outcome", "problem_code", "created_unix", "committed_unix", "tombstoned_unix",
-		).Update(cleared)
-		if err != nil {
-			return err
-		}
-		if updated != 1 {
-			return ErrOutcomeUnknown
-		}
-		return nil
-	})
 }

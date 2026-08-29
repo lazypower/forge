@@ -9,6 +9,7 @@ import (
 	"html/template"
 
 	"gitea.dev/models/db"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	repo_model "gitea.dev/models/repo"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/log"
@@ -18,6 +19,11 @@ import (
 	"gitea.dev/modules/util"
 
 	"xorm.io/builder"
+)
+
+var (
+	retireProjectMCPWorkReceipts     = mcpwork_model.RetireProject
+	retireRepoProjectMCPWorkReceipts = mcpwork_model.RetireRepositoryProjects
 )
 
 type (
@@ -474,12 +480,24 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 		if _, err = db.GetEngine(ctx).ID(p.ID).Delete(new(Project)); err != nil {
 			return err
 		}
+		if err := retireProjectMCPWorkReceipts(ctx, p.RepoID, p.ID); err != nil {
+			return err
+		}
 
 		return updateRepositoryProjectCount(ctx, p.RepoID)
 	})
 }
 
 func DeleteProjectByRepoID(ctx context.Context, repoID int64) error {
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		if err := deleteProjectByRepoID(ctx, repoID); err != nil {
+			return err
+		}
+		return retireRepoProjectMCPWorkReceipts(ctx, repoID)
+	})
+}
+
+func deleteProjectByRepoID(ctx context.Context, repoID int64) error {
 	switch {
 	case setting.Database.Type.IsSQLite3():
 		if _, err := db.GetEngine(ctx).Exec("DELETE FROM project_issue WHERE project_issue.id IN (SELECT project_issue.id FROM project_issue INNER JOIN project WHERE project.id = project_issue.project_id AND project.repo_id = ?)", repoID); err != nil {
