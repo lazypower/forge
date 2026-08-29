@@ -223,20 +223,56 @@ reinspected before action.
 
 ### Receipts, replay, and provenance
 
+Every Work mutation requires a harness name from the official MCP SDK's
+`ClientInfo`: per-request `io.modelcontextprotocol/clientInfo` metadata, or the
+initialized session's client information when absent. The model is required in
+the closed request `_meta` entry `io.gitea.forge/clientAttribution`:
+
+```json
+{
+  "_meta": {
+    "io.modelcontextprotocol/clientInfo": {"name": "Example harness", "version": "1.0"},
+    "io.gitea.forge/clientAttribution": {"model": "Example model"}
+  }
+}
+```
+
+Forge trims the decoded labels and requires nonempty harness and model strings
+of at most 128 UTF-8 characters each, with no control characters. A supplied
+version must be nonempty and at most 64 characters under the same rules; an
+absent version is omitted from output. The legacy SDK cannot distinguish an
+omitted, empty, or null initialized version, so its empty value is treated as
+absent. The Forge attribution object permits only the `model` field. Invalid
+attribution fails with `client_attribution_required`, non-retryable until
+corrected, before receipt lookup or Work access. Structurally malformed standard
+MCP messages rejected by the SDK remain protocol errors.
+
 Migration v345 adds narrow MCP Work receipts and stable links to affected native
-Projects, Issues, and timeline events. A receipt contains operation identity,
-domain-separated keyed request and idempotency digests, the verified principal
-and OAuth authority snapshot, an unverified actor classification, MCP origin,
-the final outcome, timestamps, and stable references. It does not contain a raw
-token, raw idempotency key, request Markdown, complete request body, serialized
-Work projection, copied readiness, or a client-claimed verified software actor.
+Projects, Issues, and timeline events. Migration v348 extends the empty receipt
+schema with immutable registered client/installation labels and client-reported
+harness, optional version, model, and source snapshots. A receipt preserves
+operation identity, domain-separated keyed request and idempotency digests, the
+verified principal and OAuth authority snapshot (including profile and scope),
+MCP origin, the final outcome, timestamps, and stable references. It does not
+contain a raw token, raw idempotency key, request Markdown, complete request
+body, serialized Work projection, copied readiness, or model traffic.
 
 Replaying the same canonical request with the same key returns the same receipt
 and stable references, then composes a fresh permission-filtered projection.
-Changing the request while reusing the key returns `idempotency_conflict`
-without revealing the earlier target. Human Project and Issue views show that
-MCP used the verified principal's authority while the software actor remains
-unverified; they do not expose receipt internals.
+Attribution is excluded from the semantic digest: changing only the reported
+labels replays the first operation's original attribution without re-executing.
+Changing the semantic request while reusing the key returns
+`idempotency_conflict` without revealing the earlier target. Mutation results
+include required `operation.clientAttribution` with `harness`, optional
+`harnessVersion`, `model`, and `source: "client-reported"`. Human Project and
+Issue views distinguish principal authority, registered client metadata, and
+runtime client-reported annotations. Labels are not attestation or authority;
+these views do not expose receipt internals. Deleting a registration does not
+rewrite its historical receipt snapshots.
+
+This unreleased receipt schema requires a fresh database. The amended v345 and
+v348 sequence provides no upgrade or compatibility path for an already-created
+pre-amendment receipt database.
 
 ### Work bounds
 
