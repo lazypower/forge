@@ -44,6 +44,13 @@ type BeginPlanRequest struct {
 	Markdown          string
 }
 
+// RepositoryLocator identifies the canonical repository boundary resolved by
+// interface adapters before a Work mutation reaches native facts.
+type RepositoryLocator struct {
+	Owner string
+	Name  string
+}
+
 // ConditionalText protects an overwriting string mutation.
 type ConditionalText struct {
 	Expected string

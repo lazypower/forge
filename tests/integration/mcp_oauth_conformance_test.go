@@ -393,8 +393,11 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 
 	tools, err := session.ListTools(ctx, nil)
 	require.NoError(t, err)
-	require.Len(t, tools.Tools, 1)
-	assert.Equal(t, "pull_request.inspect", tools.Tools[0].Name)
+	toolNames := make([]string, 0, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		toolNames = append(toolNames, tool.Name)
+	}
+	assert.ElementsMatch(t, []string{"pull_request.inspect", "work_plan.begin", "work_item.revise", "work_plan.revise"}, toolNames)
 	issued = trace.tokens()
 	require.Len(t, issued, 2)
 	replacement := assertMCPTokenClaims(t, issued[1].AccessToken, initialAccess.Issuer, initialAccess.Subject, resource)

@@ -222,7 +222,7 @@ type workProblem struct {
 	Code                   string `json:"code"`
 	Message                string `json:"message"`
 	Retryable              bool   `json:"retryable"`
-	RetryAfterMilliseconds int64  `json:"retryAfterMilliseconds,omitempty"`
+	RetryAfterMilliseconds int64  `json:"retryAfterMilliseconds,omitempty,omitzero"`
 }
 
 type workReadOutput struct {
@@ -241,16 +241,6 @@ type workInspectionTools struct {
 	reader         WorkReadService
 	principal      authenticatedUserLookup
 	maxOutputBytes int64
-}
-
-type unboundWorkReadService struct{}
-
-func (unboundWorkReadService) InspectWorkItem(context.Context, *user_model.User, WorkItemInspectRequest) (*WorkItemInspection, error) {
-	return nil, errors.New("services/work is not bound")
-}
-
-func (unboundWorkReadService) InspectWorkPlan(context.Context, *user_model.User, WorkPlanInspectRequest) (*WorkPlanInspection, error) {
-	return nil, errors.New("services/work is not bound")
 }
 
 func newWorkInspectionTools(executor *toolExecutor, reader WorkReadService, principal authenticatedUserLookup, maxOutputBytes int64) *workInspectionTools {

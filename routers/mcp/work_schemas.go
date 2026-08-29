@@ -7,6 +7,7 @@ import (
 	"gitea.dev/modules/json"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const (
@@ -145,4 +146,18 @@ func mustWorkSchema(source string) map[string]any {
 		panic(err)
 	}
 	return schema
+}
+
+var compiledWorkMutationOutputSchema = func() *jsonschema.Schema {
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource("work-mutation-output.json", mustWorkSchema(workMutationOutputSchema)); err != nil {
+		panic(err)
+	}
+	return compiler.MustCompile("work-mutation-output.json")
+}()
+
+func validWorkMutationOutput(wire []byte) bool {
+	var value any
+	return json.Unmarshal(wire, &value) == nil && compiledWorkMutationOutputSchema.Validate(value) == nil
 }

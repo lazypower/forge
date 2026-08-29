@@ -130,12 +130,34 @@ func (service *MutationService) BeginPlanInWorkTx(ctx context.Context, doer *use
 	return applied(true, []mcpwork_service.ArtifactReference{projectArtifact(project)}, nil, nil, nil), nil
 }
 
+// BeginPlanForRepositoryInWorkTx resolves one repository locator as part of
+// the shared Work operation so unavailable targets receive a durable receipt.
+func (service *MutationService) BeginPlanForRepositoryInWorkTx(ctx context.Context, doer *user_model.User, locator RepositoryLocator, request BeginPlanRequest, operation mcpwork_service.Operation) (MutationCommit, error) {
+	repositoryID, commit, err := resolveMutationRepository(ctx, locator)
+	if err != nil || commit != nil {
+		return dereferenceMutationCommit(commit), err
+	}
+	request.RepositoryID = repositoryID
+	return service.BeginPlanInWorkTx(ctx, doer, request, operation)
+}
+
 // ReviseItemInWorkTx conditionally revises one Issue and applies desired state
 // inside WP7's transaction callback.
 func (service *MutationService) ReviseItemInWorkTx(ctx context.Context, doer *user_model.User, request ItemRevisionRequest, _ mcpwork_service.Operation) (MutationCommit, error) {
 	return runMutationSavepoint(ctx, func() (MutationCommit, error) {
 		return service.reviseItemInWorkTx(ctx, doer, request)
 	})
+}
+
+// ReviseItemForRepositoryInWorkTx resolves one repository locator as part of
+// the shared Work operation so unavailable targets receive a durable receipt.
+func (service *MutationService) ReviseItemForRepositoryInWorkTx(ctx context.Context, doer *user_model.User, locator RepositoryLocator, request ItemRevisionRequest, operation mcpwork_service.Operation) (MutationCommit, error) {
+	repositoryID, commit, err := resolveMutationRepository(ctx, locator)
+	if err != nil || commit != nil {
+		return dereferenceMutationCommit(commit), err
+	}
+	request.RepositoryID = repositoryID
+	return service.ReviseItemInWorkTx(ctx, doer, request, operation)
 }
 
 func (service *MutationService) reviseItemInWorkTx(ctx context.Context, doer *user_model.User, request ItemRevisionRequest) (MutationCommit, error) {
@@ -219,6 +241,40 @@ func (service *MutationService) RevisePlanInWorkTx(ctx context.Context, doer *us
 	return runMutationSavepoint(ctx, func() (MutationCommit, error) {
 		return service.revisePlanInWorkTx(ctx, doer, request)
 	})
+}
+
+// RevisePlanForRepositoryInWorkTx resolves one repository locator as part of
+// the shared Work operation so unavailable targets receive a durable receipt.
+func (service *MutationService) RevisePlanForRepositoryInWorkTx(ctx context.Context, doer *user_model.User, locator RepositoryLocator, request PlanRevisionRequest, operation mcpwork_service.Operation) (MutationCommit, error) {
+	repositoryID, commit, err := resolveMutationRepository(ctx, locator)
+	if err != nil || commit != nil {
+		return dereferenceMutationCommit(commit), err
+	}
+	request.RepositoryID = repositoryID
+	return service.RevisePlanInWorkTx(ctx, doer, request, operation)
+}
+
+func resolveMutationRepository(ctx context.Context, locator RepositoryLocator) (int64, *MutationCommit, error) {
+	if locator.Owner == "" || locator.Name == "" {
+		commit := rejected("invalid_input")
+		return 0, &commit, nil
+	}
+	repo, err := repo_model.GetRepositoryByOwnerAndName(ctx, locator.Owner, locator.Name)
+	if repo_model.IsErrRepoNotExist(err) {
+		commit := rejected("unavailable")
+		return 0, &commit, nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	return repo.ID, nil, nil
+}
+
+func dereferenceMutationCommit(commit *MutationCommit) MutationCommit {
+	if commit == nil {
+		return MutationCommit{}
+	}
+	return *commit
 }
 
 func (service *MutationService) revisePlanInWorkTx(ctx context.Context, doer *user_model.User, request PlanRevisionRequest) (MutationCommit, error) {
@@ -504,17 +560,26 @@ func mutationRepository(ctx context.Context, doer *user_model.User, repositoryID
 	if err != nil {
 		return nil, access_model.Permission{}, "unavailable", nil
 	}
-	if repo.IsArchived {
-		return nil, access_model.Permission{}, "not_permitted", nil
-	}
 	permission, err := access_model.GetDoerRepoPermission(ctx, repo, doer)
 	if err != nil {
 		return nil, access_model.Permission{}, "", err
 	}
-	if projects && (!repo.UnitEnabled(ctx, unit.TypeProjects) || !permission.CanWrite(unit.TypeProjects)) {
+	if !permission.HasAnyUnitAccessOrPublicAccess() {
+		return nil, permission, "unavailable", nil
+	}
+	if repo.IsArchived {
+		return nil, permission, "not_permitted", nil
+	}
+	if projects && !repo.UnitEnabled(ctx, unit.TypeProjects) {
 		return nil, permission, "not_permitted", nil
 	}
 	if issues && (!repo.UnitEnabled(ctx, unit.TypeIssues) || !permission.CanRead(unit.TypeIssues)) {
+		return nil, permission, "unavailable", nil
+	}
+	if projects && !permission.CanRead(unit.TypeProjects) {
+		return nil, permission, "unavailable", nil
+	}
+	if projects && !permission.CanWrite(unit.TypeProjects) {
 		return nil, permission, "not_permitted", nil
 	}
 	return repo, permission, "", nil

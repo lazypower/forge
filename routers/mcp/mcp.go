@@ -12,6 +12,7 @@ import (
 	"gitea.dev/modules/setting"
 	"gitea.dev/services/oauth2_provider"
 	pull_service "gitea.dev/services/pull"
+	work_service "gitea.dev/services/work"
 
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,8 +23,14 @@ import (
 func NewEndpoint() http.Handler {
 	executor := newToolExecutor(setting.MCP.MaxInFlightRequests, setting.MCP.ExecutionTimeout)
 	pullTool := newPullRequestInspectionTool(executor, pull_service.InspectPullRequest, authenticatedUser)
-	workTools := newWorkInspectionTools(executor, unboundWorkReadService{}, authenticatedUser, setting.Work.MaxOutputBytes)
-	server := newServer(pullTool, workTools, setting.MCP.WorkInspectionEnabled)
+	workReader := newBoundWorkReadService(work_service.NewReadService())
+	workTools := newWorkInspectionTools(executor, workReader, authenticatedUser, setting.Work.MaxOutputBytes)
+	var mutationTools *workMutationTools
+	mutationEnabled := setting.MCP.WorkMutationEnabled && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth
+	if mutationEnabled {
+		mutationTools = newWorkMutationTools(executor, newProductionWorkMutationService(), workReader, authenticatedUser, setting.Work.MaxOutputBytes)
+	}
+	server := newServerWithWorkMutations(pullTool, workTools, mutationTools, setting.MCP.WorkInspectionEnabled, mutationEnabled)
 	if setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth {
 		return newOAuthAuthenticatedEndpoint(server, setting.MCP.MaxRequestBodyBytes, newOAuthVerifier())
 	}
@@ -59,7 +66,7 @@ func ProtectedResourceMetadata() http.Handler {
 	})
 }
 
-func newServer(pullTool *pullRequestInspectionTool, workTools *workInspectionTools, workInspectionEnabled bool) *mcpsdk.Server {
+func newServerWithWorkMutations(pullTool *pullRequestInspectionTool, workTools *workInspectionTools, mutationTools *workMutationTools, workInspectionEnabled, workMutationEnabled bool) *mcpsdk.Server {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "forge",
 		Version: setting.AppVer,
@@ -69,6 +76,9 @@ func newServer(pullTool *pullRequestInspectionTool, workTools *workInspectionToo
 	registerPullRequestInspectionTool(server, pullTool)
 	if workInspectionEnabled {
 		registerWorkInspectionTools(server, workTools)
+	}
+	if workMutationEnabled {
+		registerWorkMutationTools(server, mutationTools)
 	}
 	return server
 }

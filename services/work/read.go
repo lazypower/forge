@@ -325,7 +325,7 @@ func (service *ReadService) InspectPlan(ctx context.Context, doer *user_model.Us
 	}
 	plan := WorkPlan{
 		Ref: "project/" + strconv.FormatInt(project.ID, 10), URL: projectHTMLURL(ctx, compose.requestRepo, project.ID), Title: project.Title,
-		Markdown: project.Description, PlanningState: string(project.PlanningState), ProjectState: projectState(project), Integrity: integrity,
+		Markdown: project.Description, PlanningState: projectPlanningState(project.PlanningState), ProjectState: projectState(project), Integrity: integrity,
 		ItemSummaries: itemSummaries, EdgeSummaries: bounded(edges), ReadyFrontier: bounded(ready), ExcludedMembers: bounded(excluded), PlanToken: planToken,
 	}
 	inspection := &PlanInspection{Repository: projectRepository(ctx, compose.requestRepo), WorkPlan: plan}
@@ -915,13 +915,25 @@ func issueReference(ctx context.Context, issue *issues_model.Issue, repo *repo_m
 }
 
 func projectReference(repository Repository, project *project_model.Project) Reference {
-	state := string(project.PlanningState)
 	if !project.HasValidPlanningState() {
 		return undisclosedReference()
 	}
 	return Reference{
 		Availability: "available", Repository: new(repository), Ref: "project/" + strconv.FormatInt(project.ID, 10),
-		URL: repository.URL + "/projects/" + strconv.FormatInt(project.ID, 10), Label: project.Title, State: state,
+		URL: repository.URL + "/projects/" + strconv.FormatInt(project.ID, 10), Label: project.Title, State: projectPlanningState(project.PlanningState),
+	}
+}
+
+func projectPlanningState(state project_model.PlanningState) string {
+	switch state {
+	case project_model.PlanningStateDisabled:
+		return "disabled"
+	case project_model.PlanningStateDraft:
+		return "draft"
+	case project_model.PlanningStateActive:
+		return "active"
+	default:
+		return ""
 	}
 }
 
