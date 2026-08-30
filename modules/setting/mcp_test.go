@@ -33,10 +33,54 @@ func TestLoadMCPFrom(t *testing.T) {
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.False(t, MCP.Enabled)
+		assert.False(t, MCP.WorkInspectionEnabled)
+		assert.False(t, MCP.WorkMutationEnabled)
+		assert.False(t, MCP.ClientBootstrapEnabled)
 		assert.Equal(t, MCPAuthenticationProfileOAuth, MCP.Authentication)
 		assert.EqualValues(t, defaultMCPMaxRequestBodyBytes, MCP.MaxRequestBodyBytes)
 		assert.Equal(t, defaultMCPMaxInFlightRequests, MCP.MaxInFlightRequests)
 		assert.Equal(t, defaultMCPExecutionTimeout, MCP.ExecutionTimeout)
+		assert.Equal(t, defaultMCPBootstrapProvisionalLifetime, MCP.ClientBootstrapProvisionalLifetime)
+		assert.Equal(t, defaultMCPBootstrapMaxOutstanding, MCP.ClientBootstrapMaxOutstanding)
+	})
+
+	t.Run("bootstrap requires independent enablement and OAuth endpoint", func(t *testing.T) {
+		MCP = original
+		AppURL = "https://forge.example/"
+		OAuth2 = originalOAuth2
+		OAuth2.Enabled = true
+		OAuth2.JWTClaimIssuer = "https://forge.example"
+		cfg, err := NewConfigProviderFromData("[mcp]\nENABLED = true\nCLIENT_BOOTSTRAP_ENABLED = true\n")
+		require.NoError(t, err)
+		require.NoError(t, loadMCPFrom(cfg))
+		assert.True(t, MCP.ClientBootstrapEnabled)
+
+		MCP = original
+		cfg, err = NewConfigProviderFromData("[mcp]\nCLIENT_BOOTSTRAP_ENABLED = true\n")
+		require.NoError(t, err)
+		assert.EqualError(t, loadMCPFrom(cfg), "[mcp] CLIENT_BOOTSTRAP_ENABLED requires ENABLED with OAuth authentication")
+
+		MCP = original
+		cfg, err = NewConfigProviderFromData("[mcp]\nENABLED = true\nAUTHENTICATION = pat\nCLIENT_BOOTSTRAP_ENABLED = true\n")
+		require.NoError(t, err)
+		assert.EqualError(t, loadMCPFrom(cfg), "[mcp] CLIENT_BOOTSTRAP_ENABLED requires ENABLED with OAuth authentication")
+	})
+
+	t.Run("bootstrap lifetime and admission bounds fail closed", func(t *testing.T) {
+		for _, config := range []string{
+			"[mcp]\nCLIENT_BOOTSTRAP_PROVISIONAL_LIFETIME = 9m\n",
+			"[mcp]\nCLIENT_BOOTSTRAP_PROVISIONAL_LIFETIME = 61m\n",
+			"[mcp]\nCLIENT_BOOTSTRAP_MAX_OUTSTANDING = 10\nCLIENT_BOOTSTRAP_CLEANUP_BATCH_SIZE = 11\n",
+			"[mcp]\nCLIENT_BOOTSTRAP_PER_SOURCE_RATE = 11\nCLIENT_BOOTSTRAP_INSTANCE_RATE = 10\n",
+			"[mcp]\nCLIENT_BOOTSTRAP_MAX_REQUEST_BODY_BYTES = 1048577\n",
+			"[mcp]\nCLIENT_BOOTSTRAP_MAX_IN_FLIGHT_REQUESTS = 65\n",
+			"[mcp]\nCLIENT_BOOTSTRAP_RATE_WINDOW = 2h\n",
+		} {
+			MCP = original
+			cfg, err := NewConfigProviderFromData(config)
+			require.NoError(t, err)
+			assert.Error(t, loadMCPFrom(cfg))
+		}
 	})
 
 	t.Run("enabled default OAuth", func(t *testing.T) {
@@ -57,10 +101,26 @@ EXECUTION_TIMEOUT = 15s
 		require.NoError(t, loadMCPFrom(cfg))
 
 		assert.True(t, MCP.Enabled)
+		assert.False(t, MCP.WorkInspectionEnabled)
+		assert.False(t, MCP.WorkMutationEnabled)
 		assert.Equal(t, MCPAuthenticationProfileOAuth, MCP.Authentication)
 		assert.EqualValues(t, 2048, MCP.MaxRequestBodyBytes)
 		assert.Equal(t, 4, MCP.MaxInFlightRequests)
 		assert.Equal(t, 15*time.Second, MCP.ExecutionTimeout)
+	})
+
+	t.Run("work capabilities require explicit enablement", func(t *testing.T) {
+		MCP = original
+		cfg, err := NewConfigProviderFromData(`
+[mcp]
+WORK_INSPECTION_ENABLED = true
+WORK_MUTATION_ENABLED = true
+`)
+		require.NoError(t, err)
+
+		require.NoError(t, loadMCPFrom(cfg))
+		assert.True(t, MCP.WorkInspectionEnabled)
+		assert.True(t, MCP.WorkMutationEnabled)
 	})
 
 	t.Run("explicit PAT fallback", func(t *testing.T) {

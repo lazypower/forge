@@ -12,9 +12,26 @@ import (
 )
 
 const (
-	defaultMCPMaxRequestBodyBytes = 1 << 20
-	defaultMCPMaxInFlightRequests = 8
-	defaultMCPExecutionTimeout    = 30 * time.Second
+	defaultMCPMaxRequestBodyBytes          = 1 << 20
+	defaultMCPMaxInFlightRequests          = 8
+	defaultMCPExecutionTimeout             = 30 * time.Second
+	defaultMCPBootstrapMaxRequestBodyBytes = 32 << 10
+	defaultMCPBootstrapMaxInFlightRequests = 4
+	defaultMCPBootstrapProvisionalLifetime = 30 * time.Minute
+	defaultMCPBootstrapMaxRedirectURIs     = 5
+	defaultMCPBootstrapMaxOutstanding      = 1000
+	defaultMCPBootstrapCleanupBatchSize    = 100
+	defaultMCPBootstrapPerSourceRate       = 10
+	defaultMCPBootstrapInstanceRate        = 100
+	defaultMCPBootstrapMaxSourceBuckets    = 1024
+	defaultMCPBootstrapRateWindow          = time.Minute
+	maxMCPBootstrapRequestBodyBytes        = 1 << 20
+	maxMCPBootstrapInFlightRequests        = 64
+	maxMCPBootstrapRedirectURIs            = 20
+	maxMCPBootstrapOutstanding             = 100_000
+	maxMCPBootstrapCleanupBatchSize        = 10_000
+	maxMCPBootstrapInstanceRate            = 100_000
+	maxMCPBootstrapSourceBuckets           = 100_000
 
 	// MCPRoutePath is the instance-relative MCP endpoint path.
 	MCPRoutePath = "/mcp"
@@ -31,17 +48,42 @@ const (
 )
 
 var MCP = struct {
-	Enabled             bool
-	Authentication      MCPAuthenticationProfile
-	MaxRequestBodyBytes int64         `ini:"MAX_REQUEST_BODY_BYTES"`
-	MaxInFlightRequests int           `ini:"MAX_IN_FLIGHT_REQUESTS"`
-	ExecutionTimeout    time.Duration `ini:"EXECUTION_TIMEOUT"`
+	Enabled                            bool
+	WorkInspectionEnabled              bool `ini:"WORK_INSPECTION_ENABLED"`
+	WorkMutationEnabled                bool `ini:"WORK_MUTATION_ENABLED"`
+	ClientBootstrapEnabled             bool `ini:"CLIENT_BOOTSTRAP_ENABLED"`
+	Authentication                     MCPAuthenticationProfile
+	MaxRequestBodyBytes                int64         `ini:"MAX_REQUEST_BODY_BYTES"`
+	MaxInFlightRequests                int           `ini:"MAX_IN_FLIGHT_REQUESTS"`
+	ExecutionTimeout                   time.Duration `ini:"EXECUTION_TIMEOUT"`
+	ClientBootstrapMaxRequestBodyBytes int64         `ini:"CLIENT_BOOTSTRAP_MAX_REQUEST_BODY_BYTES"`
+	ClientBootstrapMaxInFlightRequests int           `ini:"CLIENT_BOOTSTRAP_MAX_IN_FLIGHT_REQUESTS"`
+	ClientBootstrapProvisionalLifetime time.Duration `ini:"CLIENT_BOOTSTRAP_PROVISIONAL_LIFETIME"`
+	ClientBootstrapMaxRedirectURIs     int           `ini:"CLIENT_BOOTSTRAP_MAX_REDIRECT_URIS"`
+	ClientBootstrapMaxOutstanding      int           `ini:"CLIENT_BOOTSTRAP_MAX_OUTSTANDING"`
+	ClientBootstrapCleanupBatchSize    int           `ini:"CLIENT_BOOTSTRAP_CLEANUP_BATCH_SIZE"`
+	ClientBootstrapPerSourceRate       int           `ini:"CLIENT_BOOTSTRAP_PER_SOURCE_RATE"`
+	ClientBootstrapInstanceRate        int           `ini:"CLIENT_BOOTSTRAP_INSTANCE_RATE"`
+	ClientBootstrapMaxSourceBuckets    int           `ini:"CLIENT_BOOTSTRAP_MAX_SOURCE_BUCKETS"`
+	ClientBootstrapRateWindow          time.Duration `ini:"CLIENT_BOOTSTRAP_RATE_WINDOW"`
 }{
-	Enabled:             false,
-	Authentication:      MCPAuthenticationProfileOAuth,
-	MaxRequestBodyBytes: defaultMCPMaxRequestBodyBytes,
-	MaxInFlightRequests: defaultMCPMaxInFlightRequests,
-	ExecutionTimeout:    defaultMCPExecutionTimeout,
+	Enabled:                            false,
+	WorkInspectionEnabled:              false,
+	WorkMutationEnabled:                false,
+	Authentication:                     MCPAuthenticationProfileOAuth,
+	MaxRequestBodyBytes:                defaultMCPMaxRequestBodyBytes,
+	MaxInFlightRequests:                defaultMCPMaxInFlightRequests,
+	ExecutionTimeout:                   defaultMCPExecutionTimeout,
+	ClientBootstrapMaxRequestBodyBytes: defaultMCPBootstrapMaxRequestBodyBytes,
+	ClientBootstrapMaxInFlightRequests: defaultMCPBootstrapMaxInFlightRequests,
+	ClientBootstrapProvisionalLifetime: defaultMCPBootstrapProvisionalLifetime,
+	ClientBootstrapMaxRedirectURIs:     defaultMCPBootstrapMaxRedirectURIs,
+	ClientBootstrapMaxOutstanding:      defaultMCPBootstrapMaxOutstanding,
+	ClientBootstrapCleanupBatchSize:    defaultMCPBootstrapCleanupBatchSize,
+	ClientBootstrapPerSourceRate:       defaultMCPBootstrapPerSourceRate,
+	ClientBootstrapInstanceRate:        defaultMCPBootstrapInstanceRate,
+	ClientBootstrapMaxSourceBuckets:    defaultMCPBootstrapMaxSourceBuckets,
+	ClientBootstrapRateWindow:          defaultMCPBootstrapRateWindow,
 }
 
 func loadMCPFrom(rootCfg ConfigProvider) error {
@@ -59,6 +101,28 @@ func loadMCPFrom(rootCfg ConfigProvider) error {
 	}
 	if MCP.ExecutionTimeout <= 0 {
 		MCP.ExecutionTimeout = defaultMCPExecutionTimeout
+	}
+	if MCP.ClientBootstrapMaxRequestBodyBytes <= 0 || MCP.ClientBootstrapMaxInFlightRequests <= 0 ||
+		MCP.ClientBootstrapMaxRedirectURIs <= 0 || MCP.ClientBootstrapMaxOutstanding <= 0 ||
+		MCP.ClientBootstrapCleanupBatchSize <= 0 || MCP.ClientBootstrapCleanupBatchSize > MCP.ClientBootstrapMaxOutstanding ||
+		MCP.ClientBootstrapPerSourceRate <= 0 || MCP.ClientBootstrapInstanceRate <= 0 ||
+		MCP.ClientBootstrapPerSourceRate > MCP.ClientBootstrapInstanceRate || MCP.ClientBootstrapMaxSourceBuckets <= 0 ||
+		MCP.ClientBootstrapRateWindow < time.Second ||
+		MCP.ClientBootstrapMaxRequestBodyBytes > maxMCPBootstrapRequestBodyBytes ||
+		MCP.ClientBootstrapMaxInFlightRequests > maxMCPBootstrapInFlightRequests ||
+		MCP.ClientBootstrapMaxRedirectURIs > maxMCPBootstrapRedirectURIs ||
+		MCP.ClientBootstrapMaxOutstanding > maxMCPBootstrapOutstanding ||
+		MCP.ClientBootstrapCleanupBatchSize > maxMCPBootstrapCleanupBatchSize ||
+		MCP.ClientBootstrapInstanceRate > maxMCPBootstrapInstanceRate ||
+		MCP.ClientBootstrapMaxSourceBuckets > maxMCPBootstrapSourceBuckets ||
+		MCP.ClientBootstrapRateWindow > time.Hour {
+		return errors.New("[mcp] client bootstrap bounds must be positive, ordered, and finite")
+	}
+	if MCP.ClientBootstrapProvisionalLifetime < 10*time.Minute || MCP.ClientBootstrapProvisionalLifetime > 60*time.Minute {
+		return errors.New("[mcp] CLIENT_BOOTSTRAP_PROVISIONAL_LIFETIME must be between 10m and 60m")
+	}
+	if MCP.ClientBootstrapEnabled && (!MCP.Enabled || MCP.Authentication != MCPAuthenticationProfileOAuth) {
+		return errors.New("[mcp] CLIENT_BOOTSTRAP_ENABLED requires ENABLED with OAuth authentication")
 	}
 	if MCP.Enabled {
 		appURL, err := url.Parse(AppURL)

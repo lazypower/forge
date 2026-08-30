@@ -1,0 +1,33 @@
+{{if .MCPRegistrations}}
+	<h4 class="ui top attached header">
+		{{ctx.Locale.Tr "settings.mcp_registrations"}}
+	</h4>
+	<div class="ui attached segment">
+		<p>{{ctx.Locale.Tr "settings.mcp_registrations_description"}}</p>
+		<div class="flex-divided-list items-with-main">
+			{{range .MCPRegistrations}}
+				<div class="item tw-items-center">
+					<div class="item-leading">{{svg "octicon-apps" 32}}</div>
+					<div class="item-main">
+						<div class="item-title">{{.Name}}</div>
+						<div class="item-body">
+							{{ctx.Locale.Tr "settings.mcp_registration_unverified"}}
+							{{if .MCPInstallationLabel}} · {{ctx.Locale.Tr "settings.mcp_registration_installation" .MCPInstallationLabel}}{{end}}
+							 · {{ctx.Locale.Tr "settings.mcp_registration_redirect_class" .MCPRedirectClass}}
+						</div>
+					</div>
+					<div class="item-trailing">
+						<button class="ui red tiny button link-action" data-modal-confirm="#delete-mcp-registration" data-url="{{$.Link}}/mcp/{{.ID}}/delete">
+							{{svg "octicon-trash"}} {{ctx.Locale.Tr "settings.delete_key"}}
+						</button>
+					</div>
+				</div>
+			{{end}}
+		</div>
+	</div>
+	<div class="ui small modal" id="delete-mcp-registration">
+		<div class="header">{{svg "octicon-trash"}} {{ctx.Locale.Tr "settings.mcp_registration_delete"}}</div>
+		<div class="content"><p>{{ctx.Locale.Tr "settings.mcp_registration_delete_description"}}</p></div>
+		{{template "base/modal_actions_confirm" .}}
+	</div>
+{{end}}

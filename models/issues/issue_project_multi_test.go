@@ -147,3 +147,17 @@ func TestIssueMultipleProjects(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestLegacyProjectAssignmentRejectsActivePlanMembershipChange(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+	active := &project_model.Project{
+		Title: "Active plan", RepoID: issue.RepoID, Type: project_model.TypeRepository,
+		PlanningState: project_model.PlanningStateActive,
+	}
+	require.NoError(t, project_model.NewProject(t.Context(), active))
+
+	require.ErrorIs(t, issues_model.IssueAssignOrRemoveProject(t.Context(), issue, doer, []int64{active.ID}), issues_model.ErrActivePlanMembership)
+	unittest.AssertNotExistsBean(t, &project_model.ProjectIssue{ProjectID: active.ID, IssueID: issue.ID})
+}

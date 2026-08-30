@@ -5,12 +5,18 @@ package issues
 
 import (
 	"context"
+	"errors"
 
 	"gitea.dev/models/db"
 	project_model "gitea.dev/models/project"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/util"
 )
+
+// ErrActivePlanMembership prevents legacy whole-set callers from silently
+// removing or adding cards in an active Work plan. Semantic Work mutations use
+// EnsureIssueProjectInWorkTx after validating the complete plan.
+var ErrActivePlanMembership = errors.New("active work plan membership requires the Work service")
 
 // LoadProjects loads all projects the issue is assigned to
 func (issue *Issue) LoadProjects(ctx context.Context) (err error) {
@@ -78,6 +84,21 @@ func IssueAssignOrRemoveProject(ctx context.Context, issue *Issue, doer *user_mo
 		}
 
 		projectsToAdd, projectsToRemove := util.DiffSlice(oldProjectIDs, newProjectIDs)
+		changedProjectIDs := append(append([]int64{}, projectsToAdd...), projectsToRemove...)
+		if len(changedProjectIDs) > 0 {
+			if err := project_model.StabilizePlanningStates(ctx, changedProjectIDs); err != nil {
+				return err
+			}
+			projects, err := project_model.GetProjectsMapByIDs(ctx, changedProjectIDs)
+			if err != nil {
+				return err
+			}
+			for _, project := range projects {
+				if project.PlanningState == project_model.PlanningStateActive {
+					return ErrActivePlanMembership
+				}
+			}
+		}
 		issue.isProjectsLoaded = false
 		issue.Projects = nil
 
@@ -148,4 +169,57 @@ func IssueAssignOrRemoveProject(ctx context.Context, issue *Issue, doer *user_mo
 		}
 		return nil
 	})
+}
+
+// EnsureIssueProjectInWorkTx makes one Project membership present or absent
+// without replacing unrelated memberships. The caller owns the Work
+// transaction and the complete-plan validation.
+func EnsureIssueProjectInWorkTx(ctx context.Context, issue *Issue, doer *user_model.User, project *project_model.Project, present bool) (bool, *Comment, error) {
+	if issue == nil || project == nil {
+		return false, nil, util.ErrInvalidArgument
+	}
+	if err := issue.LoadRepo(ctx); err != nil {
+		return false, nil, err
+	}
+	if !project.CanBeAccessedByOwnerRepo(issue.Repo.OwnerID, issue.Repo) {
+		return false, nil, util.NewPermissionDeniedErrorf("issue %d can't be accessed by project %d", issue.ID, project.ID)
+	}
+
+	relation := &project_model.ProjectIssue{ProjectID: project.ID, IssueID: issue.ID}
+	exists, err := db.GetEngine(ctx).Where("project_id = ? AND issue_id = ?", project.ID, issue.ID).Exist(relation)
+	if err != nil {
+		return false, nil, err
+	}
+	if present == exists {
+		return false, nil, nil
+	}
+	issue.isProjectsLoaded = false
+	issue.Projects = nil
+	if !present {
+		if _, err := db.GetEngine(ctx).Where("project_id = ? AND issue_id = ?", project.ID, issue.ID).Delete(new(project_model.ProjectIssue)); err != nil {
+			return false, nil, err
+		}
+		comment, err := CreateComment(ctx, &CreateCommentOptions{
+			Type: CommentTypeProject, Doer: doer, Repo: issue.Repo, Issue: issue, OldProjectID: project.ID,
+		})
+		return err == nil, comment, err
+	}
+
+	defaultColumn, err := project.MustDefaultColumn(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+	sorting, err := project_model.GetColumnIssueNextSorting(ctx, project.ID, defaultColumn.ID)
+	if err != nil {
+		return false, nil, err
+	}
+	if err := db.Insert(ctx, &project_model.ProjectIssue{
+		IssueID: issue.ID, ProjectID: project.ID, ProjectColumnID: defaultColumn.ID, Sorting: sorting,
+	}); err != nil {
+		return false, nil, err
+	}
+	comment, err := CreateComment(ctx, &CreateCommentOptions{
+		Type: CommentTypeProject, Doer: doer, Repo: issue.Repo, Issue: issue, ProjectID: project.ID,
+	})
+	return err == nil, comment, err
 }

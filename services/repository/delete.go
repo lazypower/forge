@@ -13,6 +13,7 @@ import (
 	"gitea.dev/models/db"
 	git_model "gitea.dev/models/git"
 	issues_model "gitea.dev/models/issues"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	"gitea.dev/models/organization"
 	packages_model "gitea.dev/models/packages"
 	access_model "gitea.dev/models/perm/access"
@@ -34,6 +35,8 @@ import (
 
 	"xorm.io/builder"
 )
+
+var retireRepositoryMCPWorkReceipts = mcpwork_model.RetireRepository
 
 func deleteDBRepository(ctx context.Context, repoID int64) error {
 	if cnt, err := db.GetEngine(ctx).ID(repoID).Delete(&repo_model.Repository{}); err != nil {
@@ -99,6 +102,9 @@ func DeleteRepositoryDirectly(ctx context.Context, repoID int64, ignoreOrgTeams 
 	needRewriteKeysFile := deleted > 0
 
 	if err := deleteDBRepository(ctx, repoID); err != nil {
+		return err
+	}
+	if err := retireRepositoryMCPWorkReceipts(ctx, repoID); err != nil {
 		return err
 	}
 

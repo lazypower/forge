@@ -4,15 +4,15 @@
 package auth_test
 
 import (
+	"errors"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	auth_model "gitea.dev/models/auth"
-	"gitea.dev/models/db"
 	"gitea.dev/models/unittest"
-	"gitea.dev/modules/setting"
-	test_module "gitea.dev/modules/test"
 	"gitea.dev/modules/timeutil"
 
 	"github.com/stretchr/testify/assert"
@@ -30,7 +30,7 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, expectedValidUntil, code.ValidUntil)
 		assert.False(t, code.IsExpired())
-		assert.Equal(t, int64(1), code.ID)
+		assert.Positive(t, code.ID)
 
 		code2, err := auth_model.GetOAuth2AuthorizationByCode(t.Context(), code.Code)
 		require.NoError(t, err)
@@ -65,103 +65,199 @@ func TestOAuth2AuthorizationCode(t *testing.T) {
 	})
 }
 
-func TestMCPBuiltinOAuth2Application(t *testing.T) {
-	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/")()
-	builtin := auth_model.BuiltinApplications()[auth_model.MCPBuiltinOAuth2ApplicationClientID]
-	require.NotNil(t, builtin)
-	assert.Equal(t, auth_model.MCPBuiltinOAuth2ApplicationName, builtin.ConfigName)
-	assert.Equal(t, "Forge MCP", builtin.DisplayName)
-	assert.True(t, builtin.MCPExclusive)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe", "https://127.0.0.1"}, builtin.RedirectURIs)
-	assert.True(t, auth_model.IsMCPBuiltinOAuth2Application(&auth_model.OAuth2Application{ClientID: auth_model.MCPBuiltinOAuth2ApplicationClientID}))
+func TestMCPClientRegistrationLifecycle(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	require.NoError(t, auth_model.Init(t.Context()))
+	now := time.Now().UTC().Truncate(time.Second)
+	app, err := auth_model.CreateMCPClientRegistration(t.Context(), "Planning harness", "laptop", []string{"http://127.0.0.1/callback"}, auth_model.MCPRedirectClassLoopback, now.Add(30*time.Minute), 2)
+	require.NoError(t, err)
+	assert.True(t, app.IsMCPClientRegistration())
+	assert.Equal(t, auth_model.MCPRegistrationStateProvisional, app.MCPRegistrationState)
+	assert.True(t, strings.HasPrefix(app.ClientID, "mcp_"))
+	assert.GreaterOrEqual(t, len(app.ClientID), 50)
+	assert.Empty(t, app.ClientSecret)
+	_, err = app.GenerateClientSecret(t.Context())
+	assert.ErrorContains(t, err, "cannot have a client secret")
+	assert.True(t, app.ContainsMCPRedirectURI("http://127.0.0.1:49152/callback"))
+	assert.False(t, app.ContainsMCPRedirectURI("http://127.0.0.1:49152/Callback"))
+	grant, err := app.GetGrantByUserID(t.Context(), 1)
+	require.NoError(t, err)
+	assert.Nil(t, grant)
+
+	finalized, grant, code, err := auth_model.ApproveMCPClientRegistration(t.Context(), app.ID, 1, "read:repository", "", "http://127.0.0.1:49152/callback", "challenge", "S256", "https://forge.example/mcp", now)
+	require.NoError(t, err)
+	assert.Equal(t, auth_model.MCPRegistrationStateFinalized, finalized.MCPRegistrationState)
+	assert.Equal(t, int64(1), finalized.MCPBoundUserID)
+	require.NotNil(t, grant)
+	require.NotNil(t, code)
+	_, _, _, err = auth_model.ApproveMCPClientRegistration(t.Context(), app.ID, 2, "read:repository", "", "http://127.0.0.1:49152/callback", "challenge", "S256", "https://forge.example/mcp", now)
+	assert.ErrorIs(t, err, auth_model.ErrMCPRegistrationWrongPrincipal)
+
+	_, err = auth_model.UpdateOAuth2Application(t.Context(), auth_model.UpdateOAuth2ApplicationOptions{ID: app.ID, UserID: 0, Name: "changed"})
+	assert.ErrorContains(t, err, "metadata is immutable")
+	assert.ErrorIs(t, auth_model.DeleteFinalizedMCPRegistration(t.Context(), app.ID, 1), auth_model.ErrMCPRegistrationHasGrant)
+	require.NoError(t, auth_model.RevokeOAuth2Grant(t.Context(), grant.ID, 1))
+	reloadedCode, err := auth_model.GetOAuth2AuthorizationByCode(t.Context(), code.Code)
+	require.NoError(t, err)
+	assert.Nil(t, reloadedCode)
+	registrations, err := auth_model.ListUngrantFinalizedMCPRegistrations(t.Context(), 1)
+	require.NoError(t, err)
+	require.Len(t, registrations, 1)
+	assert.ErrorIs(t, auth_model.DeleteFinalizedMCPRegistration(t.Context(), app.ID, 2), auth_model.ErrMCPRegistrationWrongPrincipal)
+	require.NoError(t, auth_model.DeleteFinalizedMCPRegistration(t.Context(), app.ID, 1))
+	unittest.AssertNotExistsBean(t, &auth_model.OAuth2Application{ID: app.ID})
 }
 
-func TestMCPBuiltinOAuth2ApplicationLifecycle(t *testing.T) {
+func TestMCPSharedClientsAbsentFromFreshInitialization(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
-	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/")()
-	defer test_module.MockVariableValue(&setting.MCP.Enabled, false)()
-	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
-	expectedRedirects := []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/kiPXe-El69xe", "https://127.0.0.1"}
-
 	require.NoError(t, auth_model.Init(t.Context()))
-	_, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.True(t, auth_model.IsErrOauthClientIDInvalid(err))
-
-	setting.MCP.Enabled = true
-	require.NoError(t, auth_model.Init(t.Context()))
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-	assert.False(t, app.ConfidentialClient)
-	assert.Equal(t, expectedRedirects, app.RedirectURIs)
-
-	for _, legacyRedirects := range [][]string{
-		{"http://127.0.0.1", "https://127.0.0.1"},
-		{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"},
+	for _, clientID := range []string{
+		"f16c9e54-1f8b-4a9c-9b62-70d8d46f0e31",
+		"92e7ae67-8fae-4d6f-a122-0e2f8b82ef1a",
 	} {
-		app.RedirectURIs = legacyRedirects
-		_, err = db.GetEngine(t.Context()).ID(app.ID).Cols("redirect_uris").Update(app)
-		require.NoError(t, err)
-		require.NoError(t, auth_model.Init(t.Context()))
-		upgraded, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-		require.NoError(t, err)
-		assert.Equal(t, expectedRedirects, upgraded.RedirectURIs)
+		_, configured := auth_model.BuiltinApplications()[clientID]
+		assert.False(t, configured)
+		_, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), clientID)
+		assert.True(t, auth_model.IsErrOauthClientIDInvalid(err))
 	}
-
-	setting.AppURL = "https://moved-forge.example/"
-	require.NoError(t, auth_model.Init(t.Context()))
-	moved, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/hM8DzwbydX6Q", "https://127.0.0.1"}, moved.RedirectURIs)
-
-	setting.MCP.Enabled = false
-	require.NoError(t, auth_model.Init(t.Context()))
-	disabled, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-	assert.Equal(t, app.ID, disabled.ID)
-
-	setting.MCP.Enabled = true
-	setting.MCP.Authentication = setting.MCPAuthenticationProfilePAT
-	require.NoError(t, auth_model.Init(t.Context()))
-	retained, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-	assert.Equal(t, app.ID, retained.ID)
-
-	originalDefaults := setting.OAuth2.DefaultApplications
-	defer func() { setting.OAuth2.DefaultApplications = originalDefaults }()
-	setting.OAuth2.DefaultApplications = append([]string{}, auth_model.MCPBuiltinOAuth2ApplicationName)
-	assert.EqualError(t, auth_model.Init(t.Context()), `unknown oauth2 application: "forge-mcp"`)
 }
 
-func TestMCPBuiltinOAuth2ApplicationRejectsDrift(t *testing.T) {
+func TestMCPClientRegistrationCapacityExpiryAndCleanup(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
-	defer test_module.MockVariableValue(&setting.MCP.Enabled, true)()
-	defer test_module.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	require.NoError(t, auth_model.Init(t.Context()))
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name         string
-		confidential bool
-		redirects    []string
-	}{
-		{name: "confidential client", confidential: true, redirects: app.RedirectURIs},
-		{name: "unexpected redirects", redirects: []string{"http://127.0.0.1", "https://attacker.example/callback"}},
-		{name: "malformed callback ID", redirects: []string{"http://127.0.0.1", "http://127.0.0.1/callback", "http://127.0.0.1/callback/not-a-callback-id", "https://127.0.0.1"}},
+	now := time.Now().UTC().Truncate(time.Second)
+	for range 2 {
+		_, err := auth_model.CreateMCPClientRegistration(t.Context(), "Harness", "", []string{"https://client.example/callback"}, auth_model.MCPRedirectClassHTTPS, now.Add(-time.Minute), 2)
+		require.NoError(t, err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			candidate := *app
-			candidate.ConfidentialClient = test.confidential
-			candidate.RedirectURIs = test.redirects
-			_, err := db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(&candidate)
-			require.NoError(t, err)
-			assert.EqualError(t, auth_model.Init(t.Context()), "the built-in Forge MCP OAuth application is not a public client with the fixed loopback redirects")
+	_, err := auth_model.CreateMCPClientRegistration(t.Context(), "Harness", "", []string{"https://client.example/callback"}, auth_model.MCPRedirectClassHTTPS, now.Add(time.Minute), 2)
+	assert.ErrorIs(t, err, auth_model.ErrMCPRegistrationCapacity)
+	deleted, err := auth_model.CleanupExpiredMCPClientRegistrations(t.Context(), now, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, deleted)
+	_, err = auth_model.CreateMCPClientRegistration(t.Context(), "Harness", "", []string{"https://client.example/callback"}, auth_model.MCPRedirectClassHTTPS, now.Add(time.Minute), 2)
+	require.NoError(t, err)
+	deleted, err = auth_model.CleanupExpiredMCPClientRegistrations(t.Context(), now, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, deleted)
+	deleted, err = auth_model.CleanupExpiredMCPClientRegistrations(t.Context(), now, 10)
+	require.NoError(t, err)
+	assert.Zero(t, deleted)
+}
 
-			_, err = db.GetEngine(t.Context()).ID(app.ID).UseBool("confidential_client").Update(app)
-			require.NoError(t, err)
+func TestMCPClientRegistrationExpiryDuringConsentCreatesNoGrant(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	require.NoError(t, auth_model.Init(t.Context()))
+	now := time.Now().UTC().Truncate(time.Second)
+	app, err := auth_model.CreateMCPClientRegistration(t.Context(), "Harness", "", []string{"http://127.0.0.1/callback"}, auth_model.MCPRedirectClassLoopback, now.Add(-time.Second), 10)
+	require.NoError(t, err)
+	_, _, _, err = auth_model.ApproveMCPClientRegistration(t.Context(), app.ID, 1, "read:repository", "", "http://127.0.0.1:49152/callback", "challenge", "S256", "https://forge.example/mcp", now)
+	assert.ErrorIs(t, err, auth_model.ErrMCPRegistrationExpired)
+	unittest.AssertNotExistsBean(t, &auth_model.OAuth2Application{ID: app.ID})
+	unittest.AssertNotExistsBean(t, &auth_model.OAuth2Grant{ApplicationID: app.ID})
+	unittest.AssertNotExistsBean(t, &auth_model.OAuth2AuthorizationCode{})
+}
+
+func TestMCPClientRegistrationExactRedirectMatching(t *testing.T) {
+	httpsApp := &auth_model.OAuth2Application{
+		MCPRegistrationState: auth_model.MCPRegistrationStateFinalized,
+		MCPRedirectClass:     auth_model.MCPRedirectClassHTTPS,
+		RedirectURIs:         []string{"https://client.example/Callback?channel=A"},
+	}
+	assert.True(t, httpsApp.ContainsMCPRedirectURI("https://client.example/Callback?channel=A"))
+	for _, changed := range []string{
+		"https://client.example/callback?channel=A",
+		"https://client.example/Callback/?channel=A",
+		"https://client.example/Callback?channel=a",
+		"https://CLIENT.example/Callback?channel=A",
+		"https://client.example/%43allback?channel=A",
+		"https://client.example/path/../Callback?channel=A",
+	} {
+		assert.False(t, httpsApp.ContainsMCPRedirectURI(changed), changed)
+	}
+
+	loopback := &auth_model.OAuth2Application{
+		MCPRegistrationState: auth_model.MCPRegistrationStateFinalized,
+		MCPRedirectClass:     auth_model.MCPRedirectClassLoopback,
+		RedirectURIs:         []string{"http://127.0.0.1:49151/Callback?channel=A"},
+	}
+	assert.True(t, loopback.ContainsMCPRedirectURI("http://127.0.0.1:49152/Callback?channel=A"))
+	for _, changed := range []string{
+		"http://127.0.0.1:49152/callback?channel=A",
+		"http://127.0.0.1:49152/Callback/?channel=A",
+		"http://127.0.0.1:49152/Callback?channel=a",
+		"http://127.0.0.2:49152/Callback?channel=A",
+	} {
+		assert.False(t, loopback.ContainsMCPRedirectURI(changed), changed)
+	}
+}
+
+func TestMCPClientRegistrationConcurrentFirstApproval(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	require.NoError(t, auth_model.Init(t.Context()))
+	now := time.Now().UTC().Truncate(time.Second)
+	app, err := auth_model.CreateMCPClientRegistration(t.Context(), "Harness", "", []string{"http://127.0.0.1/callback"}, auth_model.MCPRedirectClassLoopback, now.Add(30*time.Minute), 10)
+	require.NoError(t, err)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for _, userID := range []int64{1, 2} {
+		wait.Go(func() {
+			<-start
+			_, _, _, err := auth_model.ApproveMCPClientRegistration(t.Context(), app.ID, userID, "read:repository", "", "http://127.0.0.1:49152/callback", "challenge", "S256", "https://forge.example/mcp", now)
+			results <- err
 		})
 	}
+	close(start)
+	wait.Wait()
+	close(results)
+	succeeded := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+			continue
+		}
+		assert.True(t, errors.Is(err, auth_model.ErrMCPRegistrationNotProvisional) || errors.Is(err, auth_model.ErrMCPRegistrationWrongPrincipal), err)
+	}
+	assert.Equal(t, 1, succeeded)
+	assert.Equal(t, 1, unittest.GetCount(t, &auth_model.OAuth2Grant{ApplicationID: app.ID}))
+}
+
+func TestMCPClientRegistrationReconnectDeleteRace(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	require.NoError(t, auth_model.Init(t.Context()))
+	now := time.Now().UTC().Truncate(time.Second)
+	app, err := auth_model.CreateMCPClientRegistration(t.Context(), "Harness", "", []string{"http://127.0.0.1/callback"}, auth_model.MCPRedirectClassLoopback, now.Add(30*time.Minute), 10)
+	require.NoError(t, err)
+	app, grant, _, err := auth_model.ApproveMCPClientRegistration(t.Context(), app.ID, 1, "read:repository", "", "http://127.0.0.1:49152/callback", "challenge", "S256", "https://forge.example/mcp", now)
+	require.NoError(t, err)
+	require.NoError(t, auth_model.RevokeOAuth2Grant(t.Context(), grant.ID, 1))
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	wait.Go(func() {
+		<-start
+		_, _, _, err := auth_model.ApproveMCPClientRegistration(t.Context(), app.ID, 1, "read:repository", "", "http://127.0.0.1:49152/callback", "challenge", "S256", "https://forge.example/mcp", now)
+		results <- err
+	})
+	wait.Go(func() {
+		<-start
+		results <- auth_model.DeleteFinalizedMCPRegistration(t.Context(), app.ID, 1)
+	})
+	close(start)
+	wait.Wait()
+	close(results)
+	succeeded := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	assert.Equal(t, 1, succeeded)
+	appCount := unittest.GetCount(t, &auth_model.OAuth2Application{ID: app.ID})
+	grantCount := unittest.GetCount(t, &auth_model.OAuth2Grant{ApplicationID: app.ID})
+	assert.True(t, (appCount == 1 && grantCount == 1) || (appCount == 0 && grantCount == 0))
 }
 
 func TestOAuth2Application_GenerateClientSecret(t *testing.T) {

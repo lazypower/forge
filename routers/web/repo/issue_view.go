@@ -417,6 +417,7 @@ func ViewIssue(ctx *context.Context) {
 	ctx.Data["CanBlockUser"] = func(blocker, blockee *user_model.User) bool {
 		return user_service.CanBlockUser(ctx, ctx.Doer, blocker, blockee)
 	}
+	prepareIssueWorkView(ctx, issue)
 
 	if !setting.IsProd && issue.PullRequest != nil && prViewInfo.MergeBoxData != nil && prViewInfo.MergeBoxData.ReloadingInterval == 0 {
 		prViewInfo.MergeBoxData.ReloadingInterval = 1 // in dev env, force using the reloading logic to make sure it won't break

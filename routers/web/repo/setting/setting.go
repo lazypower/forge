@@ -13,6 +13,7 @@ import (
 
 	"gitea.dev/models/db"
 	"gitea.dev/models/organization"
+	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	unit_model "gitea.dev/models/unit"
 	user_model "gitea.dev/models/user"
@@ -688,6 +689,11 @@ func handleSettingsPostAdvanced(ctx *context.Context) {
 	}
 
 	if err := repo_service.UpdateRepositoryUnits(ctx, repo, units, deleteUnitTypes); err != nil {
+		if errors.Is(err, project_model.ErrActiveWorkPlan) {
+			ctx.Flash.Error(err.Error())
+			ctx.Redirect(ctx.Repo.RepoLink + "/settings")
+			return
+		}
 		ctx.ServerError("UpdateRepositoryUnits", err)
 		return
 	}

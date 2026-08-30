@@ -55,6 +55,34 @@ test('create a project', async ({page}) => {
   }
 });
 
+test('work planning lifecycle preserves ordinary project controls', async ({page}) => {
+  const repoName = `e2e-work-planning-${randomString(8)}`;
+  const user = env.GITEA_TEST_E2E_USER;
+  await Promise.all([login(page), apiCreateRepo(page.request, {name: repoName, autoInit: false})]);
+
+  try {
+    const project = await createProject(page, {owner: user, repo: repoName, title: 'Human Work plan'});
+    await page.goto(`/${user}/${repoName}/projects/${project.id}`);
+
+    await expect(page.locator('.work-plan')).toHaveCount(0);
+    await expect(page.locator('.show-project-column-modal-edit').first()).toBeVisible();
+    await expect(page.locator('button[data-url$="/planning/begin"]')).toBeVisible();
+
+    await page.locator('button[data-url$="/planning/begin"]').click();
+    await expect(page.locator('.work-plan[data-work-plan-state="draft"]')).toBeVisible();
+    await expect(page.locator('.work-plan')).toContainText('Columns organize the board. They do not determine work readiness or completion.');
+
+    await page.locator('button[data-url*="/planning/active?plan_token="]').click();
+    await expect(page.locator('.work-plan[data-work-plan-state="active"]')).toBeVisible();
+    await expect(page.locator('button[data-url*="/delete?plan_token="]')).toHaveCount(0);
+
+    await page.locator('button[data-url*="/planning/draft?plan_token="]').click();
+    await expect(page.locator('.work-plan[data-work-plan-state="draft"]')).toBeVisible();
+  } finally {
+    await apiDeleteRepo(page.request, user, repoName);
+  }
+});
+
 test('assign issue to multiple projects via sidebar', async ({page}) => {
   const repoName = `e2e-multi-project-${Date.now()}`;
   const project1Title = 'Project Alpha';

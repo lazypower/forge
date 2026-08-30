@@ -1,0 +1,74 @@
+{{if .HumanWorkItem}}
+	{{$work := .HumanWorkItem}}
+	<div class="divider"></div>
+	<div class="ui labels work-item-context" data-work-classification="{{$work.Item.Classification}}">
+		<h4>{{ctx.Locale.Tr "repo.issues.work_planning.title"}}</h4>
+		{{if $work.Contexts}}
+			<div class="flex-list">
+				{{range $work.Contexts}}
+					<a class="flex-item muted {{if .Selected}}active{{end}}" href="{{$.Issue.Link}}?work_plan={{.ProjectID}}" data-work-context="{{.Ref}}" data-work-state="{{.DerivedState}}">
+						<div class="flex-item-main">
+							<span class="flex-item-title">{{if .ProjectLabel}}{{.ProjectLabel}}{{else}}{{.ProjectRef}}{{end}}</span>
+							<span class="ui small label">{{ctx.Locale.Tr (printf "repo.issues.work_planning.state.%s" .DerivedState)}}</span>
+						</div>
+					</a>
+				{{end}}
+			</div>
+			{{if not $work.SelectedContext}}
+				<p class="tw-text-text-light">{{ctx.Locale.Tr "repo.issues.work_planning.select_context"}}</p>
+			{{end}}
+		{{else}}
+			<p class="tw-text-text-light work-item-unplanned">{{ctx.Locale.Tr "repo.issues.work_planning.unplanned"}}</p>
+		{{end}}
+
+		{{if $work.SelectedContext}}
+			<div class="ui segment selected-work-context" data-work-context="{{$work.SelectedContext.Ref}}" data-work-state="{{$work.SelectedContext.DerivedState}}" data-work-integrity="{{$work.SelectedContext.Integrity.Status}}">
+				<strong>{{ctx.Locale.Tr "repo.issues.work_planning.selected_readiness"}}</strong>
+				<span class="ui label">{{ctx.Locale.Tr (printf "repo.issues.work_planning.state.%s" $work.SelectedContext.DerivedState)}}</span>
+				{{if ne $work.SelectedContext.Integrity.Status "valid"}}
+					<div class="ui warning message tw-mt-2">
+						{{range $work.SelectedContext.Integrity.Concerns}}
+							<div data-work-integrity-code="{{.Code}}">{{ctx.Locale.Tr (printf "repo.projects.work_planning.integrity.%s" .Code)}}</div>
+						{{end}}
+					</div>
+				{{end}}
+				{{if $work.SelectedContext.PrerequisiteSummaries}}
+					<h5>{{ctx.Locale.Tr "repo.issues.work_planning.prerequisites"}}</h5>
+					{{range $work.SelectedContext.PrerequisiteSummaries}}
+						{{if eq .Availability "available"}}
+							<a class="item" href="{{.URL}}">{{.Label}}</a>
+						{{else}}
+							<span class="item work-undisclosed-prerequisite">{{ctx.Locale.Tr "repo.issues.work_planning.undisclosed_prerequisite"}}</span>
+						{{end}}
+					{{end}}
+				{{end}}
+			</div>
+		{{end}}
+
+		{{if $work.Item.DeliverySummaries}}
+			<div class="work-deliveries">
+				<h5>{{ctx.Locale.Tr "repo.issues.work_planning.deliveries"}}</h5>
+				{{range $work.Item.DeliverySummaries}}
+					<a class="item" href="{{.URL}}" data-work-delivery="{{.Ref}}" data-work-check-state="{{.CheckState}}">
+						{{.Ref}} · {{ctx.Locale.Tr (printf "repo.issues.work_planning.delivery_state.%s" .State)}} · {{ShortSha .Revision}} · {{ctx.Locale.Tr (printf "repo.issues.work_planning.check_state.%s" .CheckState)}}
+					</a>
+				{{end}}
+			</div>
+		{{end}}
+	</div>
+{{end}}
+
+{{if .HumanPullWorkItems}}
+	<div class="divider"></div>
+	<div class="work-pull-deliveries">
+		<h4>{{ctx.Locale.Tr "repo.pulls.work_planning.delivers"}}</h4>
+		{{range .HumanPullWorkItems}}
+			<div class="item" data-work-item="{{.Item.Ref}}">
+				<a href="{{.Item.URL}}">{{.Item.Title}}</a>
+				{{range .Contexts}}
+					<span class="ui small label" data-work-context="{{.Ref}}" data-work-state="{{.DerivedState}}">{{if .ProjectLabel}}{{.ProjectLabel}}: {{end}}{{ctx.Locale.Tr (printf "repo.issues.work_planning.state.%s" .DerivedState)}}</span>
+				{{end}}
+			</div>
+		{{end}}
+	</div>
+{{end}}

@@ -5,6 +5,7 @@ package repo
 
 import (
 	"bytes"
+	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	git_model "gitea.dev/models/git"
 	issues_model "gitea.dev/models/issues"
 	"gitea.dev/models/organization"
+	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unit"
 	user_model "gitea.dev/models/user"
@@ -391,6 +393,10 @@ func BatchDeleteIssues(ctx *context.Context) {
 	}
 	for _, issue := range issues {
 		if err := issue_service.DeleteIssue(ctx, ctx.Doer, issue); err != nil {
+			if errors.Is(err, project_model.ErrActiveWorkPlan) {
+				ctx.JSONError(err.Error())
+				return
+			}
 			ctx.ServerError("DeleteIssue", err)
 			return
 		}

@@ -66,6 +66,29 @@ func TestGetCommitStatuses(t *testing.T) {
 	assert.Empty(t, statuses)
 }
 
+func TestGetLatestCommitStatusesByRepoAndSHAPreservesRevision(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	first := git_model.RepoSHA{RepoID: 1, SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	second := git_model.RepoSHA{RepoID: 1, SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	assert.NoError(t, db.Insert(t.Context(), &git_model.CommitStatus{
+		Index: 1, RepoID: first.RepoID, SHA: first.SHA, Context: "ci", ContextHash: "first-ci", State: commitstatus.CommitStatusSuccess,
+	}))
+	assert.NoError(t, db.Insert(t.Context(), &git_model.CommitStatus{
+		Index: 1, RepoID: second.RepoID, SHA: second.SHA, Context: "ci", ContextHash: "second-ci", State: commitstatus.CommitStatusFailure,
+	}))
+
+	statuses, err := git_model.GetLatestCommitStatusesByRepoAndSHA(t.Context(), []git_model.RepoSHA{first, second})
+	assert.NoError(t, err)
+	if assert.Len(t, statuses[first], 1) {
+		assert.Equal(t, first.SHA, statuses[first][0].SHA)
+		assert.Equal(t, commitstatus.CommitStatusSuccess, statuses[first][0].State)
+	}
+	if assert.Len(t, statuses[second], 1) {
+		assert.Equal(t, second.SHA, statuses[second][0].SHA)
+		assert.Equal(t, commitstatus.CommitStatusFailure, statuses[second][0].State)
+	}
+}
+
 func Test_CalcCommitStatus(t *testing.T) {
 	kases := []struct {
 		statuses []*git_model.CommitStatus

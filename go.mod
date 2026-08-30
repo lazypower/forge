@@ -63,6 +63,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/feeds v1.2.0
 	github.com/gorilla/sessions v1.4.0
+	github.com/gowebpki/jcs v1.0.1
 	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/huandu/xstrings v1.5.0
@@ -299,3 +300,5 @@ replace github.com/Azure/azure-sdk-for-go/sdk/azcore => github.com/Azure/azure-s
 replace github.com/Azure/azure-sdk-for-go/sdk/storage/azblob => github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2 // v1.6.4+ uses API version unsupported by Azurite in CI
 
 replace github.com/microsoft/go-mssqldb => github.com/microsoft/go-mssqldb v1.9.7 // downgraded with Azure SDK
+
+replace xorm.io/xorm => github.com/lazypower/xorm v1.3.12-0.20260829010916-dae8963e7eb3

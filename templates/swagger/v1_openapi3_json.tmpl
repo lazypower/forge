@@ -23011,6 +23011,9 @@
           },
           "404": {
             "$ref": "#/components/responses/notFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/validationError"
           }
         },
         "summary": "Unblock the issue given in the body by the issue in path",
@@ -23125,6 +23128,9 @@
           },
           "404": {
             "description": "the issue does not exist"
+          },
+          "422": {
+            "$ref": "#/components/responses/validationError"
           }
         },
         "summary": "Block the issue given in the body by the issue in path",
@@ -23499,6 +23505,9 @@
           "404": {
             "$ref": "#/components/responses/notFound"
           },
+          "422": {
+            "$ref": "#/components/responses/validationError"
+          },
           "423": {
             "$ref": "#/components/responses/repoArchivedError"
           }
@@ -23615,6 +23624,9 @@
           },
           "404": {
             "description": "the issue does not exist"
+          },
+          "422": {
+            "$ref": "#/components/responses/validationError"
           },
           "423": {
             "$ref": "#/components/responses/repoArchivedError"

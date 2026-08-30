@@ -6,6 +6,7 @@ package integration
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	issues_model "gitea.dev/models/issues"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unittest"
+	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/json"
 	"gitea.dev/modules/setting"
 	"gitea.dev/modules/test"
@@ -33,6 +35,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -124,7 +127,7 @@ func (trace *mcpOAuthHTTPTrace) tokens() []oauth2_provider.AccessTokenResponse {
 	return append([]oauth2_provider.AccessTokenResponse(nil), trace.tokenResponses...)
 }
 
-func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL string, callbackCount *atomic.Int64, authorizationCode *string) mcpauth.AuthorizationCodeFetcher {
+func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL string, callbackCount *atomic.Int64, authorizationCode, authorizedClientID *string) mcpauth.AuthorizationCodeFetcher {
 	t.Helper()
 	return func(ctx context.Context, args *mcpauth.AuthorizationArgs) (*mcpauth.AuthorizationResult, error) {
 		authorizationURL, err := url.Parse(args.URL)
@@ -132,6 +135,7 @@ func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL str
 			return nil, err
 		}
 		query := authorizationURL.Query()
+		*authorizedClientID = query.Get("client_id")
 		if authorizationURL.Path != "/forge/login/oauth/authorize" || query.Get("resource") != setting.MCPResource() ||
 			query.Get("scope") != string(auth_model.AccessTokenScopeReadRepository) || query.Get("code_challenge_method") != "S256" ||
 			query.Get("code_challenge") == "" || query.Get("state") == "" || query.Get("redirect_uri") != callbackURL {
@@ -154,6 +158,12 @@ func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL str
 		if resp.StatusCode != http.StatusOK || document.Find(`form[action="/forge/login/oauth/grant"]`).Length() != 1 {
 			return nil, fmt.Errorf("Forge did not present MCP consent: status %d", resp.StatusCode)
 		}
+		consentText := strings.Join(strings.Fields(document.Text()), " ")
+		for _, expected := range []string{"client-provided", "not verified", "Local application (loopback)"} {
+			if !strings.Contains(consentText, expected) {
+				return nil, fmt.Errorf("Forge consent omitted MCP trust context: %s", expected)
+			}
+		}
 		for name, expected := range map[string]string{
 			"client_id": query.Get("client_id"), "redirect_uri": callbackURL, "state": query.Get("state"),
 			"scope": query.Get("scope"), "resource": query.Get("resource"),
@@ -162,6 +172,28 @@ func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL str
 			if !exists || actual != expected {
 				return nil, fmt.Errorf("Forge consent did not preserve %s", name)
 			}
+		}
+		tamperedConsent := url.Values{
+			"client_id":    {query.Get("client_id")},
+			"redirect_uri": {callbackURL},
+			"state":        {query.Get("state")},
+			"scope":        {oauth2_provider.MCPWorkWriteScope},
+			"resource":     {query.Get("resource")},
+			"granted":      {"true"},
+		}
+		tamperedRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/grant", strings.NewReader(tamperedConsent.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		tamperedRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		tamperedResponse, err := client.Do(tamperedRequest)
+		if err != nil {
+			return nil, err
+		}
+		io.Copy(io.Discard, tamperedResponse.Body)
+		tamperedResponse.Body.Close()
+		if tamperedResponse.StatusCode != http.StatusBadRequest {
+			return nil, fmt.Errorf("Forge accepted a consent scope change: status %d", tamperedResponse.StatusCode)
 		}
 
 		consent := url.Values{
@@ -202,6 +234,34 @@ func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL str
 	}
 }
 
+func bootstrapMCPClient(t *testing.T, client *http.Client, name, callbackURL string) *oauth2_provider.MCPClientRegistrationResponse {
+	t.Helper()
+	body, err := json.Marshal(oauth2_provider.MCPClientRegistrationRequest{
+		ClientName:              name,
+		RedirectURIs:            []string{callbackURL},
+		TokenEndpointAuthMethod: "none",
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		ApplicationType:         "native",
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/register", strings.NewReader(string(body)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	responseBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, string(responseBody))
+	var registration oauth2_provider.MCPClientRegistrationResponse
+	require.NoError(t, json.Unmarshal(responseBody, &registration))
+	assert.NotContains(t, string(responseBody), "client_secret")
+	assert.True(t, strings.HasPrefix(registration.ClientID, "mcp_"))
+	assert.Equal(t, "none", registration.TokenEndpointAuthMethod)
+	return &registration
+}
+
 func assertMCPTokenClaims(t *testing.T, tokenValue, issuer, subject, resource string) *oauth2_provider.Token {
 	t.Helper()
 	token, err := oauth2_provider.ParseToken(tokenValue, oauth2_provider.DefaultSigningKey)
@@ -210,6 +270,9 @@ func assertMCPTokenClaims(t *testing.T, tokenValue, issuer, subject, resource st
 	assert.Equal(t, issuer, token.Issuer)
 	assert.Equal(t, subject, token.Subject)
 	assert.Equal(t, []string{resource}, []string(token.Audience))
+	credentialID, err := uuid.Parse(token.ID)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(4), credentialID.Version())
 	return token
 }
 
@@ -233,7 +296,7 @@ func signMCPConformanceAccessToken(t *testing.T, grantID int64, issuer, subject 
 		GrantID: grantID,
 		Kind:    oauth2_provider.KindAccessToken,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: issuer, Subject: subject, Audience: jwt.ClaimStrings(audiences), ExpiresAt: jwt.NewNumericDate(expiresAt),
+			Issuer: issuer, Subject: subject, Audience: jwt.ClaimStrings(audiences), ExpiresAt: jwt.NewNumericDate(expiresAt), ID: "0f0f7a12-6657-4a3a-b8b2-a7d0d40f87b2",
 		},
 	}).SignToken(oauth2_provider.DefaultSigningKey)
 	require.NoError(t, err)
@@ -287,6 +350,8 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	defer test.MockVariableValue(&setting.UseSubURLPath, true)()
 	defer test.MockVariableValue(&setting.MCP.Enabled, true)()
 	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
+	defer test.MockVariableValue(&setting.MCP.WorkMutationEnabled, true)()
+	defer test.MockVariableValue(&setting.MCP.ClientBootstrapEnabled, true)()
 	defer test.MockVariableValue(&setting.OAuth2.Enabled, true)()
 	defer test.MockVariableValue(&setting.OAuth2.JWTClaimIssuer, forgeServer.URL+"/forge")()
 	defer test.MockVariableValue(&setting.OAuth2.InvalidateRefreshTokens, false)()
@@ -297,6 +362,7 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	login := loginUserAtSubpath(t, "user5")
 	var callbackCount atomic.Int64
 	var authorizationCode string
+	var authorizedClientID string
 	callbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		callbackCount.Add(1)
 		w.WriteHeader(http.StatusOK)
@@ -309,12 +375,18 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 
 	var initialClientToken *oauth2.Token
 	oauthHandler, err := mcpauth.NewAuthorizationCodeHandler(&mcpauth.AuthorizationCodeHandlerConfig{
-		PreregisteredClient: &oauthex.ClientCredentials{
-			ClientID: auth_model.MCPBuiltinOAuth2ApplicationClientID,
-			Issuer:   strings.TrimSuffix(setting.AppURL, "/"),
+		DynamicClientRegistrationConfig: &mcpauth.DynamicClientRegistrationConfig{
+			Metadata: &oauthex.ClientRegistrationMetadata{
+				ClientName:              "Forge OAuth conformance harness",
+				RedirectURIs:            []string{callbackURL},
+				TokenEndpointAuthMethod: "none",
+				GrantTypes:              []string{"authorization_code", "refresh_token"},
+				ResponseTypes:           []string{"code"},
+				ApplicationType:         "native",
+			},
 		},
 		RedirectURL:              callbackURL,
-		AuthorizationCodeFetcher: authorizeMCPThroughForge(t, httpClient, callbackURL, &callbackCount, &authorizationCode),
+		AuthorizationCodeFetcher: authorizeMCPThroughForge(t, httpClient, callbackURL, &callbackCount, &authorizationCode, &authorizedClientID),
 		Client:                   httpClient,
 		NewTokenSource: func(ctx context.Context, config *oauth2.Config, token *oauth2.Token) (oauth2.TokenSource, error) {
 			initialClientToken = token
@@ -337,8 +409,9 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	assert.GreaterOrEqual(t, trace.requestCount(http.MethodPost, "/forge/mcp"), 2)
 	assert.Equal(t, 1, trace.requestCount(http.MethodGet, "/forge/.well-known/oauth-protected-resource/mcp"))
 	assert.Equal(t, 1, trace.requestCount(http.MethodGet, "/forge/.well-known/openid-configuration"))
+	assert.Equal(t, 1, trace.requestCount(http.MethodPost, "/forge/login/oauth/register"))
 	assert.Equal(t, 1, trace.requestCount(http.MethodGet, "/forge/login/oauth/authorize"))
-	assert.Equal(t, 1, trace.requestCount(http.MethodPost, "/forge/login/oauth/grant"))
+	assert.Equal(t, 2, trace.requestCount(http.MethodPost, "/forge/login/oauth/grant"))
 	assert.Equal(t, 1, trace.requestCount(http.MethodPost, "/forge/login/oauth/access_token"))
 	assert.Equal(t, int64(1), callbackCount.Load())
 	require.NotEmpty(t, authorizationCode)
@@ -373,7 +446,7 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	assert.Equal(t, subject, initialRefresh.Subject)
 	assert.Equal(t, initialAccess.Issuer, initialRefresh.Issuer)
 
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
+	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), authorizedClientID)
 	require.NoError(t, err)
 	grant, err := app.GetGrantByUserID(t.Context(), 5)
 	require.NoError(t, err)
@@ -386,11 +459,15 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 
 	tools, err := session.ListTools(ctx, nil)
 	require.NoError(t, err)
-	require.Len(t, tools.Tools, 1)
-	assert.Equal(t, "pull_request.inspect", tools.Tools[0].Name)
+	toolNames := make([]string, 0, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		toolNames = append(toolNames, tool.Name)
+	}
+	assert.ElementsMatch(t, []string{"pull_request.inspect", "work_plan.begin", "work_item.revise", "work_plan.revise"}, toolNames)
 	issued = trace.tokens()
 	require.Len(t, issued, 2)
 	replacement := assertMCPTokenClaims(t, issued[1].AccessToken, initialAccess.Issuer, initialAccess.Subject, resource)
+	assert.NotEqual(t, initialAccess.ID, replacement.ID)
 	assert.Positive(t, replacement.IssuedAt.Time.UnixNano())
 	assert.NotEqual(t, sha256.Sum256([]byte(issued[0].RefreshToken)), sha256.Sum256([]byte(issued[1].RefreshToken)), "refresh token was not rotated")
 	replacementRefresh, err := oauth2_provider.ParseToken(issued[1].RefreshToken, oauth2_provider.DefaultSigningKey)
@@ -421,6 +498,246 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	assert.Equal(t, oauth2_provider.AccessTokenErrorCode(oauth2_provider.AccessTokenErrorCodeUnauthorizedClient), replayError.ErrorCode)
 	assert.Equal(t, "token was already used", replayError.ErrorDescription)
 
+	t.Run("independent work-planning registration", func(t *testing.T) {
+		writeRegistration := bootstrapMCPClient(t, httpClient, "Work planning harness", callbackURL)
+		writeApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), writeRegistration.ClientID)
+		require.NoError(t, err)
+		assert.NotEqual(t, app.ID, writeApp.ID)
+
+		writeVerifier := "mcp-write-verifier-012345678901234567890123456789012345678901234567"
+		writeChallenge := sha256.Sum256([]byte(writeVerifier))
+		writeState := "mcp-write-state"
+		writeScope := "write:repository read:repository write:issue"
+		authorizeValues := url.Values{
+			"client_id":             {writeApp.ClientID},
+			"redirect_uri":          {callbackURL},
+			"response_type":         {"code"},
+			"state":                 {writeState},
+			"scope":                 {writeScope},
+			"resource":              {resource},
+			"code_challenge_method": {"S256"},
+			"code_challenge":        {base64.RawURLEncoding.EncodeToString(writeChallenge[:])},
+		}
+		noRedirectClient := &http.Client{
+			Transport: httpClient.Transport,
+			Jar:       httpClient.Jar,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		for _, invalidScope := range []string{
+			"",
+			"read:repository write:issue",
+			"read:repository write:issue write:issue write:repository",
+			"read:repository write:issue write:user",
+			"read:repository write:issue write:repository read:user",
+		} {
+			invalidValues := url.Values{}
+			for key, values := range authorizeValues {
+				invalidValues[key] = append([]string(nil), values...)
+			}
+			invalidValues.Set("scope", invalidScope)
+			resp, err := noRedirectClient.Get(strings.TrimSuffix(setting.AppURL, "/") + "/login/oauth/authorize?" + invalidValues.Encode())
+			require.NoError(t, err)
+			resp.Body.Close()
+			assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+			location, err := resp.Location()
+			require.NoError(t, err)
+			assert.Equal(t, "invalid_scope", location.Query().Get("error"))
+		}
+
+		resp, err := httpClient.Get(strings.TrimSuffix(setting.AppURL, "/") + "/login/oauth/authorize?" + authorizeValues.Encode())
+		require.NoError(t, err)
+		document, err := goquery.NewDocumentFromReader(resp.Body)
+		resp.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		consentText := strings.Join(strings.Fields(document.Text()), " ")
+		for _, expected := range []string{
+			"create, edit, close, and reopen issues",
+			"change work-plan memberships and dependencies",
+			"create, activate, return to draft, or delete repository work plans",
+			"cannot push or merge code, administer repositories, or run agents",
+		} {
+			assert.Contains(t, consentText, expected)
+		}
+		canonicalScope, exists := document.Find(`input[name="scope"]`).Attr("value")
+		require.True(t, exists)
+		assert.Equal(t, oauth2_provider.MCPWorkWriteScope, canonicalScope)
+
+		consent := url.Values{
+			"client_id":    {writeApp.ClientID},
+			"redirect_uri": {callbackURL},
+			"state":        {writeState},
+			"scope":        {canonicalScope},
+			"resource":     {resource},
+			"granted":      {"true"},
+		}
+		resp, err = httpClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/grant", consent)
+		require.NoError(t, err)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		writeCode := resp.Request.URL.Query().Get("code")
+		require.NotEmpty(t, writeCode)
+
+		exchangeValues := url.Values{
+			"grant_type":    {"authorization_code"},
+			"client_id":     {writeApp.ClientID},
+			"redirect_uri":  {callbackURL},
+			"code":          {writeCode},
+			"code_verifier": {writeVerifier},
+			"resource":      {resource},
+		}
+		resp, err = httpClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", exchangeValues)
+		require.NoError(t, err)
+		writeTokenBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var writeTokens oauth2_provider.AccessTokenResponse
+		require.NoError(t, json.Unmarshal(writeTokenBody, &writeTokens))
+		writeAccess := assertMCPTokenClaims(t, writeTokens.AccessToken, initialAccess.Issuer, subject, resource)
+		assert.NotEqual(t, initialAccess.ID, writeAccess.ID)
+		writeMCPClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "forge-write-profile", Version: "1"}, nil)
+		writeSession, err := writeMCPClient.Connect(t.Context(), &mcpsdk.StreamableClientTransport{
+			Endpoint: forgeServer.URL + "/forge/mcp", HTTPClient: httpClient,
+			OAuthHandler: &mcpOAuthChallengeRecorder{token: writeTokens.AccessToken}, DisableStandaloneSSE: true,
+		}, nil)
+		require.NoError(t, err)
+		require.NoError(t, writeSession.Close())
+
+		writeGrant, err := writeApp.GetGrantByUserID(t.Context(), 5)
+		require.NoError(t, err)
+		require.NotNil(t, writeGrant)
+		assert.NotEqual(t, grant.ID, writeGrant.ID)
+		assert.Equal(t, oauth2_provider.MCPWorkWriteScope, writeGrant.Scope)
+
+		wrongPKCECode, err := writeGrant.GenerateNewAuthorizationCode(t.Context(), callbackURL, base64.RawURLEncoding.EncodeToString(writeChallenge[:]), "S256", resource)
+		require.NoError(t, err)
+		wrongPKCEValues := url.Values{
+			"grant_type":    {"authorization_code"},
+			"client_id":     {writeApp.ClientID},
+			"redirect_uri":  {callbackURL},
+			"code":          {wrongPKCECode.Code},
+			"code_verifier": {"wrong-verifier-0123456789012345678901234567890123456789012"},
+			"resource":      {resource},
+		}
+		resp, err = httpClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", wrongPKCEValues)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		crossClientCode, err := writeGrant.GenerateNewAuthorizationCode(t.Context(), callbackURL, base64.RawURLEncoding.EncodeToString(writeChallenge[:]), "S256", resource)
+		require.NoError(t, err)
+		crossClientValues := url.Values{
+			"grant_type":    {"authorization_code"},
+			"client_id":     {app.ClientID},
+			"redirect_uri":  {callbackURL},
+			"code":          {crossClientCode.Code},
+			"code_verifier": {writeVerifier},
+			"resource":      {resource},
+		}
+		resp, err = httpClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", crossClientValues)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		restReq, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(setting.AppURL, "/")+"/api/v1/user", nil)
+		require.NoError(t, err)
+		restReq.Header.Set("Authorization", "Bearer "+writeTokens.AccessToken)
+		restResp, err := noRedirectClient.Do(restReq)
+		require.NoError(t, err)
+		restResp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, restResp.StatusCode)
+
+		wrongClientRefresh := url.Values{
+			"grant_type":    {"refresh_token"},
+			"client_id":     {app.ClientID},
+			"refresh_token": {writeTokens.RefreshToken},
+		}
+		resp, err = httpClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", wrongClientRefresh)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		writeRefresh := url.Values{
+			"grant_type":    {"refresh_token"},
+			"client_id":     {writeApp.ClientID},
+			"refresh_token": {writeTokens.RefreshToken},
+		}
+		tokenClient := &http.Client{Transport: trace}
+		principal := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 5})
+		principal.IsActive = false
+		require.NoError(t, user_model.UpdateUserColsNoAutoTime(t.Context(), principal, "is_active"))
+		resp, err = tokenClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", writeRefresh)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		principal.IsActive = true
+		require.NoError(t, user_model.UpdateUserColsNoAutoTime(t.Context(), principal, "is_active"))
+		principal.ProhibitLogin = true
+		require.NoError(t, user_model.UpdateUserColsNoAutoTime(t.Context(), principal, "prohibit_login"))
+		resp, err = tokenClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", writeRefresh)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		principal.ProhibitLogin = false
+		require.NoError(t, user_model.UpdateUserColsNoAutoTime(t.Context(), principal, "prohibit_login"))
+
+		resp, err = tokenClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", writeRefresh)
+		require.NoError(t, err)
+		replacementBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var replacementTokens oauth2_provider.AccessTokenResponse
+		require.NoError(t, json.Unmarshal(replacementBody, &replacementTokens))
+		writeReplacement := assertMCPTokenClaims(t, replacementTokens.AccessToken, initialAccess.Issuer, subject, resource)
+		assert.NotEqual(t, writeAccess.ID, writeReplacement.ID)
+
+		resp, err = tokenClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", writeRefresh)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		setting.MCP.WorkMutationEnabled = false
+		assertOfficialMCPChallenge(t, forgeServer.URL+"/forge/mcp", httpClient, replacementTokens.AccessToken, http.StatusUnauthorized, "invalid_token", resource, authorizationCode)
+		disabledRefresh := url.Values{
+			"grant_type":    {"refresh_token"},
+			"client_id":     {writeApp.ClientID},
+			"refresh_token": {replacementTokens.RefreshToken},
+		}
+		resp, err = tokenClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", disabledRefresh)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		setting.MCP.WorkMutationEnabled = true
+
+		require.NoError(t, auth_model.RevokeOAuth2Grant(t.Context(), writeGrant.ID, writeGrant.UserID))
+		_, err = oauth2_provider.VerifyAccessToken(t.Context(), replacementTokens.AccessToken, resource, oauth2_provider.DefaultSigningKey)
+		assert.ErrorIs(t, err, oauth2_provider.ErrInvalidAccessToken)
+		assertOfficialMCPChallenge(t, forgeServer.URL+"/forge/mcp", httpClient, replacementTokens.AccessToken, http.StatusUnauthorized, "invalid_token", resource, authorizationCode)
+		revokedRefresh := url.Values{
+			"grant_type":    {"refresh_token"},
+			"client_id":     {writeApp.ClientID},
+			"refresh_token": {replacementTokens.RefreshToken},
+		}
+		resp, err = tokenClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", revokedRefresh)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		defer test.MockVariableValue(&setting.MCP.WorkMutationEnabled, false)()
+		disabledResp, err := noRedirectClient.Get(strings.TrimSuffix(setting.AppURL, "/") + "/login/oauth/authorize?" + authorizeValues.Encode())
+		require.NoError(t, err)
+		disabledResp.Body.Close()
+		assert.Equal(t, http.StatusSeeOther, disabledResp.StatusCode)
+		disabledLocation, err := disabledResp.Location()
+		require.NoError(t, err)
+		assert.Equal(t, "invalid_scope", disabledLocation.Query().Get("error"))
+	})
+
 	t.Run("real client challenges", func(t *testing.T) {
 		validUntil := time.Now().Add(time.Hour)
 		cases := []struct {
@@ -443,7 +760,7 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 
 		_, err := db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(&auth_model.OAuth2Grant{Scope: string(auth_model.AccessTokenScopeReadUser)})
 		require.NoError(t, err)
-		assertOfficialMCPChallenge(t, forgeServer.URL+"/forge/mcp", httpClient, issued[1].AccessToken, http.StatusForbidden, "insufficient_scope", resource, authorizationCode)
+		assertOfficialMCPChallenge(t, forgeServer.URL+"/forge/mcp", httpClient, issued[1].AccessToken, http.StatusUnauthorized, "invalid_token", resource, authorizationCode)
 		_, err = db.GetEngine(t.Context()).ID(grant.ID).Cols("scope").Update(&auth_model.OAuth2Grant{Scope: string(auth_model.AccessTokenScopeReadRepository)})
 		require.NoError(t, err)
 	})
@@ -490,6 +807,27 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	})
 
 	require.NoError(t, session.Close())
+	t.Run("bootstrap disable preserves approved client", func(t *testing.T) {
+		setting.MCP.ClientBootstrapEnabled = false
+		requestBody := `{"client_name":"disabled","redirect_uris":["http://127.0.0.1/callback"]}`
+		request, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/register", strings.NewReader(requestBody))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := httpClient.Do(request)
+		require.NoError(t, err)
+		response.Body.Close()
+		assert.Equal(t, http.StatusNotFound, response.StatusCode)
+
+		refresh := url.Values{
+			"grant_type":    {"refresh_token"},
+			"client_id":     {app.ClientID},
+			"refresh_token": {issued[1].RefreshToken},
+		}
+		response, err = httpClient.PostForm(strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/access_token", refresh)
+		require.NoError(t, err)
+		response.Body.Close()
+		assert.Equal(t, http.StatusOK, response.StatusCode)
+	})
 	t.Run("OAuth token in PAT mode", func(t *testing.T) {
 		setting.MCP.Authentication = setting.MCPAuthenticationProfilePAT
 		patRoutes := routers.NormalRoutes()

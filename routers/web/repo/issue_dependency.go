@@ -4,12 +4,12 @@
 package repo
 
 import (
+	"errors"
 	"net/http"
 
 	issues_model "gitea.dev/models/issues"
-	access_model "gitea.dev/models/perm/access"
-	"gitea.dev/modules/setting"
 	"gitea.dev/services/context"
+	issue_service "gitea.dev/services/issue"
 )
 
 // AddDependency adds new dependencies
@@ -48,44 +48,22 @@ func AddDependency(ctx *context.Context) {
 		return
 	}
 
-	// Check if both issues are in the same repo if cross repository dependencies is not enabled
-	if issue.RepoID != dep.RepoID {
-		if !setting.Service.AllowCrossRepositoryDependencies {
-			ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_dep_not_same_repo"))
-			return
-		}
-		if err := dep.LoadRepo(ctx); err != nil {
-			ctx.ServerError("loadRepo", err)
-			return
-		}
-		// Can ctx.Doer read issues in the dep repo?
-		depRepoPerm, err := access_model.GetDoerRepoPermission(ctx, dep.Repo, ctx.Doer)
-		if err != nil {
-			ctx.ServerError("GetDoerRepoPermission", err)
-			return
-		}
-		if !depRepoPerm.CanReadIssuesOrPulls(dep.IsPull) {
-			// you can't see this dependency
-			return
-		}
-	}
-
-	// Check if issue and dependency is the same
-	if dep.ID == issue.ID {
-		ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_same_issue"))
-		return
-	}
-
-	err = issues_model.CreateIssueDependency(ctx, ctx.Doer, issue, dep)
+	_, err = issue_service.EnsureDependency(ctx, ctx.Doer, issue, dep, issue_service.DependencyPresent, issue_service.IssueDependencyScope)
 	if err != nil {
-		if issues_model.IsErrDependencyExists(err) {
-			ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_dep_exists"))
-			return
-		} else if issues_model.IsErrCircularDependency(err) {
+		switch {
+		case errors.Is(err, issue_service.ErrSelfDependency):
+			ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_same_issue"))
+		case errors.Is(err, issue_service.ErrCrossRepositoryDependency):
+			ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_dep_not_same_repo"))
+		case errors.Is(err, issue_service.ErrInvalidDependency):
 			ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_cannot_create_circular"))
+		case errors.Is(err, issue_service.ErrDependencyNotPermitted):
+			ctx.HTTPError(http.StatusForbidden, "EnsureDependency")
+		case errors.Is(err, issue_service.ErrDependencyUnavailable):
 			return
+		default:
+			ctx.ServerError("EnsureDependency", err)
 		}
-		ctx.ServerError("CreateOrUpdateIssueDependency", err)
 		return
 	}
 }
@@ -96,12 +74,6 @@ func RemoveDependency(ctx *context.Context) {
 	issue, err := issues_model.GetIssueByIndex(ctx, ctx.Repo.Repository.ID, issueIndex)
 	if err != nil {
 		ctx.ServerError("GetIssueByIndex", err)
-		return
-	}
-
-	// Check if the Repo is allowed to have dependencies
-	if !ctx.Repo.CanCreateIssueDependencies(ctx, ctx.Doer, issue.IsPull) {
-		ctx.HTTPError(http.StatusForbidden, "CanCreateIssueDependencies")
 		return
 	}
 
@@ -134,32 +106,16 @@ func RemoveDependency(ctx *context.Context) {
 		return
 	}
 
-	// Existing cross-repo dependencies must remain removable even when
-	// AllowCrossRepositoryDependencies is disabled, so only enforce that the
-	// doer can read the dependency's repository.
-	if issue.RepoID != dep.RepoID {
-		if err := dep.LoadRepo(ctx); err != nil {
-			ctx.ServerError("loadRepo", err)
-			return
-		}
-		depRepoPerm, err := access_model.GetDoerRepoPermission(ctx, dep.Repo, ctx.Doer)
-		if err != nil {
-			ctx.ServerError("GetDoerRepoPermission", err)
-			return
-		}
-		if !depRepoPerm.CanReadIssuesOrPulls(dep.IsPull) {
-			ctx.Redirect(issue.Link())
-			return
-		}
+	blocked, prerequisite := issue, dep
+	if depType == issues_model.DependencyTypeBlocking {
+		blocked, prerequisite = dep, issue
 	}
-
-	if err = issues_model.RemoveIssueDependency(ctx, ctx.Doer, issue, dep, depType); err != nil {
-		if issues_model.IsErrDependencyNotExists(err) {
-			ctx.Flash.Error(ctx.Tr("repo.issues.dependency.add_error_dep_not_exist"))
+	if _, err = issue_service.EnsureDependency(ctx, ctx.Doer, blocked, prerequisite, issue_service.DependencyAbsent, issue_service.IssueDependencyScope); err != nil {
+		if errors.Is(err, issue_service.ErrInvalidDependency) || errors.Is(err, issue_service.ErrDependencyNotPermitted) || errors.Is(err, issue_service.ErrDependencyUnavailable) {
 			ctx.Redirect(issue.Link())
 			return
 		}
-		ctx.ServerError("RemoveIssueDependency", err)
+		ctx.ServerError("EnsureDependency", err)
 		return
 	}
 

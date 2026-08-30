@@ -126,6 +126,28 @@ func TestXRef_ResolveCrossReferences(t *testing.T) {
 	assert.Equal(t, r4.ID, refs[2].ID, "bad ref r4: %+v", refs[2])
 }
 
+func TestGetWorkClosingPullReferencesUsesLatestEffectiveAction(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	target := testCreateIssue(t, 1, 2, "target", "body", false)
+	pull := testCreatePR(t, 1, 2, "delivery", fmt.Sprintf("closes #%d", target.Index))
+
+	referencesByIssue, err := issues_model.GetWorkClosingPullReferences(t.Context(), []int64{target.ID})
+	assert.NoError(t, err)
+	assert.Equal(t, []issues_model.WorkClosingPullReference{{
+		IssueID: target.ID, PullRepoID: pull.Issue.RepoID, PullIssueID: pull.Issue.ID,
+	}}, referencesByIssue[target.ID])
+
+	_ = testCreateComment(t, 2, pull.Issue.ID, fmt.Sprintf("mentions #%d", target.Index))
+	referencesByIssue, err = issues_model.GetWorkClosingPullReferences(t.Context(), []int64{target.ID})
+	assert.NoError(t, err)
+	assert.Len(t, referencesByIssue[target.ID], 1, "ordinary mentions do not supersede closing actions")
+
+	_ = testCreateComment(t, 2, pull.Issue.ID, fmt.Sprintf("reopens #%d", target.Index))
+	referencesByIssue, err = issues_model.GetWorkClosingPullReferences(t.Context(), []int64{target.ID})
+	assert.NoError(t, err)
+	assert.Empty(t, referencesByIssue[target.ID])
+}
+
 func testCreateIssue(t *testing.T, repo, doer int64, title, content string, ispull bool) *issues_model.Issue {
 	r := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: repo})
 	d := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: doer})

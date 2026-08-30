@@ -602,6 +602,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 	m.Any("/user/events", routing.MarkLongPolling(), events.Events)
 
 	m.Group("/login/oauth", func() {
+		m.Methods("POST, OPTIONS", "/register", auth.RegisterMCPClient, optionsCorsHandler())
 		m.Group("", func() {
 			m.Get("/authorize", web.Bind(forms.AuthorizationForm{}), auth.AuthorizeOAuth)
 			m.Post("/grant", web.Bind(forms.GrantApplicationForm{}), auth.GrantApplicationOAuth)
@@ -664,6 +665,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 		})
 
 		m.Group("/applications", func() {
+			m.Post("/mcp/{id}/delete", user_setting.DeleteMCPRegistration, oauth2Enabled)
 			// oauth2 applications
 			m.Group("/oauth2", func() {
 				m.Get("/{id}", user_setting.OAuth2ApplicationShow)
@@ -1114,7 +1116,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 				m.Get("", org.Projects)
 				m.Get("/{id}", org.ViewProject)
 			}, reqUnitAccess(unit.TypeProjects, perm.AccessModeRead, true))
-			m.Group("", func() { //nolint:dupl // duplicates lines 1421-1441
+			m.Group("", func() {
 				m.Get("/new", org.RenderNewProject)
 				m.Post("/new", web.Bind(forms.CreateProjectForm{}), org.NewProjectPost)
 				m.Group("/{id}", func() {
@@ -1520,11 +1522,12 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 	m.Group("/{username}/{reponame}/projects", func() {
 		m.Get("", repo.Projects)
 		m.Get("/{id}", repo.ViewProject)
-		m.Group("", func() { //nolint:dupl // duplicates lines 1034-1054
+		m.Group("", func() {
 			m.Get("/new", repo.RenderNewProject)
 			m.Post("/new", web.Bind(forms.CreateProjectForm{}), repo.NewProjectPost)
 			m.Group("/{id}", func() {
 				m.Post("/delete", repo.DeleteProject)
+				m.Post("/planning/{action:begin|active|draft}", repo.ChangeProjectPlanning)
 
 				m.Get("/edit", repo.RenderEditProject)
 				m.Post("/edit", web.Bind(forms.CreateProjectForm{}), repo.EditProjectPost)

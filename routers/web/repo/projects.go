@@ -11,6 +11,7 @@ import (
 
 	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	"gitea.dev/models/perm"
 	project_model "gitea.dev/models/project"
 	"gitea.dev/models/renderhelper"
@@ -29,6 +30,7 @@ import (
 	"gitea.dev/services/context"
 	"gitea.dev/services/forms"
 	project_service "gitea.dev/services/projects"
+	work_service "gitea.dev/services/work"
 )
 
 const (
@@ -191,13 +193,92 @@ func DeleteProject(ctx *context.Context) {
 		return
 	}
 
-	if err := project_model.DeleteProjectByID(ctx, p.ID); err != nil {
+	if p.IsPlanningEnabled() {
+		commit, err := work_service.NewMutationService().RevisePlan(ctx, ctx.Doer, work_service.PlanRevisionRequest{
+			RepositoryID:      ctx.Repo.Repository.ID,
+			ProjectID:         p.ID,
+			ExpectedPlanToken: ctx.FormString("plan_token"),
+			Changes:           []work_service.PlanChange{{Kind: work_service.PlanChangeDeleteDraft}},
+		})
+		if err != nil {
+			ctx.ServerError("DeleteWorkPlan", err)
+			return
+		}
+		if !flashWorkMutationResult(ctx, commit, "repo.projects.deletion_success") {
+			ctx.JSONRedirect(project_model.ProjectLinkForRepo(ctx.Repo.Repository, p.ID))
+			return
+		}
+	} else if err := project_model.DeleteProjectByID(ctx, p.ID); err != nil {
 		ctx.Flash.Error("DeleteProjectByID: " + err.Error())
 	} else {
 		ctx.Flash.Success(ctx.Tr("repo.projects.deletion_success"))
 	}
 
 	ctx.JSONRedirect(ctx.Repo.RepoLink + "/projects")
+}
+
+// ChangeProjectPlanning changes only the Project's ADR 0003 planning state.
+func ChangeProjectPlanning(ctx *context.Context) {
+	project, err := project_model.GetProjectForRepoByID(ctx, ctx.Repo.Repository.ID, ctx.PathParamInt64("id"))
+	if err != nil {
+		ctx.NotFoundOrServerError("GetProjectForRepoByID", project_model.IsErrProjectNotExist, err)
+		return
+	}
+
+	mutations := work_service.NewMutationService()
+	var commit work_service.MutationCommit
+	switch ctx.PathParam("action") {
+	case "begin":
+		commit, err = mutations.BeginPlan(ctx, ctx.Doer, work_service.BeginPlanRequest{
+			RepositoryID: ctx.Repo.Repository.ID, ExistingProjectID: project.ID,
+		})
+	case "active", "draft":
+		expected := work_service.PlanningStateDraft
+		desired := work_service.PlanningStateActive
+		if ctx.PathParam("action") == "draft" {
+			expected, desired = work_service.PlanningStateActive, work_service.PlanningStateDraft
+		}
+		commit, err = mutations.RevisePlan(ctx, ctx.Doer, work_service.PlanRevisionRequest{
+			RepositoryID:      ctx.Repo.Repository.ID,
+			ProjectID:         project.ID,
+			ExpectedPlanToken: ctx.FormString("plan_token"),
+			Changes: []work_service.PlanChange{{
+				Kind: work_service.PlanChangeSetPlanningState, ExpectedState: expected, DesiredState: desired,
+			}},
+		})
+	default:
+		ctx.NotFound(nil)
+		return
+	}
+	if err != nil {
+		ctx.ServerError("ChangeProjectPlanning", err)
+		return
+	}
+	flashWorkMutationResult(ctx, commit, "repo.projects.work_planning.update_success")
+	ctx.JSONRedirect(project_model.ProjectLinkForRepo(ctx.Repo.Repository, project.ID))
+}
+
+func flashWorkMutationResult(ctx *context.Context, commit work_service.MutationCommit, successKey string) bool {
+	switch commit.Completion.Outcome {
+	case mcpwork_model.OutcomeApplied, mcpwork_model.OutcomeUnchanged:
+		ctx.Flash.Success(ctx.Tr(successKey))
+		return true
+	case mcpwork_model.OutcomeRejected:
+		ctx.Flash.Error(ctx.Tr(workMutationProblemLocaleKey(commit.Completion.ProblemCode)))
+		return false
+	default:
+		ctx.Flash.Error(ctx.Tr("repo.projects.work_planning.problem.mutation_failed"))
+		return false
+	}
+}
+
+func workMutationProblemLocaleKey(problemCode string) string {
+	switch problemCode {
+	case "invalid_input", "unavailable", "not_permitted", "conflict", "invalid_plan", "invalid_dependency", "limit_exceeded":
+		return "repo.projects.work_planning.problem." + problemCode
+	default:
+		return "repo.projects.work_planning.problem.mutation_failed"
+	}
 }
 
 // RenderEditProject allows a project to be edited
@@ -352,8 +433,10 @@ func ViewProject(ctx *context.Context) {
 
 			if len(referencedIDs) > 0 {
 				if linkedPrs, err := issues_model.Issues(ctx, &issues_model.IssuesOptions{
-					IssueIDs: referencedIDs,
-					IsPull:   optional.Some(true),
+					IssueIDs:  referencedIDs,
+					IsPull:    optional.Some(true),
+					Doer:      ctx.Doer,
+					AllPublic: ctx.Doer == nil,
 				}); err == nil {
 					linkedPrsMap[issue.ID] = linkedPrs
 				}
@@ -425,9 +508,12 @@ func ViewProject(ctx *context.Context) {
 	ctx.Data["Title"] = project.Title
 	ctx.Data["IsProjectsPage"] = true
 	ctx.Data["CanWriteProjects"] = ctx.Repo.Permission.CanWrite(unit.TypeProjects)
+	ctx.Data["CanBeginWorkPlan"] = ctx.Repo.Permission.CanWrite(unit.TypeProjects)
+	ctx.Data["CanManageWorkPlan"] = ctx.Repo.Permission.CanWrite(unit.TypeProjects) && ctx.Repo.Permission.CanWrite(unit.TypeIssues)
 	ctx.Data["Project"] = project
 	ctx.Data["IssuesMap"] = issuesMap
 	ctx.Data["Columns"] = columns
+	prepareProjectWorkView(ctx, project)
 
 	ctx.HTML(http.StatusOK, tplProjectsView)
 }
@@ -452,6 +538,10 @@ func UpdateIssueProject(ctx *context.Context) {
 	var failedIssues []int64
 	for _, issue := range issues {
 		if err := issues_model.IssueAssignOrRemoveProject(ctx, issue, ctx.Doer, projectIDs); err != nil {
+			if errors.Is(err, issues_model.ErrActivePlanMembership) {
+				ctx.JSON(http.StatusConflict, map[string]any{"message": err.Error()})
+				return
+			}
 			if errors.Is(err, util.ErrPermissionDenied) {
 				failedIssues = append(failedIssues, issue.ID)
 				continue

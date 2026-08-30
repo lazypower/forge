@@ -24,6 +24,14 @@ type ProjectIssue struct { //revive:disable-line:exported
 	Sorting int64 `xorm:"NOT NULL DEFAULT 0"`
 }
 
+// WorkProjectIssue is the Issue identity needed to compose one Project page.
+type WorkProjectIssue struct {
+	ProjectID int64
+	IssueID   int64
+	Index     int64
+	IsPull    bool
+}
+
 func init() {
 	db.RegisterModel(new(ProjectIssue))
 }
@@ -86,4 +94,59 @@ func moveIssuesToAnotherColumn(ctx context.Context, oldColumn, newColumn *Column
 func DeleteAllProjectIssueByIssueIDsAndProjectIDs(ctx context.Context, issueIDs, projectIDs []int64) error {
 	_, err := db.GetEngine(ctx).In("project_id", projectIDs).In("issue_id", issueIDs).Delete(&ProjectIssue{})
 	return err
+}
+
+// GetWorkProjectIssues returns Project members in deterministic Issue-number order.
+// The caller supplies one extra result when it needs to determine whether a page continues.
+func GetWorkProjectIssues(ctx context.Context, projectID int64, limit int) ([]WorkProjectIssue, error) {
+	if projectID <= 0 || limit <= 0 {
+		return nil, errors.New("invalid Work Project membership query")
+	}
+	entries := make([]WorkProjectIssue, 0, limit)
+	err := db.GetEngine(ctx).
+		Table("project_issue").
+		Select("project_issue.project_id, issue.id AS issue_id, issue.`index`, issue.is_pull").
+		Join("INNER", "issue", "issue.id = project_issue.issue_id").
+		Join("INNER", "project", "project.id = project_issue.project_id").
+		Where("project_issue.project_id = ?", projectID).
+		And("issue.repo_id = project.repo_id").
+		OrderBy("issue.`index` ASC").
+		Limit(limit).
+		Find(&entries)
+	return entries, err
+}
+
+// GetWorkIssueProjectIDs returns repository Project memberships for a batch of Issues.
+func GetWorkIssueProjectIDs(ctx context.Context, repoID int64, issueIDs []int64) (map[int64][]int64, error) {
+	projectIDs := make(map[int64][]int64, len(issueIDs))
+	if len(issueIDs) == 0 {
+		return projectIDs, nil
+	}
+	type membership struct {
+		IssueID   int64
+		ProjectID int64
+	}
+	for len(issueIDs) > 0 {
+		batchSize := min(len(issueIDs), db.DefaultMaxInSize)
+		memberships := make([]membership, 0, batchSize)
+		err := db.GetEngine(ctx).
+			Table("project_issue").
+			Select("project_issue.issue_id, project_issue.project_id").
+			Join("INNER", "project", "project.id = project_issue.project_id").
+			Where("project.repo_id = ?", repoID).
+			In("project_issue.issue_id", issueIDs[:batchSize]).
+			OrderBy("project_issue.issue_id ASC, project_issue.project_id ASC").
+			Find(&memberships)
+		if err != nil {
+			return nil, err
+		}
+		for _, membership := range memberships {
+			ids := projectIDs[membership.IssueID]
+			if len(ids) == 0 || ids[len(ids)-1] != membership.ProjectID {
+				projectIDs[membership.IssueID] = append(ids, membership.ProjectID)
+			}
+		}
+		issueIDs = issueIDs[batchSize:]
+	}
+	return projectIDs, nil
 }

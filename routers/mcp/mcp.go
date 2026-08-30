@@ -12,6 +12,7 @@ import (
 	"gitea.dev/modules/setting"
 	"gitea.dev/services/oauth2_provider"
 	pull_service "gitea.dev/services/pull"
+	work_service "gitea.dev/services/work"
 
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,8 +21,16 @@ import (
 
 // NewEndpoint returns Forge's stateless MCP endpoint.
 func NewEndpoint() http.Handler {
-	tool := newPullRequestInspectionTool(setting.MCP.MaxInFlightRequests, setting.MCP.ExecutionTimeout, pull_service.InspectPullRequest, authenticatedUser)
-	server := newServer(tool)
+	executor := newToolExecutor(setting.MCP.MaxInFlightRequests, setting.MCP.ExecutionTimeout)
+	pullTool := newPullRequestInspectionTool(executor, pull_service.InspectPullRequest, authenticatedUser)
+	workReader := newBoundWorkReadService(work_service.NewReadService())
+	workTools := newWorkInspectionTools(executor, workReader, authenticatedUser, setting.Work.MaxOutputBytes)
+	var mutationTools *workMutationTools
+	mutationEnabled := setting.MCP.WorkMutationEnabled && setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth
+	if mutationEnabled {
+		mutationTools = newWorkMutationTools(executor, newProductionWorkMutationService(), workReader, authenticatedUser, setting.Work.MaxOutputBytes)
+	}
+	server := newServerWithWorkMutations(pullTool, workTools, mutationTools, setting.MCP.WorkInspectionEnabled, mutationEnabled)
 	if setting.MCP.Authentication == setting.MCPAuthenticationProfileOAuth {
 		return newOAuthAuthenticatedEndpoint(server, setting.MCP.MaxRequestBodyBytes, newOAuthVerifier())
 	}
@@ -51,20 +60,26 @@ func ProtectedResourceMetadata() http.Handler {
 	return mcpauth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 		Resource:               setting.MCPResource(),
 		AuthorizationServers:   []string{oauth2_provider.TokenIssuer()},
-		ScopesSupported:        []string{string(readRepositoryScope)},
+		ScopesSupported:        oauth2_provider.MCPScopesSupported(),
 		BearerMethodsSupported: []string{"header"},
 		ResourceName:           "Forge MCP",
 	})
 }
 
-func newServer(tool *pullRequestInspectionTool) *mcpsdk.Server {
+func newServerWithWorkMutations(pullTool *pullRequestInspectionTool, workTools *workInspectionTools, mutationTools *workMutationTools, workInspectionEnabled, workMutationEnabled bool) *mcpsdk.Server {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "forge",
 		Version: setting.AppVer,
 	}, &mcpsdk.ServerOptions{
 		Capabilities: &mcpsdk.ServerCapabilities{},
 	})
-	registerPullRequestInspectionTool(server, tool)
+	registerPullRequestInspectionTool(server, pullTool)
+	if workInspectionEnabled {
+		registerWorkInspectionTools(server, workTools)
+	}
+	if workMutationEnabled {
+		registerWorkMutationTools(server, mutationTools)
+	}
 	return server
 }
 

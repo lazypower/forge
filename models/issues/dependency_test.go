@@ -29,6 +29,9 @@ func TestCreateIssueDependency(t *testing.T) {
 	// Create a dependency and check if it was successful
 	err = issues_model.CreateIssueDependency(t.Context(), user1, issue1, issue2)
 	assert.NoError(t, err)
+	dependentIDs, err := issues_model.GetIssueDependentIDs(t.Context(), []int64{issue2.ID})
+	assert.NoError(t, err)
+	assert.Equal(t, []int64{issue1.ID}, dependentIDs[issue2.ID])
 
 	// Do it again to see if it will check if the dependency already exists
 	err = issues_model.CreateIssueDependency(t.Context(), user1, issue1, issue2)

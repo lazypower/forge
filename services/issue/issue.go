@@ -10,6 +10,7 @@ import (
 	activities_model "gitea.dev/models/activities"
 	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	access_model "gitea.dev/models/perm/access"
 	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
@@ -20,6 +21,11 @@ import (
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/storage"
 	notify_service "gitea.dev/services/notify"
+)
+
+var (
+	retireIssueMCPWorkReceipts = mcpwork_model.RetireIssue
+	afterIssueDeletionGuard    = func() {}
 )
 
 // NewIssue creates new issue with labels for repository.
@@ -87,8 +93,6 @@ func NewIssue(ctx context.Context, repo *repo_model.Repository, issue *issues_mo
 // ChangeTitle changes the title of this issue, as the given user.
 func ChangeTitle(ctx context.Context, issue *issues_model.Issue, doer *user_model.User, title string) error {
 	oldTitle := issue.Title
-	issue.Title = title
-
 	if oldTitle == title {
 		return nil
 	}
@@ -103,7 +107,18 @@ func ChangeTitle(ctx context.Context, issue *issues_model.Issue, doer *user_mode
 		}
 	}
 
-	if err := issues_model.ChangeIssueTitle(ctx, issue, doer, oldTitle); err != nil {
+	var effects []PostCommitEffect
+	if err := db.WithTx(ctx, func(txCtx context.Context) error {
+		result, txEffects, err := ReviseWorkIssueInTx(txCtx, issue, doer, issues_model.ConditionalIssueRevision{
+			ExpectedTitle: &oldTitle, DesiredTitle: &title,
+		})
+		if err != nil {
+			return err
+		}
+		*issue = *result.Issue
+		effects = txEffects
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -120,7 +135,9 @@ func ChangeTitle(ctx context.Context, issue *issues_model.Issue, doer *user_mode
 		}
 	}
 
-	notify_service.IssueChangeTitle(ctx, doer, issue, oldTitle)
+	for _, effect := range effects {
+		effect.Run(ctx)
+	}
 	ReviewRequestNotify(ctx, issue, issue.Poster, reviewNotifiers)
 
 	return nil
@@ -198,7 +215,17 @@ func GetRefEndNamesAndURLs(issues []*issues_model.Issue, repoLink string) (map[i
 
 // deleteIssue deletes the issue
 func deleteIssue(ctx context.Context, issue *issues_model.Issue) ([]string, error) {
+	return deleteIssueData(ctx, issue, true)
+}
+
+func deleteIssueData(ctx context.Context, issue *issues_model.Issue, guardActivePlan bool) ([]string, error) {
 	return db.WithTx2(ctx, func(ctx context.Context) ([]string, error) {
+		if guardActivePlan && !issue.IsPull {
+			if err := project_model.RequireIssueOutsideActivePlan(ctx, issue.RepoID, issue.ID); err != nil {
+				return nil, err
+			}
+			afterIssueDeletionGuard()
+		}
 		if _, err := db.GetEngine(ctx).ID(issue.ID).NoAutoCondition().Delete(issue); err != nil {
 			return nil, err
 		}
@@ -247,6 +274,9 @@ func deleteIssue(ctx context.Context, issue *issues_model.Issue) ([]string, erro
 			&issues_model.Comment{DependentIssueID: issue.ID},
 			&issues_model.IssuePin{IssueID: issue.ID},
 		); err != nil {
+			return nil, err
+		}
+		if err := retireIssueMCPWorkReceipts(ctx, issue.RepoID, issue.ID); err != nil {
 			return nil, err
 		}
 
@@ -299,7 +329,9 @@ func DeleteIssuesByRepoID(ctx context.Context, repoID int64) (attachmentPaths []
 		}
 
 		for _, issue := range issues {
-			issueAttachPaths, err := deleteIssue(ctx, issue)
+			// Repository deletion owns the enclosing lifecycle and removes its
+			// Projects too, so the per-Issue active-plan guard does not apply.
+			issueAttachPaths, err := deleteIssueData(ctx, issue, false)
 			if err != nil {
 				return nil, fmt.Errorf("deleteIssue [issue_id: %d]: %w", issue.ID, err)
 			}

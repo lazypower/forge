@@ -695,5 +695,13 @@
 				</span>
 			</div>
 		{{end}}
+		{{if $.HumanWorkProvenanceByComment}}
+			{{range (index $.HumanWorkProvenanceByComment .ID)}}
+				<div class="timeline-item event work-mcp-provenance" data-work-provenance="mcp">
+					<span class="badge">{{svg "octicon-terminal"}}</span>
+					<span class="comment-text-line">{{template "shared/work_provenance" .}}</span>
+				</div>
+			{{end}}
+		{{end}}
 	{{end}}
 {{end}}

@@ -173,6 +173,9 @@ func CloseIssue(ctx context.Context, issue *Issue, doer *user_model.User) (*Comm
 	}
 
 	return db.WithTx2(ctx, func(ctx context.Context) (*Comment, error) {
+		if err := repo_model.StabilizeWorkPlanning(ctx, issue.RepoID); err != nil {
+			return nil, err
+		}
 		return SetIssueAsClosed(ctx, issue, doer, false)
 	})
 }
@@ -187,8 +190,46 @@ func ReopenIssue(ctx context.Context, issue *Issue, doer *user_model.User) (*Com
 	}
 
 	return db.WithTx2(ctx, func(ctx context.Context) (*Comment, error) {
+		if err := repo_model.StabilizeWorkPlanning(ctx, issue.RepoID); err != nil {
+			return nil, err
+		}
 		return setIssueAsReopen(ctx, issue, doer)
 	})
+}
+
+// SetIssueStateInWorkTx applies a desired Issue state inside a caller-owned
+// Work transaction. Repeating the desired state is an unchanged success.
+func SetIssueStateInWorkTx(ctx context.Context, issue *Issue, doer *user_model.User, closed bool) (*Comment, bool, error) {
+	if issue == nil || doer == nil {
+		return nil, false, util.ErrInvalidArgument
+	}
+	if err := repo_model.StabilizeWorkPlanning(ctx, issue.RepoID); err != nil {
+		return nil, false, err
+	}
+	current, err := GetIssueByID(ctx, issue.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := current.LoadRepo(ctx); err != nil {
+		return nil, false, err
+	}
+	if err := current.LoadPoster(ctx); err != nil {
+		return nil, false, err
+	}
+	if current.IsClosed == closed {
+		return nil, false, nil
+	}
+	var comment *Comment
+	if closed {
+		comment, err = SetIssueAsClosed(ctx, current, doer, false)
+	} else {
+		comment, err = setIssueAsReopen(ctx, current, doer)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	*issue = *current
+	return comment, true, nil
 }
 
 // ChangeIssueTitle changes the title of this issue, as the given user.
@@ -347,6 +388,116 @@ func ChangeIssueContent(ctx context.Context, issue *Issue, doer *user_model.User
 		}
 		return nil
 	})
+}
+
+// ConditionalIssueRevision is one atomic title and Markdown update. Expected
+// values are checked together before either native fact or timeline row changes.
+type ConditionalIssueRevision struct {
+	ExpectedTitle          *string
+	DesiredTitle           *string
+	ExpectedContentVersion *int
+	DesiredContent         *string
+}
+
+// ConditionalIssueRevisionResult contains the committed native values and the
+// title timeline event, when one was created.
+type ConditionalIssueRevisionResult struct {
+	Issue        *Issue
+	TitleComment *Comment
+	OldTitle     string
+	OldContent   string
+	TitleChanged bool
+	BodyChanged  bool
+}
+
+// ReviseIssueConditionally persists a title and Markdown revision atomically.
+// It is safe to call inside a caller-owned Work transaction.
+func ReviseIssueConditionally(ctx context.Context, issueID int64, doer *user_model.User, revision ConditionalIssueRevision) (*ConditionalIssueRevisionResult, error) {
+	if doer == nil || (revision.ExpectedTitle == nil) != (revision.DesiredTitle == nil) ||
+		(revision.ExpectedContentVersion == nil) != (revision.DesiredContent == nil) ||
+		(revision.DesiredTitle == nil && revision.DesiredContent == nil) {
+		return nil, util.ErrInvalidArgument
+	}
+	current, err := GetIssueByID(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	if err := current.LoadRepo(ctx); err != nil {
+		return nil, err
+	}
+	if revision.ExpectedTitle != nil && current.Title != *revision.ExpectedTitle {
+		return nil, ErrIssueAlreadyChanged
+	}
+	if revision.ExpectedContentVersion != nil && current.ContentVersion != *revision.ExpectedContentVersion {
+		return nil, ErrIssueAlreadyChanged
+	}
+
+	result := &ConditionalIssueRevisionResult{Issue: current, OldTitle: current.Title, OldContent: current.Content}
+	updates := make(map[string]any, 3)
+	if revision.DesiredTitle != nil {
+		desired := util.EllipsisDisplayString(*revision.DesiredTitle, 255)
+		if desired != current.Title {
+			updates["name"] = desired
+			current.Title = desired
+			result.TitleChanged = true
+		}
+	}
+	if revision.DesiredContent != nil {
+		if *revision.DesiredContent != current.Content {
+			updates["content"] = *revision.DesiredContent
+			updates["content_version"] = *revision.ExpectedContentVersion + 1
+			current.Content = *revision.DesiredContent
+			current.ContentVersion = *revision.ExpectedContentVersion + 1
+			result.BodyChanged = true
+
+			hasContentHistory, err := HasIssueContentHistory(ctx, current.ID, 0)
+			if err != nil {
+				return nil, fmt.Errorf("HasIssueContentHistory: %w", err)
+			}
+			if !hasContentHistory {
+				if err := SaveIssueContentHistory(ctx, current.PosterID, current.ID, 0, current.CreatedUnix, result.OldContent, true); err != nil {
+					return nil, fmt.Errorf("SaveIssueContentHistory: %w", err)
+				}
+			}
+		}
+	}
+
+	if len(updates) > 0 {
+		query := db.GetEngine(ctx).Table(new(Issue)).ID(current.ID)
+		if revision.ExpectedTitle != nil {
+			query = query.Where("name = ?", *revision.ExpectedTitle)
+		}
+		if revision.ExpectedContentVersion != nil {
+			query = query.Where("content_version = ?", *revision.ExpectedContentVersion)
+		}
+		affected, err := query.Update(updates)
+		if err != nil {
+			return nil, err
+		}
+		if affected != 1 {
+			return nil, ErrIssueAlreadyChanged
+		}
+	}
+	if result.BodyChanged {
+		if err := SaveIssueContentHistory(ctx, doer.ID, current.ID, 0, timeutil.TimeStampNow(), current.Content, false); err != nil {
+			return nil, fmt.Errorf("SaveIssueContentHistory: %w", err)
+		}
+	}
+	if result.TitleChanged {
+		result.TitleComment, err = CreateComment(ctx, &CreateCommentOptions{
+			Type: CommentTypeChangeTitle, Doer: doer, Repo: current.Repo, Issue: current,
+			OldTitle: result.OldTitle, NewTitle: current.Title,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("createComment: %w", err)
+		}
+	}
+	if result.TitleChanged || result.BodyChanged {
+		if err := current.AddCrossReferences(ctx, doer, true); err != nil {
+			return nil, fmt.Errorf("addCrossReferences: %w", err)
+		}
+	}
+	return result, nil
 }
 
 // NewIssueOptions represents the options of a new issue.

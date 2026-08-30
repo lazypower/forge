@@ -18,6 +18,7 @@ import (
 	"gitea.dev/models/organization"
 	"gitea.dev/models/perm"
 	access_model "gitea.dev/models/perm/access"
+	project_model "gitea.dev/models/project"
 	repo_model "gitea.dev/models/repo"
 	unit_model "gitea.dev/models/unit"
 	user_model "gitea.dev/models/user"
@@ -972,6 +973,10 @@ func updateRepoUnits(ctx *context.APIContext, opts api.EditRepoOption) error {
 
 	if len(units)+len(deleteUnitTypes) > 0 {
 		if err := repo_service.UpdateRepositoryUnits(ctx, repo, units, deleteUnitTypes); err != nil {
+			if errors.Is(err, project_model.ErrActiveWorkPlan) {
+				ctx.APIError(http.StatusConflict, err.Error())
+				return err
+			}
 			ctx.APIErrorInternal(err)
 			return err
 		}

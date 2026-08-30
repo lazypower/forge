@@ -11416,6 +11416,9 @@
           },
           "404": {
             "description": "the issue does not exist"
+          },
+          "422": {
+            "$ref": "#/responses/validationError"
           }
         }
       },
@@ -11464,6 +11467,9 @@
           },
           "404": {
             "$ref": "#/responses/notFound"
+          },
+          "422": {
+            "$ref": "#/responses/validationError"
           }
         }
       }
@@ -11859,6 +11865,9 @@
           "404": {
             "description": "the issue does not exist"
           },
+          "422": {
+            "$ref": "#/responses/validationError"
+          },
           "423": {
             "$ref": "#/responses/repoArchivedError"
           }
@@ -11909,6 +11918,9 @@
           },
           "404": {
             "$ref": "#/responses/notFound"
+          },
+          "422": {
+            "$ref": "#/responses/validationError"
           },
           "423": {
             "$ref": "#/responses/repoArchivedError"

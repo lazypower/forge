@@ -1,4 +1,7 @@
 {{$canWriteProject := and .CanWriteProjects (or (not .Repository) (not .Repository.IsArchived))}}
+{{$canBeginWorkPlan := and .CanBeginWorkPlan $canWriteProject}}
+{{$canManageWorkPlan := and .CanManageWorkPlan $canWriteProject}}
+{{$workPlan := .HumanWorkPlan}}
 
 <div class="ui container fluid padded projects-view" data-global-init="initRepoProjectsView">
 	<div class="ui container flex-text-block project-header">
@@ -25,6 +28,12 @@
 		</div>
 		{{if $canWriteProject}}
 			<div class="ui compact mini menu">
+				{{if and (not .Project.IsPlanningEnabled) $canBeginWorkPlan}}
+					<button class="item btn link-action" data-url="{{.Link}}/planning/begin">
+						{{svg "octicon-project"}}
+						{{ctx.Locale.Tr "repo.projects.work_planning.begin"}}
+					</button>
+				{{end}}
 				<a class="item screen-full">
 					{{svg "octicon-screen-full"}}
 					{{ctx.Locale.Tr "projects.enter_fullscreen"}}
@@ -48,13 +57,23 @@
 						{{ctx.Locale.Tr "repo.projects.close"}}
 					</button>
 				{{end}}
-				<button class="item btn link-action" data-url="{{.Link}}/delete?id={{.Project.ID}}"
-								data-modal-confirm-header="{{ctx.Locale.Tr "repo.projects.deletion"}}"
-								data-modal-confirm-content="{{ctx.Locale.Tr "repo.projects.deletion_desc"}}"
-				>
-					{{svg "octicon-trash"}}
-					{{ctx.Locale.Tr "repo.issues.label_delete"}}
-				</button>
+				{{if not .Project.IsPlanningEnabled}}
+					<button class="item btn link-action" data-url="{{.Link}}/delete?id={{.Project.ID}}"
+						data-modal-confirm-header="{{ctx.Locale.Tr "repo.projects.deletion"}}"
+						data-modal-confirm-content="{{ctx.Locale.Tr "repo.projects.deletion_desc"}}"
+					>
+						{{svg "octicon-trash"}}
+						{{ctx.Locale.Tr "repo.issues.label_delete"}}
+					</button>
+				{{else if and $workPlan $canManageWorkPlan (eq $workPlan.PlanningState "draft")}}
+					<button class="item btn link-action" data-url="{{.Link}}/delete?plan_token={{QueryEscape $workPlan.Plan.PlanToken}}"
+						data-modal-confirm-header="{{ctx.Locale.Tr "repo.projects.work_planning.delete_draft"}}"
+						data-modal-confirm-content="{{ctx.Locale.Tr "repo.projects.work_planning.delete_draft_desc"}}"
+					>
+						{{svg "octicon-trash"}}
+						{{ctx.Locale.Tr "repo.issues.label_delete"}}
+					</button>
+				{{end}}
 				<button class="item btn show-modal show-project-column-modal-edit" data-modal="#project-column-modal-edit"
 								data-modal-header="{{ctx.Locale.Tr "repo.projects.column.new"}}"
 								data-modal-project-column-title-label="{{ctx.Locale.Tr "repo.projects.column.new_title"}}"
@@ -76,6 +95,73 @@
 		</div>
 		<div class="divider"></div>
 	</div>
+
+	{{if $workPlan}}
+		<div class="ui container segment work-plan" data-work-plan-state="{{$workPlan.PlanningState}}" data-work-plan-integrity="{{$workPlan.Plan.Integrity.Status}}">
+			<div class="flex-text-block tw-gap-2">
+				<h3 class="tw-m-0">{{ctx.Locale.Tr "repo.projects.work_planning.title"}}</h3>
+				<span class="ui label {{if eq $workPlan.PlanningState "active"}}green{{else}}yellow{{end}}">{{ctx.Locale.Tr (printf "repo.projects.work_planning.state.%s" $workPlan.PlanningState)}}</span>
+				<div class="tw-flex-1"></div>
+				{{if $canManageWorkPlan}}
+					{{if eq $workPlan.PlanningState "draft"}}
+						<button class="ui small primary button link-action" data-url="{{.Link}}/planning/active?plan_token={{QueryEscape $workPlan.Plan.PlanToken}}">
+							{{ctx.Locale.Tr "repo.projects.work_planning.activate"}}
+						</button>
+					{{else}}
+						<button class="ui small button link-action" data-url="{{.Link}}/planning/draft?plan_token={{QueryEscape $workPlan.Plan.PlanToken}}">
+							{{ctx.Locale.Tr "repo.projects.work_planning.return_to_draft"}}
+						</button>
+					{{end}}
+				{{end}}
+			</div>
+			<p class="tw-text-text-light">{{ctx.Locale.Tr "repo.projects.work_planning.columns_are_organization"}}</p>
+			{{if ne $workPlan.Plan.Integrity.Status "valid"}}
+				<div class="ui warning message work-plan-integrity">
+					<div class="header">{{ctx.Locale.Tr (printf "repo.projects.work_planning.integrity_status.%s" $workPlan.Plan.Integrity.Status)}}</div>
+					<ul>
+						{{range $workPlan.Plan.Integrity.Concerns}}
+							<li data-work-integrity-code="{{.Code}}">{{ctx.Locale.Tr (printf "repo.projects.work_planning.integrity.%s" .Code)}}</li>
+						{{end}}
+					</ul>
+				</div>
+			{{end}}
+			<div class="tw-mt-3">
+				<h4>{{ctx.Locale.Tr "repo.projects.work_planning.ready_frontier"}}</h4>
+				{{if $workPlan.Plan.ReadyFrontier}}
+					<div class="flex-list work-ready-frontier">
+						{{range $workPlan.Plan.ReadyFrontier}}
+							<div class="flex-item" data-work-context="{{.Ref}}" data-work-state="{{.DerivedState}}">
+								{{svg "octicon-issue-opened"}} <span>{{.Ref}}</span>
+							</div>
+						{{end}}
+					</div>
+				{{else}}
+					<p class="tw-text-text-light work-ready-frontier-empty">{{ctx.Locale.Tr "repo.projects.work_planning.ready_frontier_empty"}}</p>
+				{{end}}
+			</div>
+			{{if $workPlan.Plan.ExcludedMembers}}
+				<div class="tw-mt-3 work-excluded-members">
+					<h4>{{ctx.Locale.Tr "repo.projects.work_planning.excluded_members"}}</h4>
+					<p class="tw-text-text-light">{{ctx.Locale.Tr "repo.projects.work_planning.excluded_members_desc"}}</p>
+					{{range $workPlan.Plan.ExcludedMembers}}
+						{{if eq .Availability "available"}}
+							<a href="{{.URL}}">{{.Label}}</a>
+						{{else}}
+							<span>{{ctx.Locale.Tr "repo.projects.work_planning.undisclosed_member"}}</span>
+						{{end}}
+					{{end}}
+				</div>
+			{{end}}
+			{{if $workPlan.Provenance}}
+				<div class="ui info message work-mcp-provenance tw-mt-3">
+					<div class="header">{{ctx.Locale.Tr "repo.projects.work_planning.mcp_origin"}}</div>
+					{{range $workPlan.Provenance}}
+						<p>{{template "shared/work_provenance" .}}</p>
+					{{end}}
+				</div>
+			{{end}}
+		</div>
+	{{end}}
 
 	<div id="project-board" class="board {{if $canWriteProject}}sortable{{end}}" data-project-board-writable="{{$canWriteProject}}" {{if $canWriteProject}}data-url="{{$.Link}}/move"{{end}}>
 		{{range .Columns}}

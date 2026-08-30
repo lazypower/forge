@@ -146,14 +146,11 @@ func testMCPResourceProfile(t *testing.T) {
 	defer test.MockVariableValue(&setting.MCP.Authentication, setting.MCPAuthenticationProfileOAuth)()
 	defer test.MockVariableValue(&setting.OAuth2.InvalidateRefreshTokens, false)()
 	require.NoError(t, auth_model.Init(t.Context()))
-	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), auth_model.MCPBuiltinOAuth2ApplicationClientID)
-	require.NoError(t, err)
+	app, grant := newFinalizedMCPRegistration(t, 2, oauth2_provider.MCPReadScope, "http://127.0.0.1:49152")
 	require.False(t, app.ConfidentialClient)
-	assert.Equal(t, []string{"http://127.0.0.1", "http://127.0.0.1/callback", "https://127.0.0.1"}, app.RedirectURIs)
+	assert.Equal(t, []string{"http://127.0.0.1:49152"}, app.RedirectURIs)
 
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
-	grant := &auth_model.OAuth2Grant{ApplicationID: app.ID, UserID: user.ID, Scope: "read:repository"}
-	require.NoError(t, db.Insert(t.Context(), grant))
 	verifier := "mcp-profile-verifier-" + util.FastCryptoRandomHex(12)
 	challenge := sha256.Sum256([]byte(verifier))
 	resource := setting.MCPResource()

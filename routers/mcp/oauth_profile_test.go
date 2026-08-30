@@ -25,6 +25,7 @@ import (
 func TestProtectedResourceMetadata(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/forge/")()
 	defer test_module.MockVariableValue(&setting.OAuth2.JWTClaimIssuer, "https://forge.example/forge")()
+	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, false)()
 	req := httptest.NewRequest(http.MethodGet, setting.MCPProtectedResourceMetadataPath(), nil)
 	resp := httptest.NewRecorder()
 
@@ -39,10 +40,18 @@ func TestProtectedResourceMetadata(t *testing.T) {
 	assert.Equal(t, []string{"read:repository"}, metadata.ScopesSupported)
 	assert.Equal(t, []string{"header"}, metadata.BearerMethodsSupported)
 	assert.Equal(t, "Forge MCP", metadata.ResourceName)
+
+	setting.MCP.WorkMutationEnabled = true
+	resp = httptest.NewRecorder()
+	ProtectedResourceMetadata().ServeHTTP(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &metadata))
+	assert.Equal(t, []string{"read:repository", "write:issue", "write:repository"}, metadata.ScopesSupported)
 }
 
 func TestOAuthBearerChallenges(t *testing.T) {
 	defer test_module.MockVariableValue(&setting.AppURL, "https://forge.example/forge/")()
+	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, true)()
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "forge", Version: "test"}, nil)
 	verifier := func(_ context.Context, token string, _ *http.Request) (*mcpauth.TokenInfo, error) {
 		switch token {

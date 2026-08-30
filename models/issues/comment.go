@@ -958,14 +958,13 @@ func createDeadlineComment(ctx context.Context, doer *user_model.User, issue *Is
 	return comment, nil
 }
 
-// Creates issue dependency comment
-func createIssueDependencyComment(ctx context.Context, doer *user_model.User, issue, dependentIssue *Issue, add bool) (err error) {
+func createIssueDependencyComments(ctx context.Context, doer *user_model.User, issue, dependentIssue *Issue, add bool) ([]*Comment, error) {
 	cType := CommentTypeAddDependency
 	if !add {
 		cType = CommentTypeRemoveDependency
 	}
-	if err = issue.LoadRepo(ctx); err != nil {
-		return err
+	if err := issue.LoadRepo(ctx); err != nil {
+		return nil, err
 	}
 
 	// Make two comments, one in each issue
@@ -976,8 +975,9 @@ func createIssueDependencyComment(ctx context.Context, doer *user_model.User, is
 		Issue:            issue,
 		DependentIssueID: dependentIssue.ID,
 	}
-	if _, err = CreateComment(ctx, opts); err != nil {
-		return err
+	first, err := CreateComment(ctx, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	opts = &CreateCommentOptions{
@@ -987,8 +987,11 @@ func createIssueDependencyComment(ctx context.Context, doer *user_model.User, is
 		Issue:            dependentIssue,
 		DependentIssueID: issue.ID,
 	}
-	_, err = CreateComment(ctx, opts)
-	return err
+	second, err := CreateComment(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return []*Comment{first, second}, nil
 }
 
 // CreateCommentOptions defines options for creating comment

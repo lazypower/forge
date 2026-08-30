@@ -2,6 +2,7 @@
     "issuer": "{{.OidcIssuer}}",
     "authorization_endpoint": "{{.OidcBaseUrl}}/login/oauth/authorize",
     "token_endpoint": "{{.OidcBaseUrl}}/login/oauth/access_token",
+    {{if .MCPClientBootstrapEnabled}}"registration_endpoint": "{{.OidcBaseUrl}}/login/oauth/register",{{end}}
     "jwks_uri": "{{.OidcBaseUrl}}/login/oauth/keys",
     "userinfo_endpoint": "{{.OidcBaseUrl}}/login/oauth/userinfo",
     "introspection_endpoint": "{{.OidcBaseUrl}}/login/oauth/introspect",
@@ -41,6 +42,11 @@
     "code_challenge_methods_supported": [
         "plain",
         "S256"
+    ],
+    "token_endpoint_auth_methods_supported": [
+        "none",
+        "client_secret_basic",
+        "client_secret_post"
     ],
     "authorization_response_iss_parameter_supported": true,
     "grant_types_supported": [

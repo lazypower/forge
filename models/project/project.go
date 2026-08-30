@@ -5,10 +5,12 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 
 	"gitea.dev/models/db"
+	mcpwork_model "gitea.dev/models/mcpwork"
 	repo_model "gitea.dev/models/repo"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/log"
@@ -20,6 +22,15 @@ import (
 	"xorm.io/builder"
 )
 
+var (
+	retireProjectMCPWorkReceipts     = mcpwork_model.RetireProject
+	retireRepoProjectMCPWorkReceipts = mcpwork_model.RetireRepositoryProjects
+)
+
+// ErrActiveWorkPlan prevents lifecycle changes that would make an active plan
+// unavailable to its human and agent interfaces.
+var ErrActiveWorkPlan = errors.New("active work plan must return to draft first")
+
 type (
 	// CardConfig is used to identify the type of column card that is being used
 	CardConfig struct {
@@ -29,6 +40,9 @@ type (
 
 	// Type is used to identify the type of project in question and ownership
 	Type uint8
+
+	// PlanningState identifies whether a repository Project participates in Work planning.
+	PlanningState uint8
 )
 
 const (
@@ -40,6 +54,15 @@ const (
 
 	// TypeOrganization is a project that is tied to an organisation
 	TypeOrganization
+)
+
+const (
+	// PlanningStateDisabled leaves a Project as an ordinary board.
+	PlanningStateDisabled PlanningState = iota
+	// PlanningStateDraft allows inspection without publishing ready work.
+	PlanningStateDraft
+	// PlanningStateActive publishes the valid ready frontier.
+	PlanningStateActive
 )
 
 // ErrProjectNotExist represents a "ProjectNotExist" kind of error.
@@ -83,18 +106,19 @@ func (err ErrProjectColumnNotExist) Unwrap() error {
 
 // Project represents a project
 type Project struct {
-	ID           int64                  `xorm:"pk autoincr"`
-	Title        string                 `xorm:"INDEX NOT NULL"`
-	Description  string                 `xorm:"TEXT"`
-	OwnerID      int64                  `xorm:"INDEX"`
-	Owner        *user_model.User       `xorm:"-"`
-	RepoID       int64                  `xorm:"INDEX"`
-	Repo         *repo_model.Repository `xorm:"-"`
-	CreatorID    int64                  `xorm:"NOT NULL"`
-	IsClosed     bool                   `xorm:"INDEX"`
-	TemplateType TemplateType           `xorm:"'board_type'"` // TODO: rename the column to template_type
-	CardType     CardType
-	Type         Type
+	ID            int64                  `xorm:"pk autoincr"`
+	Title         string                 `xorm:"INDEX NOT NULL"`
+	Description   string                 `xorm:"TEXT"`
+	OwnerID       int64                  `xorm:"INDEX"`
+	Owner         *user_model.User       `xorm:"-"`
+	RepoID        int64                  `xorm:"INDEX"`
+	Repo          *repo_model.Repository `xorm:"-"`
+	CreatorID     int64                  `xorm:"NOT NULL"`
+	IsClosed      bool                   `xorm:"INDEX"`
+	TemplateType  TemplateType           `xorm:"'board_type'"` // TODO: rename the column to template_type
+	CardType      CardType
+	Type          Type
+	PlanningState PlanningState `xorm:"INDEX NOT NULL DEFAULT 0"`
 
 	RenderedContent template.HTML `xorm:"-"`
 	NumOpenIssues   int64         `xorm:"-"`
@@ -173,6 +197,16 @@ func (p *Project) IsRepositoryProject() bool {
 	return p.Type == TypeRepository
 }
 
+// HasValidPlanningState reports whether the persisted planning state is known.
+func (p *Project) HasValidPlanningState() bool {
+	return IsPlanningStateValid(p.PlanningState)
+}
+
+// IsPlanningEnabled reports whether the Project explicitly opted into planning.
+func (p *Project) IsPlanningEnabled() bool {
+	return p.PlanningState == PlanningStateDraft || p.PlanningState == PlanningStateActive
+}
+
 func (p *Project) CanBeAccessedByOwnerRepo(ownerID int64, repo *repo_model.Repository) bool {
 	if p.Type == TypeRepository {
 		return repo != nil && p.RepoID == repo.ID // if a project belongs to a repository, then its OwnerID is 0 and can be ignored
@@ -196,6 +230,16 @@ func GetCardConfig() []CardConfig {
 func IsTypeValid(p Type) bool {
 	switch p {
 	case TypeIndividual, TypeRepository, TypeOrganization:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsPlanningStateValid checks if a Project planning state is valid.
+func IsPlanningStateValid(state PlanningState) bool {
+	switch state {
+	case PlanningStateDisabled, PlanningStateDraft, PlanningStateActive:
 		return true
 	default:
 		return false
@@ -270,6 +314,9 @@ func NewProject(ctx context.Context, p *Project) error {
 	if !IsTypeValid(p.Type) {
 		return util.NewInvalidArgumentErrorf("project type is not valid")
 	}
+	if !IsPlanningStateValid(p.PlanningState) {
+		return util.NewInvalidArgumentErrorf("project planning state is not valid")
+	}
 
 	p.Title = util.EllipsisDisplayString(p.Title, 255)
 
@@ -333,6 +380,53 @@ func GetProjectForRepoByID(ctx context.Context, repoID, id int64) (*Project, err
 		return nil, ErrProjectNotExist{ID: id}
 	}
 	return p, nil
+}
+
+// HasActiveWorkPlan reports whether the repository currently owns an active
+// Work plan. Repository lifecycle services use this as their single guard.
+func HasActiveWorkPlan(ctx context.Context, repoID int64) (bool, error) {
+	return db.GetEngine(ctx).Where("repo_id = ? AND type = ? AND planning_state = ?", repoID, TypeRepository, PlanningStateActive).Exist(new(Project))
+}
+
+// StabilizePlanningStates serializes a surrounding transaction's membership
+// decision with planning-state transitions for the same Projects.
+func StabilizePlanningStates(ctx context.Context, projectIDs []int64) error {
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	_, err := db.GetEngine(ctx).In("id", projectIDs).SetExpr("planning_state", "planning_state").NoAutoTime().Update(new(Project))
+	return err
+}
+
+// RequireIssueOutsideActivePlan prevents Issue deletion from silently
+// changing the membership or dependency graph of a published plan.
+func RequireIssueOutsideActivePlan(ctx context.Context, repoID, issueID int64) error {
+	if err := repo_model.StabilizeWorkPlanning(ctx, repoID); err != nil {
+		return err
+	}
+	projectIDs := make([]int64, 0)
+	if err := db.GetEngine(ctx).Table(new(Project)).Where("repo_id = ? AND type = ? AND planning_state != ?", repoID, TypeRepository, PlanningStateDisabled).Cols("id").Find(&projectIDs); err != nil {
+		return err
+	}
+	if err := StabilizePlanningStates(ctx, projectIDs); err != nil {
+		return err
+	}
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	active := new(Project)
+	found, err := db.GetEngine(ctx).Table(new(Project)).
+		Join("INNER", "project_issue", "project.id = project_issue.project_id").
+		In("project.id", projectIDs).
+		Where("project.planning_state = ? AND project_issue.issue_id = ?", PlanningStateActive, issueID).
+		Get(active)
+	if err != nil {
+		return err
+	}
+	if found {
+		return ErrActiveWorkPlan
+	}
+	return nil
 }
 
 // GetAllProjectsIDsByOwnerID returns the all projects ids it owns
@@ -426,6 +520,14 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 			}
 			return err
 		}
+		if p.RepoID > 0 {
+			if err := repo_model.StabilizeWorkPlanning(ctx, p.RepoID); err != nil {
+				return err
+			}
+		}
+		if p.PlanningState == PlanningStateActive {
+			return ErrActiveWorkPlan
+		}
 
 		if err := deleteProjectIssuesByProjectID(ctx, id); err != nil {
 			return err
@@ -435,7 +537,14 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 			return err
 		}
 
-		if _, err = db.GetEngine(ctx).ID(p.ID).Delete(new(Project)); err != nil {
+		deleted, err := db.GetEngine(ctx).ID(p.ID).Where("planning_state != ?", PlanningStateActive).Delete(new(Project))
+		if err != nil {
+			return err
+		}
+		if deleted != 1 {
+			return ErrActiveWorkPlan
+		}
+		if err := retireProjectMCPWorkReceipts(ctx, p.RepoID, p.ID); err != nil {
 			return err
 		}
 
@@ -444,6 +553,15 @@ func DeleteProjectByID(ctx context.Context, id int64) error {
 }
 
 func DeleteProjectByRepoID(ctx context.Context, repoID int64) error {
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		if err := deleteProjectByRepoID(ctx, repoID); err != nil {
+			return err
+		}
+		return retireRepoProjectMCPWorkReceipts(ctx, repoID)
+	})
+}
+
+func deleteProjectByRepoID(ctx context.Context, repoID int64) error {
 	switch {
 	case setting.Database.Type.IsSQLite3():
 		if _, err := db.GetEngine(ctx).Exec("DELETE FROM project_issue WHERE project_issue.id IN (SELECT project_issue.id FROM project_issue INNER JOIN project WHERE project.id = project_issue.project_id AND project.repo_id = ?)", repoID); err != nil {

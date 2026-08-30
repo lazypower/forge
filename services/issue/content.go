@@ -6,10 +6,10 @@ package issue
 import (
 	"context"
 
+	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
 	access_model "gitea.dev/models/perm/access"
 	user_model "gitea.dev/models/user"
-	notify_service "gitea.dev/services/notify"
 )
 
 // ChangeContent changes issue content, as the given user.
@@ -24,13 +24,23 @@ func ChangeContent(ctx context.Context, issue *issues_model.Issue, doer *user_mo
 		}
 	}
 
-	oldContent := issue.Content
-
-	if err := issues_model.ChangeIssueContent(ctx, issue, doer, content, contentVersion); err != nil {
+	var effects []PostCommitEffect
+	if err := db.WithTx(ctx, func(txCtx context.Context) error {
+		result, txEffects, err := ReviseWorkIssueInTx(txCtx, issue, doer, issues_model.ConditionalIssueRevision{
+			ExpectedContentVersion: &contentVersion, DesiredContent: &content,
+		})
+		if err != nil {
+			return err
+		}
+		*issue = *result.Issue
+		effects = txEffects
+		return nil
+	}); err != nil {
 		return err
 	}
-
-	notify_service.IssueChangeContent(ctx, doer, issue, oldContent)
+	for _, effect := range effects {
+		effect.Run(ctx)
+	}
 
 	return nil
 }

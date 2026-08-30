@@ -5,40 +5,66 @@ package oauth2_provider
 
 import (
 	"errors"
-	"net"
-	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 
 	auth_model "gitea.dev/models/auth"
 	"gitea.dev/modules/setting"
 )
 
-// ErrInvalidMCPProfileRequest is returned when a request violates the fixed MCP OAuth profile.
+const (
+	// MCPReadScope is the canonical scope for the MCP Read profile.
+	MCPReadScope = "read:repository"
+	// MCPWorkWriteScope is the canonical scope for the MCP Work Planning profile.
+	MCPWorkWriteScope = "read:repository write:issue write:repository"
+)
+
 var ErrInvalidMCPProfileRequest = errors.New("invalid MCP OAuth profile request")
 
-// ValidateMCPAccessTokenClient validates the grant's registered client profile.
-func ValidateMCPAccessTokenClient(app *auth_model.OAuth2Application) error {
-	if !auth_model.IsMCPBuiltinOAuth2Application(app) {
-		return ErrInvalidMCPProfileRequest
-	}
-	return validateMCPClient(app)
+// MCPProfile is the verified server-defined OAuth profile and its exact scope snapshot.
+type MCPProfile struct {
+	Name           auth_model.MCPProfile
+	CanonicalScope string
+	Scopes         []string
 }
 
-// ValidateMCPAuthorizationRequest protects the fixed client and resource boundary.
+// MCPProfileForAccessToken validates a finalized registration and its grant-owned scope.
+func MCPProfileForAccessToken(app *auth_model.OAuth2Application, grant *auth_model.OAuth2Grant) (MCPProfile, error) {
+	if app == nil || grant == nil || grant.ApplicationID != app.ID ||
+		app.MCPRegistrationState != auth_model.MCPRegistrationStateFinalized ||
+		app.MCPBoundUserID != grant.UserID {
+		return MCPProfile{}, ErrInvalidMCPProfileRequest
+	}
+	return mcpProfileForScope(app, grant.Scope)
+}
+
+// CanonicalMCPAuthorizationScope canonicalizes one exact MCP profile scope.
+// Non-MCP applications retain their existing scope behavior.
+func CanonicalMCPAuthorizationScope(app *auth_model.OAuth2Application, scope string) (string, error) {
+	if app == nil || !app.IsMCPClientRegistration() {
+		return scope, nil
+	}
+	profile, err := mcpProfileForScope(app, scope)
+	if err != nil {
+		return "", err
+	}
+	return profile.CanonicalScope, nil
+}
+
+// ValidateMCPAuthorizationRequest protects the constrained client and resource boundary.
 func ValidateMCPAuthorizationRequest(app *auth_model.OAuth2Application, resource, scope, codeChallengeMethod, codeChallenge, redirectURI string) error {
-	if !auth_model.IsMCPBuiltinOAuth2Application(app) {
+	if app == nil || !app.IsMCPClientRegistration() {
 		if resource != "" {
 			return ErrInvalidMCPProfileRequest
 		}
 		return nil
 	}
-	if err := validateMCPClient(app); err != nil {
-		return err
-	}
-	if resource != setting.MCPResource() || scope != string(auth_model.AccessTokenScopeReadRepository) || codeChallengeMethod != "S256" || codeChallenge == "" {
+	_, err := mcpProfileForScope(app, scope)
+	if err != nil || resource != setting.MCPResource() || codeChallengeMethod != "S256" || codeChallenge == "" {
 		return ErrInvalidMCPProfileRequest
 	}
-	if !validMCPRedirectURI(redirectURI) || !app.ContainsRedirectURI(redirectURI) {
+	if !app.ContainsMCPRedirectURI(redirectURI) {
 		return ErrInvalidMCPProfileRequest
 	}
 	return nil
@@ -46,16 +72,16 @@ func ValidateMCPAuthorizationRequest(app *auth_model.OAuth2Application, resource
 
 // ValidateMCPAuthorizationCodeExchange validates the immutable code resource at token exchange.
 func ValidateMCPAuthorizationCodeExchange(app *auth_model.OAuth2Application, grant *auth_model.OAuth2Grant, requestedResource, codeResource string) error {
-	if !auth_model.IsMCPBuiltinOAuth2Application(app) {
+	if app == nil || !app.IsMCPClientRegistration() {
 		if requestedResource != "" || codeResource != "" {
 			return ErrInvalidMCPProfileRequest
 		}
 		return nil
 	}
-	if err := validateMCPClient(app); err != nil {
+	if _, err := MCPProfileForAccessToken(app, grant); err != nil {
 		return err
 	}
-	if grant == nil || grant.Scope != string(auth_model.AccessTokenScopeReadRepository) || requestedResource != setting.MCPResource() || codeResource != setting.MCPResource() {
+	if requestedResource != setting.MCPResource() || codeResource != setting.MCPResource() {
 		return ErrInvalidMCPProfileRequest
 	}
 	return nil
@@ -63,13 +89,13 @@ func ValidateMCPAuthorizationCodeExchange(app *auth_model.OAuth2Application, gra
 
 // ValidateMCPRefresh validates the signed refresh audience and an optional resource assertion.
 func ValidateMCPRefresh(app *auth_model.OAuth2Application, grant *auth_model.OAuth2Grant, token *Token, requestedResource string) (string, error) {
-	if !auth_model.IsMCPBuiltinOAuth2Application(app) {
+	if app == nil || !app.IsMCPClientRegistration() {
 		if requestedResource != "" || len(token.Audience) != 0 {
 			return "", ErrInvalidMCPProfileRequest
 		}
 		return "", nil
 	}
-	if err := validateMCPClient(app); err != nil {
+	if _, err := MCPProfileForAccessToken(app, grant); err != nil {
 		return "", err
 	}
 	resource := setting.MCPResource()
@@ -82,33 +108,74 @@ func ValidateMCPRefresh(app *auth_model.OAuth2Application, grant *auth_model.OAu
 	return resource, nil
 }
 
-func validateMCPClient(app *auth_model.OAuth2Application) error {
-	if !setting.MCP.Enabled || setting.MCP.Authentication != setting.MCPAuthenticationProfileOAuth || app == nil || app.ConfidentialClient {
-		return ErrInvalidMCPProfileRequest
+// MCPScopesSupported returns the exact individual scopes enabled for the MCP resource.
+func MCPScopesSupported() []string {
+	scopes := []string{string(auth_model.AccessTokenScopeReadRepository)}
+	if setting.MCP.WorkMutationEnabled {
+		scopes = append(scopes,
+			string(auth_model.AccessTokenScopeWriteIssue),
+			string(auth_model.AccessTokenScopeWriteRepository),
+		)
 	}
-	builtin := auth_model.BuiltinApplications()[auth_model.MCPBuiltinOAuth2ApplicationClientID]
-	if builtin == nil || len(app.RedirectURIs) != len(builtin.RedirectURIs) {
-		return ErrInvalidMCPProfileRequest
-	}
-	for i := range builtin.RedirectURIs {
-		if app.RedirectURIs[i] != builtin.RedirectURIs[i] {
-			return ErrInvalidMCPProfileRequest
-		}
-	}
-	return nil
+	return scopes
 }
 
-func validMCPRedirectURI(value string) bool {
-	redirect, err := url.Parse(value)
-	if err != nil || !redirect.IsAbs() || redirect.User != nil || redirect.Fragment != "" {
-		return false
+func mcpProfileForScope(app *auth_model.OAuth2Application, scope string) (MCPProfile, error) {
+	if app == nil || !app.IsMCPClientRegistration() || !setting.MCP.Enabled ||
+		setting.MCP.Authentication != setting.MCPAuthenticationProfileOAuth || app.ConfidentialClient ||
+		len(app.RedirectURIs) == 0 ||
+		(app.MCPRedirectClass != auth_model.MCPRedirectClassHTTPS && app.MCPRedirectClass != auth_model.MCPRedirectClassLoopback) {
+		return MCPProfile{}, ErrInvalidMCPProfileRequest
 	}
-	if redirect.Scheme == "https" {
-		return redirect.Host != ""
+	profile, err := MCPProfileForScope(scope)
+	if err != nil || (profile.Name == auth_model.MCPProfileWorkPlanning && !setting.MCP.WorkMutationEnabled) {
+		return MCPProfile{}, ErrInvalidMCPProfileRequest
 	}
-	if redirect.Scheme != "http" {
-		return false
+	return profile, nil
+}
+
+// MCPProfileForScope derives consent facts even when MCP is disabled. It does not authorize use.
+func MCPProfileForScope(scope string) (MCPProfile, error) {
+	profiles := []MCPProfile{{
+		Name:           auth_model.MCPProfileRead,
+		CanonicalScope: MCPReadScope,
+		Scopes:         []string{string(auth_model.AccessTokenScopeReadRepository)},
+	}, {
+		Name:           auth_model.MCPProfileWorkPlanning,
+		CanonicalScope: MCPWorkWriteScope,
+		Scopes: []string{
+			string(auth_model.AccessTokenScopeReadRepository),
+			string(auth_model.AccessTokenScopeWriteIssue),
+			string(auth_model.AccessTokenScopeWriteRepository),
+		},
+	}}
+	for _, profile := range profiles {
+		canonical, err := canonicalMCPProfileScope(profile, scope)
+		if err == nil && canonical == profile.CanonicalScope {
+			return profile, nil
+		}
 	}
-	ip := net.ParseIP(redirect.Hostname())
-	return ip != nil && ip.IsLoopback()
+	return MCPProfile{}, ErrInvalidMCPProfileRequest
+}
+
+func canonicalMCPProfileScope(profile MCPProfile, scope string) (string, error) {
+	members := strings.Split(scope, " ")
+	if scope == "" || slices.Contains(members, "") || len(members) != len(profile.Scopes) {
+		return "", ErrInvalidMCPProfileRequest
+	}
+	want := make(map[string]struct{}, len(profile.Scopes))
+	for _, member := range profile.Scopes {
+		want[member] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		if _, ok := want[member]; !ok {
+			return "", ErrInvalidMCPProfileRequest
+		}
+		if _, duplicate := seen[member]; duplicate {
+			return "", ErrInvalidMCPProfileRequest
+		}
+		seen[member] = struct{}{}
+	}
+	return profile.CanonicalScope, nil
 }

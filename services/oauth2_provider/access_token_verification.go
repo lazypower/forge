@@ -15,6 +15,8 @@ import (
 	auth_model "gitea.dev/models/auth"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/json"
+
+	"github.com/google/uuid"
 )
 
 // ErrInvalidAccessToken is returned for every rejected OAuth access token.
@@ -22,11 +24,13 @@ var ErrInvalidAccessToken = errors.New("invalid OAuth access token")
 
 // VerifiedAccessToken is an OAuth access token bound to its current Forge principal and grant.
 type VerifiedAccessToken struct {
-	Principal *user_model.User
-	Grant     *auth_model.OAuth2Grant
-	Scope     auth_model.AccessTokenScope
-	ExpiresAt time.Time
-	Resource  string
+	Principal    *user_model.User
+	Grant        *auth_model.OAuth2Grant
+	Scope        auth_model.AccessTokenScope
+	OAuthScope   string
+	CredentialID string
+	ExpiresAt    time.Time
+	Resource     string
 }
 
 type (
@@ -71,6 +75,12 @@ func verifyAccessToken(ctx context.Context, tokenValue, expectedResource string,
 	if resource != "" && (issuer == "" || token.Issuer != issuer) {
 		return nil, ErrInvalidAccessToken
 	}
+	if resource != "" {
+		credentialID, err := uuid.Parse(token.ID)
+		if err != nil || credentialID.Version() != 4 {
+			return nil, ErrInvalidAccessToken
+		}
+	}
 
 	grant, err := findGrant(ctx, token.GrantID)
 	if err != nil || grant == nil || grant.UserID <= 0 {
@@ -92,11 +102,13 @@ func verifyAccessToken(ctx context.Context, tokenValue, expectedResource string,
 	}
 
 	return &VerifiedAccessToken{
-		Principal: principal,
-		Grant:     grant,
-		Scope:     GrantAdditionalScopes(grant.Scope),
-		ExpiresAt: token.ExpiresAt.Time,
-		Resource:  resource,
+		Principal:    principal,
+		Grant:        grant,
+		Scope:        GrantAdditionalScopes(grant.Scope),
+		OAuthScope:   grant.Scope,
+		CredentialID: token.ID,
+		ExpiresAt:    token.ExpiresAt.Time,
+		Resource:     resource,
 	}, nil
 }
 

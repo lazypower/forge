@@ -122,69 +122,130 @@ const (
 
 // CreateIssueDependency creates a new dependency for an issue
 func CreateIssueDependency(ctx context.Context, user *user_model.User, issue, dep *Issue) error {
-	return db.WithTx(ctx, func(ctx context.Context) error {
-		// Check if it already exists
-		exists, err := issueDepExists(ctx, issue.ID, dep.ID)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return ErrDependencyExists{issue.ID, dep.ID}
-		}
-		// And if it would be circular
-		circular, err := issueDepExists(ctx, dep.ID, issue.ID)
-		if err != nil {
-			return err
-		}
-		if circular {
-			return ErrCircularDependency{issue.ID, dep.ID}
-		}
-
-		if err := db.Insert(ctx, &IssueDependency{
-			UserID:       user.ID,
-			IssueID:      issue.ID,
-			DependencyID: dep.ID,
-		}); err != nil {
-			return err
-		}
-
-		// Add comment referencing the new dependency
-		return createIssueDependencyComment(ctx, user, issue, dep, true)
+	_, err := db.WithTx2(ctx, func(ctx context.Context) ([]*Comment, error) {
+		return CreateIssueDependencyWithComments(ctx, user, issue, dep)
 	})
+	return err
+}
+
+// CreateIssueDependencyWithComments creates an edge and returns its native
+// timeline events for transaction-local provenance linking.
+func CreateIssueDependencyWithComments(ctx context.Context, user *user_model.User, issue, dep *Issue) ([]*Comment, error) {
+	// Check if it already exists
+	exists, err := issueDepExists(ctx, issue.ID, dep.ID)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrDependencyExists{issue.ID, dep.ID}
+	}
+	// And if it would be circular
+	circular, err := issueDepExists(ctx, dep.ID, issue.ID)
+	if err != nil {
+		return nil, err
+	}
+	if circular {
+		return nil, ErrCircularDependency{issue.ID, dep.ID}
+	}
+
+	if err := db.Insert(ctx, &IssueDependency{
+		UserID:       user.ID,
+		IssueID:      issue.ID,
+		DependencyID: dep.ID,
+	}); err != nil {
+		return nil, err
+	}
+
+	// Add comment referencing the new dependency
+	return createIssueDependencyComments(ctx, user, issue, dep, true)
 }
 
 // RemoveIssueDependency removes a dependency from an issue
 func RemoveIssueDependency(ctx context.Context, user *user_model.User, issue, dep *Issue, depType DependencyType) (err error) {
-	return db.WithTx(ctx, func(ctx context.Context) error {
-		var issueDepToDelete IssueDependency
-
-		switch depType {
-		case DependencyTypeBlockedBy:
-			issueDepToDelete = IssueDependency{IssueID: issue.ID, DependencyID: dep.ID}
-		case DependencyTypeBlocking:
-			issueDepToDelete = IssueDependency{IssueID: dep.ID, DependencyID: issue.ID}
-		default:
-			return ErrUnknownDependencyType{depType}
-		}
-
-		affected, err := db.GetEngine(ctx).Delete(&issueDepToDelete)
-		if err != nil {
-			return err
-		}
-
-		// If we deleted nothing, the dependency did not exist
-		if affected <= 0 {
-			return ErrDependencyNotExists{issue.ID, dep.ID}
-		}
-
-		// Add comment referencing the removed dependency
-		return createIssueDependencyComment(ctx, user, issue, dep, false)
+	_, err = db.WithTx2(ctx, func(ctx context.Context) ([]*Comment, error) {
+		return RemoveIssueDependencyWithComments(ctx, user, issue, dep, depType)
 	})
+	return err
+}
+
+// RemoveIssueDependencyWithComments removes an edge and returns its native
+// timeline events for transaction-local provenance linking.
+func RemoveIssueDependencyWithComments(ctx context.Context, user *user_model.User, issue, dep *Issue, depType DependencyType) ([]*Comment, error) {
+	var issueDepToDelete IssueDependency
+
+	switch depType {
+	case DependencyTypeBlockedBy:
+		issueDepToDelete = IssueDependency{IssueID: issue.ID, DependencyID: dep.ID}
+	case DependencyTypeBlocking:
+		issueDepToDelete = IssueDependency{IssueID: dep.ID, DependencyID: issue.ID}
+	default:
+		return nil, ErrUnknownDependencyType{depType}
+	}
+
+	affected, err := db.GetEngine(ctx).Delete(&issueDepToDelete)
+	if err != nil {
+		return nil, err
+	}
+
+	// If we deleted nothing, the dependency did not exist
+	if affected <= 0 {
+		return nil, ErrDependencyNotExists{issue.ID, dep.ID}
+	}
+
+	// Add comment referencing the removed dependency
+	return createIssueDependencyComments(ctx, user, issue, dep, false)
 }
 
 // Check if the dependency already exists
 func issueDepExists(ctx context.Context, issueID, depID int64) (bool, error) {
 	return db.GetEngine(ctx).Where("(issue_id = ? AND dependency_id = ?)", issueID, depID).Exist(&IssueDependency{})
+}
+
+// IssueDependencyExists reports whether the directed dependency is present.
+func IssueDependencyExists(ctx context.Context, issueID, dependencyID int64) (bool, error) {
+	return issueDepExists(ctx, issueID, dependencyID)
+}
+
+// GetIssueDependencyIDs returns the immediate prerequisites for the issues.
+func GetIssueDependencyIDs(ctx context.Context, issueIDs []int64) (map[int64][]int64, error) {
+	dependencyIDs := make(map[int64][]int64, len(issueIDs))
+	if len(issueIDs) == 0 {
+		return dependencyIDs, nil
+	}
+
+	for len(issueIDs) > 0 {
+		batchSize := min(len(issueIDs), db.DefaultMaxInSize)
+		dependencies := make([]IssueDependency, 0)
+		if err := db.GetEngine(ctx).In("issue_id", issueIDs[:batchSize]).OrderBy("issue_id ASC, dependency_id ASC").Find(&dependencies); err != nil {
+			return nil, err
+		}
+		for _, dependency := range dependencies {
+			dependencyIDs[dependency.IssueID] = append(dependencyIDs[dependency.IssueID], dependency.DependencyID)
+		}
+		issueIDs = issueIDs[batchSize:]
+	}
+	return dependencyIDs, nil
+}
+
+// GetIssueDependentIDs returns the immediate blocked Issues for the prerequisites.
+func GetIssueDependentIDs(ctx context.Context, dependencyIDs []int64) (map[int64][]int64, error) {
+	dependentIDs := make(map[int64][]int64, len(dependencyIDs))
+	if len(dependencyIDs) == 0 {
+		return dependentIDs, nil
+	}
+
+	for len(dependencyIDs) > 0 {
+		batchSize := min(len(dependencyIDs), db.DefaultMaxInSize)
+		dependencies := make([]IssueDependency, 0)
+		if err := db.GetEngine(ctx).In("dependency_id", dependencyIDs[:batchSize]).OrderBy("dependency_id ASC, issue_id ASC").Find(&dependencies); err != nil {
+			return nil, err
+		}
+		for _, dependency := range dependencies {
+			dependentIDs[dependency.DependencyID] = append(dependentIDs[dependency.DependencyID], dependency.IssueID)
+		}
+		dependencyIDs = dependencyIDs[batchSize:]
+	}
+	return dependentIDs, nil
 }
 
 // IssueNoDependenciesLeft checks if issue can be closed
