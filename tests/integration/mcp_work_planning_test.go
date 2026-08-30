@@ -87,7 +87,6 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assertCommittedMCPWorkResult(t, begin, "applied", false, "available")
 	plan := begin["workPlan"].(map[string]any)
 	planRef := plan["ref"].(string)
-	planToken := plan["planToken"].(string)
 	assert.Equal(t, "draft", plan["planningState"])
 	readInspection := callMCPWorkTool(t, readSession, "work_plan.inspect", map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef,
@@ -150,7 +149,7 @@ func TestMCPWorkPlanningDogfoodWithOfficialClient(t *testing.T) {
 	assert.Equal(t, "invalid_dependency", cycle["problem"].(map[string]any)["code"])
 	require.NotNil(t, cycle["operation"])
 
-	planToken = revised["workPlan"].(map[string]any)["planToken"].(string)
+	planToken := revised["workPlan"].(map[string]any)["planToken"].(string)
 	activationInput := map[string]any{
 		"repository": beginInput["repository"], "workPlan": planRef, "idempotencyKey": "dogfood-plan-activate-000001",
 		"expectedPlanToken": planToken,

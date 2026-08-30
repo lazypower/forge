@@ -3,7 +3,10 @@
 
 package setting
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 const (
 	defaultWorkMaxGraphNodes               = 1_000
@@ -76,13 +79,13 @@ func loadWorkFrom(rootCfg ConfigProvider) error {
 		}
 	}
 	if Work.DefaultPageItems > Work.MaxPageItems {
-		return fmt.Errorf("[work] DEFAULT_PAGE_ITEMS must not exceed MAX_PAGE_ITEMS")
+		return errors.New("[work] DEFAULT_PAGE_ITEMS must not exceed MAX_PAGE_ITEMS")
 	}
 	if Work.MaxPageItems > Work.MaxProjectionItems {
-		return fmt.Errorf("[work] MAX_PAGE_ITEMS must not exceed MAX_PROJECTION_ITEMS")
+		return errors.New("[work] MAX_PAGE_ITEMS must not exceed MAX_PROJECTION_ITEMS")
 	}
 	if Work.MaxPlanRevisionCreatedItems > Work.MaxPlanRevisionChanges {
-		return fmt.Errorf("[work] MAX_PLAN_REVISION_CREATED_ITEMS must not exceed MAX_PLAN_REVISION_CHANGES")
+		return errors.New("[work] MAX_PLAN_REVISION_CREATED_ITEMS must not exceed MAX_PLAN_REVISION_CHANGES")
 	}
 	return nil
 }
