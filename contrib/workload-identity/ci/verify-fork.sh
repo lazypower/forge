@@ -43,6 +43,7 @@ run_gate 'format check' sh -c 'make fmt >/dev/null && git diff --exit-code'
 run_gate 'generated bindata' env TAGS=bindata make generate-go
 run_gate 'Linux Go lint' env -u CI make lint-go
 run_gate 'Actions service tests' go test -tags 'sqlite sqlite_unlock_notify' ./services/actions
+run_gate 'Gitea build' make gitea
 run_gate 'runner integration test' env GITEA_TEST_DATABASE=sqlite make 'test-integration#TestActionsOIDCTokenIntegration'
 
 build_output="$workspace/image-build.log"
