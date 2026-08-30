@@ -57,7 +57,8 @@ func TestRegisterMCPClientRejectsMalformedRequestsBeforePersistence(t *testing.T
 		wantStatus              int
 	}{
 		{name: "content type", body: `{}`, wantStatus: http.StatusBadRequest},
-		{name: "unknown authority field", contentType: "application/json", body: `{"client_name":"Harness","scope":"write:repository"}`, wantStatus: http.StatusBadRequest},
+		{name: "unsupported scope", contentType: "application/json", body: `{"client_name":"Harness","scope":"write:repository"}`, wantStatus: http.StatusBadRequest},
+		{name: "unknown authority field", contentType: "application/json", body: `{"client_name":"Harness","resource":"https://forge.example/mcp"}`, wantStatus: http.StatusBadRequest},
 		{name: "unknown software statement", contentType: "application/json", body: `{"client_name":"Harness","software_statement":"payload"}`, wantStatus: http.StatusBadRequest},
 		{name: "trailing object", contentType: "application/json", body: `{} {}`, wantStatus: http.StatusBadRequest},
 		{name: "oversize", contentType: "application/json", body: `{"client_name":"` + strings.Repeat("x", 100) + `"}`, wantStatus: http.StatusBadRequest},

@@ -107,17 +107,29 @@ func (app *OAuth2Application) ContainsMCPRedirectURI(redirectURI string) bool {
 }
 
 func normalizeMCPLoopbackRuntimePort(value string) (string, bool) {
+	return normalizeMCPLoopbackRedirectURI(value, true)
+}
+
+// NormalizeMCPRegisteredLoopbackRedirectURI validates a registered native callback and removes its optional runtime port.
+func NormalizeMCPRegisteredLoopbackRedirectURI(value string) (string, bool) {
+	return normalizeMCPLoopbackRedirectURI(value, false)
+}
+
+func normalizeMCPLoopbackRedirectURI(value string, requirePort bool) (string, bool) {
 	redirect, err := url.Parse(value)
-	if err != nil || redirect.Scheme != "http" || redirect.Port() == "" || redirect.User != nil || redirect.Fragment != "" {
-		return "", false
-	}
-	ip := net.ParseIP(redirect.Hostname())
-	if ip == nil || !ip.IsLoopback() {
+	if err != nil || !redirect.IsAbs() || redirect.Opaque != "" || redirect.Scheme != "http" ||
+		(requirePort && redirect.Port() == "") || redirect.User != nil || redirect.Fragment != "" || redirect.Host == "" {
 		return "", false
 	}
 	host := redirect.Hostname()
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return "", false
+		}
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
 	}
 	redirect.Host = host
 	return redirect.String(), true

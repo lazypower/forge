@@ -626,13 +626,16 @@ overload ordinary user-created OAuth application ownership or infer state from
 an empty field.
 
 Advertise the bootstrap endpoint through OAuth authorization metadata. The
-endpoint accepts no scope, profile, repository, principal, confidential-client
-method, arbitrary extension metadata, or fetched content. Enforce exact HTTPS
-or native loopback redirect validation, PKCE S256 at authorization, request and
-metadata limits, a small independent in-flight budget, per-source and
-instance-wide rate limits, and outstanding provisional caps. Use a 30-minute
-default provisional lifetime configurable only from 10 to 60 minutes. Expiry
-during login or consent creates no grant and requires a fresh bootstrap.
+endpoint accepts an optional exact enabled-profile `scope` as descriptive
+client compatibility input and discards it before persistence. It accepts no
+profile, repository, principal, confidential-client method, arbitrary extension
+metadata, or fetched content. Enforce exact HTTPS or native loopback redirect
+validation, including exact lowercase `localhost` without DNS resolution or IP
+equivalence, PKCE S256 at authorization, request and metadata limits, a small
+independent in-flight budget, per-source and instance-wide rate limits, and
+outstanding provisional caps. Use a 30-minute default provisional lifetime
+configurable only from 10 to 60 minutes. Expiry during login or consent creates
+no grant and requires a fresh bootstrap.
 Bootstrap has its own enablement so operators can stop new registrations
 without invalidating existing grants. Explicitly document that a source-rotating
 attacker can temporarily fill the instance cap and deny only new onboarding;
@@ -668,9 +671,10 @@ substrate.
   usable authorization code.
 - Client IDs are high entropy, no client secret is issued, and bootstrap input
   cannot select authority.
-- HTTPS and loopback redirect positive cases pass; user-info, fragments,
-  non-loopback HTTP, malformed hosts, excess redirects, and redirect mismatch
-  fail without fetching client-supplied URLs.
+- HTTPS, IP-literal loopback, and exact lowercase `localhost` redirect positive
+  cases pass; user-info, fragments, non-loopback HTTP, uppercase or dotted
+  `localhost`, localhost subdomains, malformed hosts, excess redirects, and
+  redirect mismatch fail without fetching client-supplied URLs.
 - Missing PKCE, `plain`, wrong verifier, wrong resource, confidential client,
   and token exchange before consent fail closed.
 - Concurrent first approval finalizes once; another principal cannot authorize
@@ -848,9 +852,9 @@ provenance answer different questions without conflicting.
 
 **Acceptance evidence**
 
-- A fresh harness installation completes bootstrap and normal OAuth onboarding
-  without manual application management; repeat use and refresh have no human
-  gate.
+- A real supported production MCP client, not only an SDK harness, completes
+  bootstrap and normal OAuth onboarding without manual application management;
+  repeat use and refresh have no human gate.
 - Two same-label installations receive distinct registrations, grants, and
   refresh lineages and can be revoked independently.
 - Profile transition requires new consent and cannot be resurrected by any old

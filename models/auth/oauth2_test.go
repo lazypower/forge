@@ -190,6 +190,22 @@ func TestMCPClientRegistrationExactRedirectMatching(t *testing.T) {
 	} {
 		assert.False(t, loopback.ContainsMCPRedirectURI(changed), changed)
 	}
+
+	localhost := &auth_model.OAuth2Application{
+		MCPRegistrationState: auth_model.MCPRegistrationStateFinalized,
+		MCPRedirectClass:     auth_model.MCPRedirectClassLoopback,
+		RedirectURIs:         []string{"http://localhost:49151/Callback?channel=A"},
+	}
+	assert.True(t, localhost.ContainsMCPRedirectURI("http://localhost:49152/Callback?channel=A"))
+	for _, changed := range []string{
+		"http://127.0.0.1:49152/Callback?channel=A",
+		"http://[::1]:49152/Callback?channel=A",
+		"http://LOCALHOST:49152/Callback?channel=A",
+		"http://localhost:49152/callback?channel=A",
+		"http://localhost:49152/Callback?channel=a",
+	} {
+		assert.False(t, localhost.ContainsMCPRedirectURI(changed), changed)
+	}
 }
 
 func TestMCPClientRegistrationConcurrentFirstApproval(t *testing.T) {

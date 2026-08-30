@@ -1195,9 +1195,13 @@ public-client registration profile:
 - public clients with no client secret or client authentication method;
 - the canonical MCP resource only;
 - exact HTTPS redirects without fragment or user information, or native-app
-  loopback HTTP redirects using Forge's existing dynamic-port normalization;
+  loopback HTTP redirects using an IP literal or exact `localhost` and Forge's
+  dynamic-port normalization; `localhost` is never resolved or equated with an
+  IP literal;
 - PKCE S256 for every subsequent authorization;
-- no requested OAuth scopes, profile, repository, principal, or authority; and
+- an optional exact enabled-profile `scope` accepted as descriptive client
+  compatibility input and discarded before persistence, with no requested
+  profile, repository, principal, or authority; and
 - bounded metadata size and redirect count, with no fetched logo, software
   statement, or client-supplied executable content.
 

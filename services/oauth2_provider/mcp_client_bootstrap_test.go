@@ -27,6 +27,7 @@ func TestMCPClientBootstrapRedirectValidation(t *testing.T) {
 		{name: "https", request: MCPClientRegistrationRequest{ClientName: "Harness", RedirectURIs: []string{"https://client.example/callback?channel=A"}}, wantClass: auth_model.MCPRedirectClassHTTPS},
 		{name: "ipv4 loopback", request: MCPClientRegistrationRequest{ClientName: "Harness", ApplicationType: "native", RedirectURIs: []string{"http://127.0.0.1/callback"}}, wantClass: auth_model.MCPRedirectClassLoopback},
 		{name: "ipv6 loopback", request: MCPClientRegistrationRequest{ClientName: "Harness", TokenEndpointAuthMethod: "none", GrantTypes: []string{"refresh_token", "authorization_code"}, ResponseTypes: []string{"code"}, RedirectURIs: []string{"http://[::1]:49200/callback"}}, wantClass: auth_model.MCPRedirectClassLoopback},
+		{name: "localhost loopback with read scope", request: MCPClientRegistrationRequest{ClientName: "Claude Code", ApplicationType: "native", Scope: MCPReadScope, RedirectURIs: []string{"http://localhost:49200/callback"}}, wantClass: auth_model.MCPRedirectClassLoopback},
 	}
 	for _, test := range valid {
 		t.Run(test.name, func(t *testing.T) {
@@ -52,8 +53,11 @@ func TestMCPClientBootstrapRedirectValidation(t *testing.T) {
 		{ClientName: "Harness", RedirectURIs: []string{"https://user@client.example/callback"}},
 		{ClientName: "Harness", RedirectURIs: []string{"https://client.example/callback#fragment"}},
 		{ClientName: "Harness", RedirectURIs: []string{"http://client.example/callback"}},
-		{ClientName: "Harness", RedirectURIs: []string{"http://localhost/callback"}},
+		{ClientName: "Harness", RedirectURIs: []string{"http://LOCALHOST/callback"}},
+		{ClientName: "Harness", RedirectURIs: []string{"http://localhost./callback"}},
+		{ClientName: "Harness", RedirectURIs: []string{"http://client.localhost/callback"}},
 		{ClientName: "Harness", RedirectURIs: []string{"http://127.0.0.1:bad/callback"}},
+		{ClientName: "Harness", Scope: "write:repository", RedirectURIs: []string{"http://localhost/callback"}},
 		{ClientName: "Harness", RedirectURIs: []string{"https://client.example/callback", "http://127.0.0.1/callback"}},
 		{ClientName: "Harness", RedirectURIs: []string{"http://127.0.0.1/callback", "http://127.0.0.1:49152/callback"}},
 		{ClientName: "Harness", RedirectURIs: []string{"https://client.example/callback", "https://client.example/callback"}},
@@ -64,6 +68,21 @@ func TestMCPClientBootstrapRedirectValidation(t *testing.T) {
 			assert.ErrorIs(t, err, ErrInvalidMCPClientMetadata)
 		})
 	}
+}
+
+func TestMCPClientBootstrapScopeCompatibility(t *testing.T) {
+	defer test_module.MockVariableValue(&setting.MCP.ClientBootstrapMaxRedirectURIs, 5)()
+	request := MCPClientRegistrationRequest{
+		ClientName: "Claude Code", ApplicationType: "native", Scope: MCPWorkWriteScope,
+		RedirectURIs: []string{"http://localhost:49152/callback"},
+	}
+	_, err := validateMCPClientRegistrationRequest(&request)
+	assert.ErrorIs(t, err, ErrInvalidMCPClientMetadata)
+
+	defer test_module.MockVariableValue(&setting.MCP.WorkMutationEnabled, true)()
+	redirectClass, err := validateMCPClientRegistrationRequest(&request)
+	require.NoError(t, err)
+	assert.Equal(t, auth_model.MCPRedirectClassLoopback, redirectClass)
 }
 
 func TestMCPClientBootstrapCreatesNoAuthority(t *testing.T) {
@@ -78,10 +97,12 @@ func TestMCPClientBootstrapCreatesNoAuthority(t *testing.T) {
 		ClientName:       "Planning harness",
 		InstallationName: "laptop",
 		RedirectURIs:     []string{"http://127.0.0.1/callback"},
+		Scope:            MCPReadScope,
 	}, now)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.ClientID)
 	assert.Equal(t, "none", response.TokenEndpointAuthMethod)
+	assert.Empty(t, response.Scope)
 	app, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), response.ClientID)
 	require.NoError(t, err)
 	assert.Equal(t, auth_model.MCPRegistrationStateProvisional, app.MCPRegistrationState)

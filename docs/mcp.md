@@ -104,20 +104,25 @@ CLIENT_BOOTSTRAP_ENABLED = true
 
 When enabled, Forge advertises `/login/oauth/register` as its OAuth client
 registration endpoint. Each harness installation can silently obtain a
-high-entropy public client ID. Forge issues no client secret, accepts no scope,
-profile, repository, principal, confidential-client method, software
-statement, fetched URL, or other extension metadata at bootstrap, and creates
-no grant, code, token, or repository authority before consent.
+high-entropy public client ID. Forge issues no client secret. An optional
+registration-time `scope` is accepted only when it exactly names an enabled
+server-defined profile, then discarded; authorization and consent remain the
+only scope authority. Forge accepts no profile, repository, principal,
+confidential-client method, software statement, fetched URL, or other extension
+metadata at bootstrap, and creates no grant, code, token, or repository
+authority before consent.
 
 The closed registration profile accepts a bounded client name, an optional
 bounded installation label, `authorization_code` plus `refresh_token`, response
 type `code`, token authentication method `none`, and at most the configured
 number of redirects. Redirects must all belong to one class: exact HTTPS URLs,
-or native `http` URLs whose host is a literal IPv4 or IPv6 loopback address.
-User information, fragments, non-loopback HTTP, mixed redirect classes,
-duplicates, and malformed URLs are rejected without fetching them. HTTPS
-redirects match byte-for-byte. A loopback authorization may select a runtime
-port while every other component remains exact.
+or native `http` URLs whose host is a literal IPv4 or IPv6 loopback address or
+exactly `localhost`. Forge never resolves `localhost` and never equates it with
+an IP literal. User information, fragments, other hostnames, non-loopback HTTP,
+mixed redirect classes, duplicates, and malformed URLs are rejected without
+fetching them. HTTPS redirects match byte-for-byte. A loopback authorization
+may select a runtime port while every other component, including the selected
+host form, remains exact.
 
 A new registration remains provisional and authority-free for 30 minutes by
 default. The configurable lifetime must remain between 10 and 60 minutes. The
@@ -220,7 +225,8 @@ cat > registration.json <<'JSON'
   "application_type": "native",
   "token_endpoint_auth_method": "none",
   "grant_types": ["authorization_code", "refresh_token"],
-  "response_types": ["code"]
+  "response_types": ["code"],
+  "scope": "read:repository"
 }
 JSON
 curl --fail-with-body --silent --show-error \
@@ -235,8 +241,10 @@ Use `application_type: "web"` and, for example,
 loopback redirects in one registration. Client and installation names are at
 most 128 characters, with no surrounding whitespace or control/format
 characters; redirects are at most 2,048 bytes each. Omit an unused optional
-installation name. No `scope`, `resource`, principal, or repository field is
-accepted in the registration body: the MCP audience is server-defined.
+installation name. A canonical discovered `scope` may be sent for client
+compatibility, but Forge validates and discards it. No `resource`, profile,
+principal, or repository field is accepted in the registration body: the MCP
+audience is server-defined.
 
 After registration, the client performs the authorization-code flow:
 

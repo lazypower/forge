@@ -6,7 +6,6 @@ package oauth2_provider
 import (
 	"context"
 	"errors"
-	"net"
 	"net/url"
 	"slices"
 	"strings"
@@ -34,6 +33,7 @@ type MCPClientRegistrationRequest struct {
 	ClientName              string   `json:"client_name,omitempty"`
 	ApplicationType         string   `json:"application_type,omitempty"`
 	InstallationName        string   `json:"installation_name,omitempty"`
+	Scope                   string   `json:"scope,omitempty"`
 }
 
 // MCPClientRegistrationResponse returns public metadata only and never issues a secret.
@@ -59,6 +59,8 @@ func CreateMCPClientBootstrap(ctx context.Context, request MCPClientRegistration
 	request.TokenEndpointAuthMethod = "none"
 	request.GrantTypes = []string{"authorization_code", "refresh_token"}
 	request.ResponseTypes = []string{"code"}
+	// Registration scope is descriptive compatibility input. Authorization and consent remain authoritative.
+	request.Scope = ""
 	if request.ApplicationType == "" {
 		if redirectClass == auth_model.MCPRedirectClassLoopback {
 			request.ApplicationType = "native"
@@ -109,6 +111,12 @@ func validateMCPClientRegistrationRequest(request *MCPClientRegistrationRequest)
 	if request.ApplicationType != "" && request.ApplicationType != wantApplicationType {
 		return "", ErrInvalidMCPClientMetadata
 	}
+	if request.Scope != "" {
+		profile, err := MCPProfileForScope(request.Scope)
+		if err != nil || (profile.Name == auth_model.MCPProfileWorkPlanning && !setting.MCP.WorkMutationEnabled) {
+			return "", ErrInvalidMCPClientMetadata
+		}
+	}
 	return redirectClass, nil
 }
 
@@ -153,16 +161,11 @@ func validateMCPRegisteredRedirectURI(value string) (auth_model.MCPRedirectClass
 	case "https":
 		return auth_model.MCPRedirectClassHTTPS, value, nil
 	case "http":
-		ip := net.ParseIP(redirect.Hostname())
-		if ip == nil || !ip.IsLoopback() {
+		normalized, ok := auth_model.NormalizeMCPRegisteredLoopbackRedirectURI(value)
+		if !ok {
 			return "", "", ErrInvalidMCPClientMetadata
 		}
-		host := redirect.Hostname()
-		if strings.Contains(host, ":") {
-			host = "[" + host + "]"
-		}
-		redirect.Host = host
-		return auth_model.MCPRedirectClassLoopback, redirect.String(), nil
+		return auth_model.MCPRedirectClassLoopback, normalized, nil
 	default:
 		return "", "", ErrInvalidMCPClientMetadata
 	}
