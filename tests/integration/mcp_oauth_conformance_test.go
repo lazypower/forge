@@ -24,6 +24,7 @@ import (
 	"gitea.dev/models/db"
 	issues_model "gitea.dev/models/issues"
 	repo_model "gitea.dev/models/repo"
+	"gitea.dev/models/unit"
 	"gitea.dev/models/unittest"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/json"
@@ -31,6 +32,7 @@ import (
 	"gitea.dev/modules/test"
 	"gitea.dev/routers"
 	"gitea.dev/services/oauth2_provider"
+	repo_service "gitea.dev/services/repository"
 	"gitea.dev/tests"
 
 	"github.com/PuerkitoBio/goquery"
@@ -368,7 +370,41 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer callbackServer.Close()
-	callbackURL := callbackServer.URL + "/callback"
+	callbackAddress, err := url.Parse(callbackServer.URL)
+	require.NoError(t, err)
+	callbackURL := "http://localhost:" + callbackAddress.Port() + "/callback"
+
+	registrationBody, err := json.Marshal(oauth2_provider.MCPClientRegistrationRequest{
+		ClientName:              "Claude Code",
+		RedirectURIs:            []string{callbackURL},
+		TokenEndpointAuthMethod: "none",
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		ApplicationType:         "native",
+		Scope:                   oauth2_provider.MCPWorkWriteScope,
+	})
+	require.NoError(t, err)
+	registrationResponse, err := forgeServer.Client().Post(
+		forgeServer.URL+"/forge/login/oauth/register",
+		"application/json",
+		strings.NewReader(string(registrationBody)),
+	)
+	require.NoError(t, err)
+	registrationResponseBody, err := io.ReadAll(registrationResponse.Body)
+	registrationResponse.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, registrationResponse.StatusCode, string(registrationResponseBody))
+	assert.NotContains(t, string(registrationResponseBody), `"scope"`, "registration-time scope must not be reflected")
+	var capturedRegistration oauth2_provider.MCPClientRegistrationResponse
+	require.NoError(t, json.Unmarshal(registrationResponseBody, &capturedRegistration))
+	assert.Empty(t, capturedRegistration.Scope, "registration-time scope must not survive as authority")
+	assert.Equal(t, []string{callbackURL}, capturedRegistration.RedirectURIs)
+	capturedApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), capturedRegistration.ClientID)
+	require.NoError(t, err)
+	assert.Equal(t, auth_model.MCPRegistrationStateProvisional, capturedApp.MCPRegistrationState)
+	capturedGrant, err := capturedApp.GetGrantByUserID(t.Context(), 5)
+	require.NoError(t, err)
+	assert.Nil(t, capturedGrant)
 
 	trace := &mcpOAuthHTTPTrace{base: forgeServer.Client().Transport, requests: map[string]int{}}
 	httpClient := &http.Client{Transport: trace, Jar: login.jar}
@@ -499,7 +535,7 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 	assert.Equal(t, "token was already used", replayError.ErrorDescription)
 
 	t.Run("independent work-planning registration", func(t *testing.T) {
-		writeRegistration := bootstrapMCPClient(t, httpClient, "Work planning harness", callbackURL)
+		writeRegistration := &capturedRegistration
 		writeApp, err := auth_model.GetOAuth2ApplicationByClientID(t.Context(), writeRegistration.ClientID)
 		require.NoError(t, err)
 		assert.NotEqual(t, app.ID, writeApp.ID)
@@ -605,6 +641,28 @@ func TestMCPOAuthConformanceWithOfficialClient(t *testing.T) {
 			OAuthHandler: &mcpOAuthChallengeRecorder{token: writeTokens.AccessToken}, DisableStandaloneSSE: true,
 		}, nil)
 		require.NoError(t, err)
+		writeRepo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 4, OwnerName: "user5"})
+		require.NoError(t, repo_service.UpdateRepositoryUnits(t.Context(), writeRepo, []repo_model.RepoUnit{
+			{RepoID: writeRepo.ID, Type: unit.TypeIssues, Config: &repo_model.IssuesConfig{EnableDependencies: true}},
+			{RepoID: writeRepo.ID, Type: unit.TypeProjects, Config: &repo_model.ProjectsConfig{ProjectsMode: repo_model.ProjectsModeRepo}},
+		}, nil))
+		writeMutation := callMCPWorkTool(t, writeSession, "work_plan.begin", map[string]any{
+			"repository":     map[string]any{"owner": writeRepo.OwnerName, "name": writeRepo.Name},
+			"idempotencyKey": "claude-localhost-work-plan-0001",
+			"begin": map[string]any{
+				"kind": "new", "title": "Claude localhost compatibility",
+			},
+		})
+		require.Equal(t, "applied", writeMutation["status"])
+		require.Equal(t, "available", writeMutation["currentResultStatus"])
+		operation, ok := writeMutation["operation"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, false, operation["replayed"])
+		assert.NotEmpty(t, operation["id"])
+		assert.NotEmpty(t, operation["committedAt"])
+		assert.Equal(t, map[string]any{
+			"harness": "forge-write-profile", "harnessVersion": "1", "model": "Example Model", "source": "client-reported",
+		}, operation["clientAttribution"])
 		require.NoError(t, writeSession.Close())
 
 		writeGrant, err := writeApp.GetGrantByUserID(t.Context(), 5)
