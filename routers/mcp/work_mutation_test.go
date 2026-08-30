@@ -49,8 +49,13 @@ func TestOfficialSDKCallsAllWorkMutationHandlers(t *testing.T) {
 			beginCalls++
 			assert.EqualValues(t, 1, doer.ID)
 			assert.EqualValues(t, 8, authority.OAuthApplicationID)
+			assert.Equal(t, "test", authority.ClientAttribution.Harness)
+			assert.Equal(t, "1", authority.ClientAttribution.HarnessVersion)
+			assert.Empty(t, authority.ClientAttribution.Model)
 			assert.Equal(t, "Plan", request.Begin.Title)
-			return committedMutation(mcpwork_model.OutcomeApplied, false, projectMutationArtifact(9)), nil
+			execution := committedMutation(mcpwork_model.OutcomeApplied, false, projectMutationArtifact(9))
+			execution.Receipt.ClientAttribution = authority.ClientAttribution
+			return execution, nil
 		},
 		item: func(_ context.Context, _ *user_model.User, _ workMutationAuthority, request workItemReviseRequest) (*workMutationExecution, error) {
 			itemCalls++
@@ -75,13 +80,14 @@ func TestOfficialSDKCallsAllWorkMutationHandlers(t *testing.T) {
 	}
 	session := connectWorkMutationTestClient(t, mutations, reader, 1<<20)
 
-	begin, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Meta: testClientAttributionMeta(), Name: workPlanBeginToolName, Arguments: map[string]any{
+	begin, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: workPlanBeginToolName, Arguments: map[string]any{
 		"repository": map[string]any{"owner": "octo", "name": "forge"}, "idempotencyKey": "begin-plan-key-0000000001",
 		"begin": map[string]any{"kind": "new", "title": "Plan"},
 	}})
 	require.NoError(t, err)
 	assert.False(t, begin.IsError)
 	assertMutationStructuredResult(t, begin, "applied", false, "available")
+	assert.NotContains(t, structuredWorkOutput(t, begin)["operation"].(map[string]any)["clientAttribution"], "model")
 
 	item, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Meta: testClientAttributionMeta(), Name: workItemReviseToolName, Arguments: map[string]any{
 		"repository": map[string]any{"owner": "octo", "name": "forge"}, "workItem": "issue/7",

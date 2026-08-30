@@ -17,13 +17,13 @@ var ErrClientAttributionRequired = errors.New("valid MCP client attribution is r
 type ClientAttribution struct {
 	Harness        string `json:"harness"`
 	HarnessVersion string `json:"harnessVersion,omitempty"`
-	Model          string `json:"model"`
+	Model          string `json:"model,omitempty"`
 	Source         string `json:"source"`
 }
 
 // NewClientAttribution bounds and normalizes runtime labels before receipt lookup.
 func NewClientAttribution(harness, version, model string) (ClientAttribution, error) {
-	if !validAttributionLabel(harness, 128, true) || !validAttributionLabel(model, 128, true) || !validAttributionLabel(version, 64, false) {
+	if !validAttributionLabel(harness, 128, true) || !validAttributionLabel(model, 128, false) || !validAttributionLabel(version, 64, false) {
 		return ClientAttribution{}, ErrClientAttributionRequired
 	}
 	return ClientAttribution{

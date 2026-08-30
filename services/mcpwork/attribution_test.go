@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	mcpwork_model "gitea.dev/models/mcpwork"
+	"gitea.dev/models/unittest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,7 @@ func TestClientAttributionBoundsAndNormalization(t *testing.T) {
 	}{
 		{"trim", " Harness ", " 1.0 ", " Model ", true},
 		{"optional version", "Harness", "", "Model", true},
+		{"optional model", "Harness", "1.0", "", true},
 		{"unicode bounds", strings.Repeat("界", 128), strings.Repeat("界", 64), strings.Repeat("界", 128), true},
 		{"missing harness", "", "", "Model", false},
 		{"blank model", "Harness", "", "   ", false},
@@ -88,26 +90,41 @@ func TestRegisteredReceiptLabelsRemainBounded(t *testing.T) {
 }
 
 func TestReplayKeepsFirstAttribution(t *testing.T) {
-	s := prepareReceiptService(t)
-	request := testReceiptRequest(testReceiptKey, `{"idempotencyKey":"`+testReceiptKey+`","title":"same"}`)
-	calls := 0
-	mutate := func(context.Context, Operation) (Completion, error) {
-		calls++
-		return Completion{Outcome: mcpwork_model.OutcomeApplied}, nil
+	for _, tc := range []struct {
+		name, firstModel, replayModel string
+	}{
+		{"modeled receipt", "First model", ""},
+		{"model-less receipt", "", "Later model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := prepareReceiptService(t)
+			request := testReceiptRequest(testReceiptKey, `{"idempotencyKey":"`+testReceiptKey+`","title":"same"}`)
+			var err error
+			request.ClientAttribution, err = NewClientAttribution("First harness", "1", tc.firstModel)
+			require.NoError(t, err)
+			calls := 0
+			mutate := func(context.Context, Operation) (Completion, error) {
+				calls++
+				return Completion{Outcome: mcpwork_model.OutcomeApplied}, nil
+			}
+			first, err := s.Execute(t.Context(), request, mutate)
+			require.NoError(t, err)
+			request.ClientAttribution, err = NewClientAttribution("Other harness", "2", tc.replayModel)
+			require.NoError(t, err)
+			replayed, err := s.Execute(t.Context(), request, mutate)
+			require.NoError(t, err)
+			assert.True(t, replayed.Replayed)
+			assert.Equal(t, first.OperationUUID, replayed.OperationUUID)
+			assert.Equal(t, first.ClientAttribution, replayed.ClientAttribution)
+			assert.Equal(t, tc.firstModel, replayed.ClientAttribution.Model)
+			stored := unittest.AssertExistsAndLoadBean(t, &mcpwork_model.Receipt{OperationUUID: first.OperationUUID})
+			assert.Equal(t, tc.firstModel, stored.Model)
+			assert.NotEqual(t, request.ClientAttribution, replayed.ClientAttribution)
+			assert.Equal(t, 1, calls)
+			request.ExpandedInput = []byte(`{"idempotencyKey":"` + testReceiptKey + `","title":"different"}`)
+			_, err = s.Execute(t.Context(), request, mutate)
+			require.ErrorIs(t, err, ErrIdempotencyConflict)
+			assert.Equal(t, 1, calls)
+		})
 	}
-	first, err := s.Execute(t.Context(), request, mutate)
-	require.NoError(t, err)
-	request.ClientAttribution, err = NewClientAttribution("Other harness", "2", "Other model")
-	require.NoError(t, err)
-	replayed, err := s.Execute(t.Context(), request, mutate)
-	require.NoError(t, err)
-	assert.True(t, replayed.Replayed)
-	assert.Equal(t, first.OperationUUID, replayed.OperationUUID)
-	assert.Equal(t, first.ClientAttribution, replayed.ClientAttribution)
-	assert.NotEqual(t, request.ClientAttribution, replayed.ClientAttribution)
-	assert.Equal(t, 1, calls)
-	request.ExpandedInput = []byte(`{"idempotencyKey":"` + testReceiptKey + `","title":"different"}`)
-	_, err = s.Execute(t.Context(), request, mutate)
-	require.ErrorIs(t, err, ErrIdempotencyConflict)
-	assert.Equal(t, 1, calls)
 }

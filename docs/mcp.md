@@ -152,15 +152,17 @@ own independently revocable client and refresh lineage.
 
 OAuth Protected Resource Metadata is served by the official MCP Go SDK at the
 application-scoped `/.well-known/oauth-protected-resource/mcp` route and is
-advertised explicitly in bearer challenges. Forge's automated interoperability
+advertised explicitly in bearer challenges. Forge's automated protocol-harness
 coverage drives the official MCP Go SDK client from that challenge through
 protected-resource and Forge OpenID Connect discovery, dynamic client
 bootstrap, authorization with PKCE `S256`, loopback callback, token exchange,
 an authenticated `pull_request.inspect` call, access-token refresh, refresh
 rotation, and replay rejection. It also covers closed metadata, redirect,
 scope, audience, credential-profile, unrelated-resource, configured-subpath,
-and TLS trust boundaries. This does not claim Client ID Metadata Documents,
-external issuer aliases, or broader MCP or OAuth conformance.
+and TLS trust boundaries. This proves the exercised protocol behavior, not
+interoperability with a production client bridge. It does not claim Client ID
+Metadata Documents, external issuer aliases, or broader MCP or OAuth
+conformance.
 
 ### Work mutation OAuth profile
 
@@ -276,7 +278,7 @@ until reauthorized or deleted by the bound principal. Deletion is unavailable
 while a grant exists and invalidates remaining codes; it does not rewrite
 historical receipt labels. Operation history instead answers **what happened**
 using principal authority, registered metadata, and explicitly client-reported
-harness/model snapshots. Models do not belong on the grant.
+harness plus optional model snapshots. Models do not belong on the grant.
 
 ## Work planning
 
@@ -316,8 +318,9 @@ reinspected before action.
 
 Every Work mutation requires a harness name from the official MCP SDK's
 `ClientInfo`: per-request `io.modelcontextprotocol/clientInfo` metadata, or the
-initialized session's client information when absent. The model is required in
-the closed request `_meta` entry `io.gitea.forge/clientAttribution`:
+initialized session's client information when absent. A client may optionally
+report its model in the closed request `_meta` entry
+`io.gitea.forge/clientAttribution`:
 
 ```json
 {
@@ -352,20 +355,22 @@ and key for retries. The metadata belongs in `params._meta`, outside
 negotiated sessions use their initialized client information when no
 per-request override is present.
 
-Forge trims the decoded labels and requires nonempty harness and model strings
-of at most 128 UTF-8 characters each, with no control characters. A supplied
-version must be nonempty and at most 64 characters under the same rules; an
-absent version is omitted from output. The legacy SDK cannot distinguish an
-omitted, empty, or null initialized version, so its empty value is treated as
-absent. The Forge attribution object permits only the `model` field. Invalid
-attribution fails with `client_attribution_required`, non-retryable until
-corrected, before receipt lookup or Work access. Structurally malformed standard
-MCP messages rejected by the SDK remain protocol errors.
+Forge trims the decoded labels and requires a nonempty harness of at most 128
+UTF-8 characters with no control characters. A supplied version must be
+nonempty and at most 64 characters under the same rules; an absent version is
+omitted from output. The legacy SDK cannot distinguish an omitted, empty, or
+null initialized version, so its empty value is treated as absent. When the
+Forge attribution object is present, it permits exactly the `model` field,
+whose value must satisfy the harness bounds. Invalid standard client
+information or malformed supplied Forge attribution fails with
+`client_attribution_required`, non-retryable until corrected, before receipt
+lookup or Work access. Structurally malformed standard MCP messages rejected
+by the SDK remain protocol errors.
 
 Migration v345 adds narrow MCP Work receipts and stable links to affected native
 Projects, Issues, and timeline events. Migration v348 extends the empty receipt
 schema with immutable registered client/installation labels and client-reported
-harness, optional version, model, and source snapshots. A receipt preserves
+harness, optional version, optional model, and source snapshots. A receipt preserves
 operation identity, domain-separated keyed request and idempotency digests, the
 verified principal and OAuth authority snapshot (including profile and scope),
 MCP origin, the final outcome, timestamps, and stable references. It does not
@@ -379,15 +384,17 @@ labels replays the first operation's original attribution without re-executing.
 Changing the semantic request while reusing the key returns
 `idempotency_conflict` without revealing the earlier target. Mutation results
 include required `operation.clientAttribution` with `harness`, optional
-`harnessVersion`, `model`, and `source: "client-reported"`. Human Project and
+`harnessVersion`, optional `model`, and `source: "client-reported"`. Human Project and
 Issue views distinguish principal authority, registered client metadata, and
 runtime client-reported annotations. Labels are not attestation or authority;
 these views do not expose receipt internals. Deleting a registration does not
 rewrite its historical receipt snapshots.
 
-This unreleased receipt schema requires a fresh database. The amended v345 and
-v348 sequence provides no upgrade or compatibility path for an already-created
-pre-amendment receipt database.
+The original v345/v348 pre-release receipt amendment used a fresh-database
+boundary. This hotfix needs no migration: the existing model string stores
+absence as empty while preserving prior non-empty snapshots. An older build
+cannot replay a model-less receipt through its model-required output contract;
+disable mutation before rolling back to such a build.
 
 ### Work bounds
 

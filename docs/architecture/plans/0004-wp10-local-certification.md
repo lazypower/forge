@@ -25,7 +25,7 @@ in the immutable handoff for this branch so this file does not point at itself.
 | WP6 OAuth write profile | Complete | Exact scopes, audience, PKCE, explicit consent, REST isolation, refresh, and feature-gated issuance pass. |
 | WP7 read MCP tools | Complete | Official SDK schemas, permission-neutral discovery, bounded output, timeout, cancellation, and capacity pass. |
 | WP8 receipts and provenance | Complete | Canonical replay, ambiguity recovery, rollback, native links, retirement, and no-secret persistence pass. |
-| WP9 mutation MCP tools | Complete | All three write schemas interoperate through the official SDK and preserve the shared mutation envelope. |
+| WP9 mutation MCP tools | Complete | An official Go SDK harness exercises all three write schemas and the shared mutation envelope; this is protocol evidence, not production-client bridge interoperability. |
 | WP10 rollout and certification | Complete for local dogfood | Documentation, SQLite/PostgreSQL gates, the two-run scenario, disclosure checks, and immutable opposing-family review are required by the final handoff. Broad rollout remains blocked by the prerequisite below and ADR acceptance. |
 
 ## Configuration and compatibility
@@ -122,7 +122,7 @@ dedicated disposable environment; connection values are intentionally omitted.
 | Affected Go packages | `go test -count=1 -race` across the affected model, setting, service, OAuth, MCP router, and repository-web packages | Passed. |
 | Focused migrations | `go test -count=1 -race ./models/migrations/v1_27` with the three v344/v345 tests selected | Passed on SQLite and disposable PostgreSQL. |
 | Interface/domain integration | Focused 25-test `tests/integration` race selection covering transactions, permissions, OAuth, MCP, human symmetry, and dogfood | Passed on SQLite and disposable PostgreSQL. |
-| Dogfood | `make 'test-integration#TestMCPWorkPlanningDogfoodWithOfficialClient'` with race enabled | Passed independently on SQLite and disposable PostgreSQL. |
+| Dogfood | `make 'test-integration#TestMCPWorkPlanningDogfoodWithOfficialClient'` with race enabled | The official Go SDK protocol harness passed independently on SQLite and disposable PostgreSQL; no production-client bridge was tested. |
 | Browser symmetry | `GITEA_TEST_E2E_FLAGS='tests/e2e/issue-project.test.ts --grep "work planning lifecycle preserves ordinary project controls"' make test-e2e` | Passed in Chromium and Firefox. |
 | Markdown | `pnpm exec markdownlint` over ADRs 0001-0004, ADR 0004 plans, and `docs/mcp.md` | Passed. |
 | Mermaid | Parse every Mermaid fence in ADRs 0001-0004 and their plans with the repository's Mermaid 11.16.1 dependency | Passed: 12 diagrams. |
