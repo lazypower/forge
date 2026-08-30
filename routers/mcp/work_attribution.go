@@ -20,7 +20,9 @@ func workClientAttribution(request *mcpsdk.CallToolRequest) (mcpwork_service.Cli
 		return invalid()
 	}
 	meta := request.Params.GetMeta()
+	explicitClientInfo := false
 	if supplied, present := meta[mcpsdk.MetaKeyClientInfo]; present {
+		explicitClientInfo = true
 		// Prevent the SDK's legacy fallback from hiding a malformed explicit override.
 		wire, err := json.Marshal(supplied)
 		var info *mcpsdk.Implementation
@@ -35,10 +37,6 @@ func workClientAttribution(request *mcpsdk.CallToolRequest) (mcpwork_service.Cli
 			return invalid()
 		}
 	}
-	info := request.ClientInfo()
-	if info == nil {
-		return invalid()
-	}
 	var model string
 	if supplied, present := meta[clientAttributionMetaKey]; present {
 		wire, err := json.Marshal(supplied)
@@ -47,5 +45,16 @@ func workClientAttribution(request *mcpsdk.CallToolRequest) (mcpwork_service.Cli
 			return invalid()
 		}
 	}
-	return mcpwork_service.NewClientAttribution(info.Name, info.Version, model)
+	info := request.ClientInfo()
+	if info == nil {
+		if explicitClientInfo {
+			return invalid()
+		}
+		return mcpwork_service.NewClientAttribution("", "", model)
+	}
+	attribution, err := mcpwork_service.NewClientAttribution(info.Name, info.Version, model)
+	if err != nil || (explicitClientInfo && attribution.Harness == "") {
+		return invalid()
+	}
+	return attribution, nil
 }

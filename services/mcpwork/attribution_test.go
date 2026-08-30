@@ -23,8 +23,9 @@ func TestClientAttributionBoundsAndNormalization(t *testing.T) {
 		{"trim", " Harness ", " 1.0 ", " Model ", true},
 		{"optional version", "Harness", "", "Model", true},
 		{"optional model", "Harness", "1.0", "", true},
+		{"model only", "", "", "Model", true},
 		{"unicode bounds", strings.Repeat("界", 128), strings.Repeat("界", 64), strings.Repeat("界", 128), true},
-		{"missing harness", "", "", "Model", false},
+		{"version without harness", "", "1", "Model", false},
 		{"blank model", "Harness", "", "   ", false},
 		{"blank version", "Harness", " ", "Model", false},
 		{"long harness", strings.Repeat("界", 129), "", "Model", false},
@@ -50,6 +51,9 @@ func TestClientAttributionBoundsAndNormalization(t *testing.T) {
 			assert.Equal(t, "client-reported", got.Source)
 		})
 	}
+	got, err := NewClientAttribution("", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, ClientAttribution{Source: "unavailable"}, got)
 }
 
 func TestAttributionRequiredBeforeReceiptTransaction(t *testing.T) {
@@ -91,16 +95,21 @@ func TestRegisteredReceiptLabelsRemainBounded(t *testing.T) {
 
 func TestReplayKeepsFirstAttribution(t *testing.T) {
 	for _, tc := range []struct {
-		name, firstModel, replayModel string
+		name, firstHarness, firstModel, replayHarness, replayModel string
 	}{
-		{"modeled receipt", "First model", ""},
-		{"model-less receipt", "", "Later model"},
+		{"modeled receipt", "First harness", "First model", "", ""},
+		{"model-less receipt", "First harness", "", "", ""},
+		{"unavailable receipt", "", "", "Other harness", "Later model"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := prepareReceiptService(t)
 			request := testReceiptRequest(testReceiptKey, `{"idempotencyKey":"`+testReceiptKey+`","title":"same"}`)
 			var err error
-			request.ClientAttribution, err = NewClientAttribution("First harness", "1", tc.firstModel)
+			firstVersion := "1"
+			if tc.firstHarness == "" {
+				firstVersion = ""
+			}
+			request.ClientAttribution, err = NewClientAttribution(tc.firstHarness, firstVersion, tc.firstModel)
 			require.NoError(t, err)
 			calls := 0
 			mutate := func(context.Context, Operation) (Completion, error) {
@@ -109,13 +118,18 @@ func TestReplayKeepsFirstAttribution(t *testing.T) {
 			}
 			first, err := s.Execute(t.Context(), request, mutate)
 			require.NoError(t, err)
-			request.ClientAttribution, err = NewClientAttribution("Other harness", "2", tc.replayModel)
+			replayVersion := "2"
+			if tc.replayHarness == "" {
+				replayVersion = ""
+			}
+			request.ClientAttribution, err = NewClientAttribution(tc.replayHarness, replayVersion, tc.replayModel)
 			require.NoError(t, err)
 			replayed, err := s.Execute(t.Context(), request, mutate)
 			require.NoError(t, err)
 			assert.True(t, replayed.Replayed)
 			assert.Equal(t, first.OperationUUID, replayed.OperationUUID)
 			assert.Equal(t, first.ClientAttribution, replayed.ClientAttribution)
+			assert.Equal(t, first.ClientAttribution.Source, replayed.ClientAttribution.Source)
 			assert.Equal(t, tc.firstModel, replayed.ClientAttribution.Model)
 			stored := unittest.AssertExistsAndLoadBean(t, &mcpwork_model.Receipt{OperationUUID: first.OperationUUID})
 			assert.Equal(t, tc.firstModel, stored.Model)

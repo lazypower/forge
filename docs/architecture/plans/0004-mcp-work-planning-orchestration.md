@@ -711,7 +711,7 @@ After WP12 and WP13:
   provenance tests;
 - prove profile replacement is atomic and every old authorization code, access
   token, and refresh token fails without affecting another installation;
-- prove invalid standard attribution and malformed supplied model metadata fail
+- prove explicitly malformed standard attribution and supplied model metadata fail
   before Work mutation, receipt lookup, and resource-specific disclosure;
 - prove attribution is outside semantic idempotency and replay returns the
   first committed labels;
@@ -779,8 +779,8 @@ Retain only synthetic client labels and reserved example values in evidence.
 4. Reuse the credential without another human gate and inspect work.
 5. Request `Work Planning`; approve the new profile and prove the old grant,
    access token, and refresh token can no longer authorize anything.
-6. Submit a mutation with standard harness information and no model metadata;
-   verify the receipt and human view omit the model while distinguishing
+6. Submit a mutation with no runtime metadata visible through the bridge;
+   verify the receipt records unavailable runtime attribution while distinguishing
    authoritative grant facts from client-reported labels.
 7. Retry the same mutation and key with model metadata; prove native work
    changes once and replay returns the first model-less attribution.
@@ -848,9 +848,8 @@ MCP applications with bounded per-installation public-client bootstrap; keep
 browser consent as the only authority-creation step; move exact profile choice
 to the grant; make profile changes invalidate old grant and credential
 lineages; expose a principal-facing authority inspection view; and require
-bounded standard harness attribution plus optional client-reported model
-metadata for Work mutations while keeping both outside authorization and
-semantic idempotency.
+bounded runtime attribution when visible and honest unavailability otherwise,
+while keeping both outside authorization and semantic idempotency.
 
 Treat the existing dogfood runtime as disposable. Stop it, discard its database
 and credentials, and recreate it from an empty database after the replacement

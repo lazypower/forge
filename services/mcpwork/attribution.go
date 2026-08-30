@@ -13,9 +13,9 @@ import (
 // ErrClientAttributionRequired is a provenance-profile failure, never a domain rejection.
 var ErrClientAttributionRequired = errors.New("valid MCP client attribution is required")
 
-// ClientAttribution is client-reported annotation, not authority or attestation.
+// ClientAttribution records visible runtime annotation or its unavailability, never authority or attestation.
 type ClientAttribution struct {
-	Harness        string `json:"harness"`
+	Harness        string `json:"harness,omitempty"`
 	HarnessVersion string `json:"harnessVersion,omitempty"`
 	Model          string `json:"model,omitempty"`
 	Source         string `json:"source"`
@@ -23,12 +23,16 @@ type ClientAttribution struct {
 
 // NewClientAttribution bounds and normalizes runtime labels before receipt lookup.
 func NewClientAttribution(harness, version, model string) (ClientAttribution, error) {
-	if !validAttributionLabel(harness, 128, true) || !validAttributionLabel(model, 128, false) || !validAttributionLabel(version, 64, false) {
+	if !validAttributionLabel(harness, 128, false) || !validAttributionLabel(model, 128, false) || !validAttributionLabel(version, 64, false) || (harness == "" && version != "") {
 		return ClientAttribution{}, ErrClientAttributionRequired
+	}
+	source := "client-reported"
+	if harness == "" && model == "" {
+		source = "unavailable"
 	}
 	return ClientAttribution{
 		Harness: strings.TrimSpace(harness), HarnessVersion: strings.TrimSpace(version),
-		Model: strings.TrimSpace(model), Source: "client-reported",
+		Model: strings.TrimSpace(model), Source: source,
 	}, nil
 }
 

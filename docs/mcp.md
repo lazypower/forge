@@ -316,9 +316,9 @@ reinspected before action.
 
 ### Receipts, replay, and provenance
 
-Every Work mutation requires a harness name from the official MCP SDK's
-`ClientInfo`: per-request `io.modelcontextprotocol/clientInfo` metadata, or the
-initialized session's client information when absent. A client may optionally
+Every Work mutation records runtime labels visible through the official MCP
+SDK's `ClientInfo`: per-request `io.modelcontextprotocol/clientInfo` metadata,
+or initialized session information when available. A client may optionally
 report its model in the closed request `_meta` entry
 `io.gitea.forge/clientAttribution`:
 
@@ -355,8 +355,8 @@ and key for retries. The metadata belongs in `params._meta`, outside
 negotiated sessions use their initialized client information when no
 per-request override is present.
 
-Forge trims the decoded labels and requires a nonempty harness of at most 128
-UTF-8 characters with no control characters. A supplied version must be
+Forge trims visible decoded labels. An explicitly supplied harness must be
+nonempty and at most 128 UTF-8 characters with no control characters. A supplied version must be
 nonempty and at most 64 characters under the same rules; an absent version is
 omitted from output. The legacy SDK cannot distinguish an omitted, empty, or
 null initialized version, so its empty value is treated as absent. When the
@@ -365,7 +365,9 @@ whose value must satisfy the harness bounds. Invalid standard client
 information or malformed supplied Forge attribution fails with
 `client_attribution_required`, non-retryable until corrected, before receipt
 lookup or Work access. Structurally malformed standard MCP messages rejected
-by the SDK remain protocol errors.
+by the SDK remain protocol errors. When neither runtime source is visible,
+Forge omits harness/model and records `source: "unavailable"` without inventing
+labels.
 
 Migration v345 adds narrow MCP Work receipts and stable links to affected native
 Projects, Issues, and timeline events. Migration v348 extends the empty receipt
@@ -383,10 +385,11 @@ Attribution is excluded from the semantic digest: changing only the reported
 labels replays the first operation's original attribution without re-executing.
 Changing the semantic request while reusing the key returns
 `idempotency_conflict` without revealing the earlier target. Mutation results
-include required `operation.clientAttribution` with `harness`, optional
-`harnessVersion`, optional `model`, and `source: "client-reported"`. Human Project and
+include required `operation.clientAttribution` with optional `harness`,
+`harnessVersion`, and `model`, plus `source: "client-reported"` or
+`source: "unavailable"`. Human Project and
 Issue views distinguish principal authority, registered client metadata, and
-runtime client-reported annotations. Labels are not attestation or authority;
+runtime annotation availability. Labels are not attestation or authority;
 these views do not expose receipt internals. Deleting a registration does not
 rewrite its historical receipt snapshots.
 

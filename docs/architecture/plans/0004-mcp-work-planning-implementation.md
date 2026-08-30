@@ -75,7 +75,7 @@ planning base.
 | OAuth consent | [`routers/web/auth/oauth2_provider.go`](../../../routers/web/auth/oauth2_provider.go), [`templates/user/auth/grant.tmpl`](../../../templates/user/auth/grant.tmpl) | Add explicit write-profile consent and strict scope handling |
 | OAuth client bootstrap | OAuth application creation and redirect validation under [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) | Add a closed, provisional public MCP registration lifecycle rather than general application CRUD |
 | Grant authority inspection | [`templates/user/settings/grants_oauth2.tmpl`](../../../templates/user/settings/grants_oauth2.tmpl), [`routers/web/user/setting/applications.go`](../../../routers/web/user/setting/applications.go) | Show exact profile, scopes, lifecycle, and revocation boundary without inventing last-use telemetry |
-| MCP request identity | Official SDK `ServerRequest.ClientInfo` and request `_meta` | Require bounded standard client attribution and validate optional model metadata |
+| MCP request identity | Official SDK `ServerRequest.ClientInfo` and request `_meta` | Bound visible runtime attribution and record unavailable labels honestly |
 | Migration registry | [`models/migrations/migrations.go`](../../../models/migrations/migrations.go) | Amendment base registry ends at version 345 |
 | Migration pattern | [`models/migrations/v1_27/v345.go`](../../../models/migrations/v1_27/v345.go) | Add focused, tested migrations under the current release directory |
 | MCP conformance tests | [`tests/integration/mcp_oauth_conformance_test.go`](../../../tests/integration/mcp_oauth_conformance_test.go) | Extend audience, scope, refresh, and consent matrix |
@@ -756,13 +756,14 @@ with a delete action. Do not reap them automatically.
 **Scope**
 
 Replace the original unverified-actor receipt field with the amended ADR 0004
-attribution contract. For every Work mutation, read the harness name and
-optional version through the official SDK's `ServerRequest.ClientInfo` fallback
-rules. When `_meta.io.gitea.forge/clientAttribution` is present, require its
+attribution contract. For every Work mutation, read any harness name and
+optional version visible through the official SDK's `ServerRequest.ClientInfo`
+fallback rules. When `_meta.io.gitea.forge/clientAttribution` is present, require its
 closed shape to contain exactly one valid `model`. Validate attribution before
 receipt lookup or domain invocation and return `client_attribution_required`
-for missing or invalid standard client information or malformed supplied model
-metadata.
+for explicitly malformed standard client information or supplied model
+metadata. If neither runtime source is visible, omit both labels and record
+`source: unavailable`.
 
 Preserve the authoritative client-registration, grant, credential, profile,
 scope, origin, operation, and outcome fields. The existing receipt stores
@@ -796,13 +797,13 @@ reads, transforms, rejects, or otherwise accommodates pre-amendment rows.
 
 **Acceptance evidence**
 
-- Every mutation tool accepts valid standard `clientInfo` without Forge model
-  metadata, and rejects invalid standard client information or malformed
-  supplied model metadata before receipt lookup and before any native write.
+- Every mutation tool accepts the production bridge shape with no visible
+  runtime metadata, and rejects explicitly malformed standard client
+  information or supplied model metadata before receipt lookup and native write.
 - Legacy initialized sessions and current stateless per-request `clientInfo`
   both populate the same bounded attribution result.
-- A committed receipt and result contain `harness`, optional
-  `harnessVersion`, optional `model`, and `source: client-reported`.
+- A committed receipt and result contain optional `harness`, `harnessVersion`,
+  and `model`, plus `source: client-reported` or `source: unavailable`.
 - Same key and semantic request with changed reported labels replays the first
   operation and original modeled or model-less attribution; it does not
   conflict or execute again.
@@ -857,9 +858,9 @@ provenance answer different questions without conflicting.
 - Registration spam, redirect substitution, consent phishing labels,
   provisional races, cleanup races, wrong audience, PKCE downgrade, disabled
   bootstrap, and disabled mutation have negative tests.
-- Every mutation supplies required standard client attribution; optional model
-  metadata is validated when present, and replay preserves the original labels
-  while native work changes exactly once.
+- Every mutation records visible runtime attribution or its unavailability;
+  supplied metadata is validated, and replay preserves the original source and
+  labels while native work changes exactly once.
 - Consent, authority settings, and operation history display only facts Forge
   owns and annotations with an explicit client-reported source.
 - Existing general OAuth applications, REST tokens, read-only MCP behavior,
