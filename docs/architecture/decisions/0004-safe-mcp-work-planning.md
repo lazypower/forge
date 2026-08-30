@@ -1165,6 +1165,7 @@ Client reported: <harness> / <model>.
 ```
 
 When no model was supplied, the final line is `Client reported: <harness>.`
+When neither runtime label is visible, it is `Runtime attribution unavailable.`
 
 The registered and runtime labels are escaped, bounded, and visually
 distinguished from verified principal and grant facts. Only viewers already

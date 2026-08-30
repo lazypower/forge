@@ -126,6 +126,25 @@ func TestMCPWorkAttributionHTTPBoundary(t *testing.T) {
 		receiptsBefore = append(receiptsBefore, receipt)
 	}
 
+	t.Run("runtime attribution unavailable", func(t *testing.T) {
+		meta := maps.Clone(validMeta)
+		delete(meta, mcpsdk.MetaKeyClientInfo)
+		delete(meta, "io.gitea.forge/clientAttribution")
+		input := maps.Clone(beginInput)
+		input["idempotencyKey"] = "attribution-http-unavailable-0001"
+		input["begin"] = map[string]any{"kind": "new", "title": "Unavailable runtime attribution plan"}
+		result := mcpWorkHTTPStructured(t, callMCPWorkHTTP(t, token, "work_plan.begin", input, meta))
+		require.Equal(t, "applied", result["status"])
+		operation := result["operation"].(map[string]any)
+		assert.Equal(t, map[string]any{"source": "unavailable"}, operation["clientAttribution"])
+		receipt := unittest.AssertExistsAndLoadBean(t, &mcpwork_model.Receipt{OperationUUID: operation["id"].(string)})
+		assert.Empty(t, receipt.Harness)
+		assert.Empty(t, receipt.HarnessVersion)
+		assert.Empty(t, receipt.Model)
+		assert.Equal(t, "unavailable", receipt.AttributionSource)
+		receiptsBefore = append(receiptsBefore, receipt)
+	})
+
 	counts := mcpWorkDogfoodNativeCounts(t)
 	planID, err := strconv.ParseInt(strings.TrimPrefix(planRef, "project/"), 10, 64)
 	require.NoError(t, err)
@@ -146,7 +165,6 @@ func TestMCPWorkAttributionHTTPBoundary(t *testing.T) {
 		absent        bool
 		protocolError bool
 	}{
-		{name: "missing harness", key: mcpsdk.MetaKeyClientInfo, absent: true},
 		{name: "null standard clientInfo", key: mcpsdk.MetaKeyClientInfo, protocolError: true},
 		{name: "missing name", key: mcpsdk.MetaKeyClientInfo, value: map[string]any{"version": "1"}},
 		{name: "empty name", key: mcpsdk.MetaKeyClientInfo, value: map[string]any{"name": ""}},
