@@ -158,7 +158,7 @@ shorthand and never requires a client-side schema fetch.
     "clientAttribution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["harness", "model", "source"],
+      "required": ["harness", "source"],
       "properties": {
         "harness": {"type": "string", "minLength": 1,
           "maxLength": 128},
@@ -673,10 +673,10 @@ All mutation tools require `idempotencyKey`. A key is opaque printable ASCII,
 16 through 128 bytes, and must be generated with high entropy. It is not a
 work reference or a user-visible name.
 
-Every mutation request also requires client attribution in MCP request
-metadata. Forge reads the harness name and version from standard MCP
+Every mutation request requires standard MCP client attribution. Forge reads
+the harness name and version from standard MCP
 `clientInfo`, using the negotiated per-request value or the legacy initialized
-session value. The request `_meta` key
+session value. The optional request `_meta` key
 `io.gitea.forge/clientAttribution` has this closed shape:
 
 ```json
@@ -685,11 +685,14 @@ session value. The request `_meta` key
 }
 ```
 
-`clientInfo.name` and `model` are required, trimmed, non-empty client-reported
-strings of at most 128 UTF-8 characters without control characters.
+`clientInfo.name` is required, trimmed, and non-empty. When the Forge-specific
+object is present, it must contain exactly one non-empty `model`; when absent,
+Forge records no model. Both labels are client-reported strings of at most 128
+UTF-8 characters without control characters.
 `clientInfo.version`, when present, has the same rules and a 64-character
-limit. Missing, malformed, or over-bound attribution fails before the Work
-domain service, receipt lookup, or native mutation with
+limit. Missing or malformed standard client information, or malformed or
+over-bound supplied Forge metadata, fails before the Work domain service,
+receipt lookup, or native mutation with
 `client_attribution_required`; the failure is non-retryable until the client
 corrects the request. This is an MCP provenance-profile failure, not a Work
 domain rejection or an authorization fact.
@@ -1052,7 +1055,8 @@ The receipt stores:
 - principal ID, OAuth client registration and grant IDs, credential `jti`,
   exact scope and server-defined profile snapshot, and interface origin `mcp`;
 - the registered client and installation label snapshot plus bounded
-  client-reported harness, harness version when present, and model;
+  client-reported harness, harness version when present, and model when
+  supplied;
 - committed `applied`, `unchanged`, or deterministic `rejected` outcome and
   timestamps; and
 - stable affected Project/Issue references and local-reference resolutions.
@@ -1134,10 +1138,10 @@ token identified by a required random `jti`; raw credentials are never stored.
 An OAuth client registration is the independently revocable credential-holder
 boundary. Its client and installation labels describe that registration but
 are client-supplied metadata, not proof that particular software is running.
-MCP `clientInfo` and the model label describe one operation and are also
-client-reported. Forge preserves these values because they are useful for
-debugging and archaeology, while displaying their source and never using them
-for authorization, policy, dispatch, or trust.
+MCP `clientInfo` and an optional model label describe one operation and are
+also client-reported. Forge preserves supplied values because they are useful
+for debugging and archaeology, while displaying their source and never using
+them for authorization, policy, dispatch, or trust.
 
 Issue timelines and Project views link relevant native events to the receipt
 and render the human-visible meaning:
@@ -1147,6 +1151,8 @@ Performed through MCP using @principal's authority.
 Authorized client: <registered client> — <installation label>.
 Client reported: <harness> / <model>.
 ```
+
+When no model was supplied, the final line is `Client reported: <harness>.`
 
 The registered and runtime labels are escaped, bounded, and visually
 distinguished from verified principal and grant facts. Only viewers already
@@ -1330,7 +1336,7 @@ structured envelopes above. Error codes are the stable machine vocabulary:
 | `invalid_dependency` | Edge is invalid, undisclosed, cyclic, or over bound |
 | `invalid_cursor` | Cursor is invalid, expired, or bound elsewhere |
 | `limit_exceeded` | A disclosed request or result exceeds a fixed bound |
-| `client_attribution_required` | Required MCP harness/model metadata is missing or malformed |
+| `client_attribution_required` | Required MCP harness metadata is missing or malformed, or supplied Forge model metadata is malformed |
 | `busy` | Endpoint capacity is unavailable |
 | `timeout` | Execution deadline elapsed before a known commit |
 | `cancelled` | Caller cancelled before a known commit |
@@ -1423,8 +1429,6 @@ harness, or runtime.
   redirect-validation, expiry, cleanup, and rate-limit obligations.
 - Profile replacement must invalidate old access and refresh lineages without
   silently changing their scope.
-- Required client attribution makes unsupported clients fail before mutation
-  until they provide the profile metadata.
 - Durable key tombstones create retention and privacy obligations.
 - Permission-filtered projections and ambiguous-result fault injection require
   a substantial security test matrix.
@@ -1487,11 +1491,11 @@ Rejected. It would conflate useful client-reported attribution with principal,
 credential, and grant authority. Forge preserves bounded labels with an
 explicit source marker and makes no attestation claim.
 
-### Allow missing model attribution
+### Require model attribution
 
-Rejected for this pre-stable mutation profile. Complete operation archaeology
-is a deliberate MCP contract invariant. Absence therefore fails as a transport
-provenance-profile error before domain mutation, while the value remains
+Rejected. Standard MCP clients and bridges do not necessarily expose a seam for
+Forge-specific request metadata. Requiring it would block otherwise valid
+mutations. A supplied model remains strictly validated, client-reported, and
 outside authorization and idempotency semantics.
 
 ### Expire idempotency keys after a short TTL
@@ -1518,8 +1522,9 @@ An implementation conforms when:
 - read tools have no view or persistence side effect and use signed,
   permission-rechecked, non-snapshot cursors;
 - every mutation requires the grant-owned Work Planning OAuth profile, durable
-  idempotency, standard `clientInfo`, and bounded model metadata; PAT and Read
-  OAuth credentials cannot invoke mutation tools;
+  idempotency and standard `clientInfo`; optional bounded model metadata is
+  validated when supplied; PAT and Read OAuth credentials cannot invoke
+  mutation tools;
 - same-key replay, concurrent duplicate calls, ambiguous commit, cancellation,
   response loss, and different-payload conflict have deterministic tests;
 - a bounded plan revision commits native facts, timeline events, provenance,
@@ -1531,8 +1536,8 @@ An implementation conforms when:
 - a read-after-write response contains the committed receipt and a fresh,
   permission-filtered projection without storing that projection;
 - provenance distinguishes verified principal and grant facts, registered
-  client metadata, client-reported harness/model metadata, and MCP origin and
-  is human-visible without exposing credential internals;
+  client metadata, client-reported harness and optional model metadata, and MCP
+  origin and is human-visible without exposing credential internals;
 - same-key replay returns the first receipt's attribution, while different
   attribution alone neither conflicts nor changes semantic execution;
 - client bootstrap is public-client-only, MCP-exclusive, redirect constrained,

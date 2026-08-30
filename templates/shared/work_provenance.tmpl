@@ -1,4 +1,4 @@
 {{ctx.Locale.Tr "repo.projects.work_planning.mcp_provenance" .PrincipalName (DateUtils.TimeSince .CommittedAt)}}<br>
 <span>{{ctx.Locale.Tr "repo.projects.work_planning.mcp_registered_client"}} <bdi>{{.RegisteredClientLabel}}</bdi>{{if .RegisteredInstallationLabel}} — <bdi>{{.RegisteredInstallationLabel}}</bdi>{{end}}</span><br>
-<span>{{ctx.Locale.Tr "repo.projects.work_planning.mcp_client_reported"}} <bdi>{{.ClientAttribution.Harness}}</bdi>{{if .ClientAttribution.HarnessVersion}} (<bdi>{{.ClientAttribution.HarnessVersion}}</bdi>){{end}} / <bdi>{{.ClientAttribution.Model}}</bdi></span><br>
+<span>{{ctx.Locale.Tr "repo.projects.work_planning.mcp_client_reported"}} <bdi>{{.ClientAttribution.Harness}}</bdi>{{if .ClientAttribution.HarnessVersion}} (<bdi>{{.ClientAttribution.HarnessVersion}}</bdi>){{end}}{{if .ClientAttribution.Model}} / <bdi>{{.ClientAttribution.Model}}</bdi>{{end}}</span><br>
 <span class="text light">{{ctx.Locale.Tr "repo.projects.work_planning.mcp_attribution_notice"}}</span>

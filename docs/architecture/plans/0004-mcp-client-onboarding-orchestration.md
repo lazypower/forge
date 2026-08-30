@@ -175,16 +175,18 @@ grant, successful replacement invalidates all old codes and tokens, same-label
 installations remain independent, hostile metadata is escaped, and the UI
 states only facts Forge owns.
 
-### WP13: required operation client attribution
+### WP13: operation client attribution
 
 Release only after WP11 and WP12 interfaces are reviewed and frozen. The
 builder owns metadata extraction and validation, receipt snapshots, replay
 behavior, output schema, and human operation provenance. Attribution remains
 client-reported annotation outside authorization and semantic idempotency.
 
-The handoff must prove rejection before receipt lookup or mutation, original
-attribution on changed-label replay, fresh-database schema only, bounded and
-escaped labels, and no prompt, request, credential, or hidden-object retention.
+The handoff must prove model-less mutation success, rejection of invalid
+standard attribution or malformed supplied model metadata before receipt lookup
+or mutation, original modeled or model-less attribution on changed-label
+replay, bounded and escaped labels, and no prompt, request, credential, or
+hidden-object retention.
 
 ### WP14: amended certification
 
@@ -254,8 +256,8 @@ storage without bound.
 ### After WP12 and WP13
 
 Run the original Gate 7 and prove one grant authority, complete old-lineage
-invalidation, required attribution before disclosure or mutation, and original
-attribution on semantic replay.
+invalidation, attribution validation before disclosure or mutation, and
+original modeled or model-less attribution on semantic replay.
 
 ### Final
 
@@ -275,7 +277,7 @@ The final report must include:
 - the OAuth abuse, redirect, expiry, and cleanup matrix;
 - grant-profile and old-credential invalidation evidence;
 - independent two-installation rotation and revocation evidence;
-- required attribution and changed-label replay evidence;
+- standard attribution, optional model, and changed-label replay evidence;
 - clean-slate reconstruction evidence;
 - every opposing-family verdict and classified finding;
 - skipped, unavailable, or unproven environments and actions;

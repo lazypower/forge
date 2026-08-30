@@ -158,7 +158,6 @@ func TestMCPWorkAttributionHTTPBoundary(t *testing.T) {
 		{name: "whitespace version", key: mcpsdk.MetaKeyClientInfo, value: map[string]any{"name": "Valid", "version": " "}},
 		{name: "control version", key: mcpsdk.MetaKeyClientInfo, value: map[string]any{"name": "Valid", "version": "1\n2"}},
 		{name: "overbound version", key: mcpsdk.MetaKeyClientInfo, value: map[string]any{"name": "Valid", "version": strings.Repeat("界", 65)}},
-		{name: "missing model metadata", key: "io.gitea.forge/clientAttribution", absent: true},
 		{name: "null model metadata", key: "io.gitea.forge/clientAttribution"},
 		{name: "scalar model metadata", key: "io.gitea.forge/clientAttribution", value: "not an object"},
 		{name: "array model metadata", key: "io.gitea.forge/clientAttribution", value: []any{"model"}},

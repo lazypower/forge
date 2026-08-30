@@ -35,6 +35,7 @@ func TestMutationSchemaRequiresClosedClientAttribution(t *testing.T) {
 		nil,
 		map[string]any{},
 		map[string]any{"harness": "Harness", "model": "Model", "source": "verified"},
+		map[string]any{"harness": "Harness", "model": "", "source": "client-reported"},
 		map[string]any{"harness": "Harness", "model": "Model", "source": "client-reported", "prompt": "PRIVATE"},
 		map[string]any{"harness": strings.Repeat("界", 129), "model": "Model", "source": "client-reported"},
 		map[string]any{"harness": "Harness", "harnessVersion": "", "model": "Model", "source": "client-reported"},
@@ -55,6 +56,12 @@ func TestMutationSchemaRequiresClosedClientAttribution(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, validWorkMutationOutput(wire))
 	}
+	output := mutationReceiptOutput(committedMutation(mcpwork_model.OutcomeApplied, false))
+	output.CurrentResultStatus = "unavailable"
+	output.Operation.ClientAttribution.Model = ""
+	wire, err := json.Marshal(output)
+	require.NoError(t, err)
+	assert.True(t, validWorkMutationOutput(wire))
 }
 
 func TestWorkClientAttributionMetadata(t *testing.T) {
@@ -70,12 +77,15 @@ func TestWorkClientAttributionMetadata(t *testing.T) {
 		{"missing name", func(m mcpsdk.Meta) { m[mcpsdk.MetaKeyClientInfo] = map[string]any{} }},
 		{"empty version", func(m mcpsdk.Meta) { m[mcpsdk.MetaKeyClientInfo] = map[string]any{"name": "Harness", "version": ""} }},
 		{"null version", func(m mcpsdk.Meta) { m[mcpsdk.MetaKeyClientInfo] = map[string]any{"name": "Harness", "version": nil} }},
-		{"missing model", func(m mcpsdk.Meta) { delete(m, clientAttributionMetaKey) }},
 		{"null entry", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = nil }},
 		{"scalar entry", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = "hidden-model" }},
 		{"array entry", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = []any{"model"} }},
 		{"null model", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = map[string]any{"model": nil} }},
 		{"numeric model", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = map[string]any{"model": 1} }},
+		{"empty model", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = map[string]any{"model": ""} }},
+		{"blank model", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = map[string]any{"model": " "} }},
+		{"control model", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = map[string]any{"model": "bad\nmodel"} }},
+		{"overbound model", func(m mcpsdk.Meta) { m[clientAttributionMetaKey] = map[string]any{"model": strings.Repeat("界", 129)} }},
 		{"unknown field", func(m mcpsdk.Meta) {
 			m[clientAttributionMetaKey] = map[string]any{"model": "Model", "prompt": "PRIVATE-PROMPT"}
 		}},
@@ -111,9 +121,18 @@ func TestWorkClientAttributionMetadata(t *testing.T) {
 		})
 	}
 	req := testAttributedRequest()
+	delete(req.Params.Meta, clientAttributionMetaKey)
+	got, err := workClientAttribution(req)
+	require.NoError(t, err)
+	assert.Equal(t, "Example Harness", got.Harness)
+	assert.Equal(t, "1", got.HarnessVersion)
+	assert.Empty(t, got.Model)
+	assert.Equal(t, "client-reported", got.Source)
+
+	req = testAttributedRequest()
 	req.Params.Meta[mcpsdk.MetaKeyClientInfo] = map[string]any{"name": " Harness ", "title": "Display title", "websiteUrl": "https://client.example"}
 	req.Params.Meta["example.com/unrelated"] = map[string]any{"extra": true}
-	got, err := workClientAttribution(req)
+	got, err = workClientAttribution(req)
 	require.NoError(t, err)
 	assert.Equal(t, "Harness", got.Harness)
 	assert.Empty(t, got.HarnessVersion)

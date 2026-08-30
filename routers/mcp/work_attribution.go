@@ -39,14 +39,13 @@ func workClientAttribution(request *mcpsdk.CallToolRequest) (mcpwork_service.Cli
 	if info == nil {
 		return invalid()
 	}
-	wire, err := json.Marshal(meta[clientAttributionMetaKey])
-	var fields map[string]json.Value
-	if err != nil || json.Unmarshal(wire, &fields) != nil || len(fields) != 1 {
-		return invalid()
-	}
 	var model string
-	if json.Unmarshal(fields["model"], &model) != nil {
-		return invalid()
+	if supplied, present := meta[clientAttributionMetaKey]; present {
+		wire, err := json.Marshal(supplied)
+		var fields map[string]json.Value
+		if err != nil || json.Unmarshal(wire, &fields) != nil || len(fields) != 1 || json.Unmarshal(fields["model"], &model) != nil || model == "" {
+			return invalid()
+		}
 	}
 	return mcpwork_service.NewClientAttribution(info.Name, info.Version, model)
 }

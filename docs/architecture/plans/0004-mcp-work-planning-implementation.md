@@ -75,7 +75,7 @@ planning base.
 | OAuth consent | [`routers/web/auth/oauth2_provider.go`](../../../routers/web/auth/oauth2_provider.go), [`templates/user/auth/grant.tmpl`](../../../templates/user/auth/grant.tmpl) | Add explicit write-profile consent and strict scope handling |
 | OAuth client bootstrap | OAuth application creation and redirect validation under [`models/auth/oauth2.go`](../../../models/auth/oauth2.go) | Add a closed, provisional public MCP registration lifecycle rather than general application CRUD |
 | Grant authority inspection | [`templates/user/settings/grants_oauth2.tmpl`](../../../templates/user/settings/grants_oauth2.tmpl), [`routers/web/user/setting/applications.go`](../../../routers/web/user/setting/applications.go) | Show exact profile, scopes, lifecycle, and revocation boundary without inventing last-use telemetry |
-| MCP request identity | Official SDK `ServerRequest.ClientInfo` and request `_meta` | Require bounded harness/model attribution at the mutation transport boundary |
+| MCP request identity | Official SDK `ServerRequest.ClientInfo` and request `_meta` | Require bounded standard client attribution and validate optional model metadata |
 | Migration registry | [`models/migrations/migrations.go`](../../../models/migrations/migrations.go) | Amendment base registry ends at version 345 |
 | Migration pattern | [`models/migrations/v1_27/v345.go`](../../../models/migrations/v1_27/v345.go) | Add focused, tested migrations under the current release directory |
 | MCP conformance tests | [`tests/integration/mcp_oauth_conformance_test.go`](../../../tests/integration/mcp_oauth_conformance_test.go) | Extend audience, scope, refresh, and consent matrix |
@@ -593,8 +593,9 @@ schedules, retries execution, or includes copied Issue prose.
 - Security tests cover anonymous, read OAuth, write OAuth, PAT, wrong audience,
   missing unit/repository permission, hidden dependency, archived repository,
   disabled unit, stale request, duplicate key, and ambiguous commit.
-- Cross-backend serialization, official MCP SDK interoperability, query-count,
-  timeout, cancellation, capacity, and output-bound suites pass.
+- Cross-backend serialization, official MCP SDK protocol-harness, query-count,
+  timeout, cancellation, capacity, and output-bound suites pass. The SDK
+  harness does not establish production-client bridge interoperability.
 - Repository Markdown lint, Mermaid parsing, links/receipts, whitespace, and
   disclosure guardrails pass for implementation documentation and fixtures.
 - Logs, examples, fixtures, consent, and error text contain no secrets or
@@ -750,24 +751,28 @@ with a delete action. Do not reap them automatically.
 - An opposing-family OAuth, token-lineage, and authorization-UX review has no
   unresolved blocker.
 
-## WP13: Required operation client attribution
+## WP13: Operation client attribution
 
 **Scope**
 
 Replace the original unverified-actor receipt field with the amended ADR 0004
 attribution contract. For every Work mutation, read the harness name and
 optional version through the official SDK's `ServerRequest.ClientInfo` fallback
-rules and read the required model from
-`_meta.io.gitea.forge/clientAttribution`. Validate both before receipt lookup or
-domain invocation and return `client_attribution_required` for missing,
-malformed, control-containing, or over-bound values.
+rules. When `_meta.io.gitea.forge/clientAttribution` is present, require its
+closed shape to contain exactly one valid `model`. Validate attribution before
+receipt lookup or domain invocation and return `client_attribution_required`
+for missing or invalid standard client information or malformed supplied model
+metadata.
 
-Extend the existing receipt through the next free migration. Preserve the
-authoritative client-registration, grant, credential, profile, scope, origin,
-operation, and outcome fields. Add bounded snapshots of registered client and
-installation labels plus client-reported harness, harness version when present,
-model, and source. Do not add a second audit table or store prompts, model
-traffic, raw requests, or credentials.
+Preserve the authoritative client-registration, grant, credential, profile,
+scope, origin, operation, and outcome fields. The existing receipt stores
+bounded snapshots of registered client and installation labels plus
+client-reported harness, harness version when present, model when supplied, and
+source. Its non-null model string represents omission as the empty value, as
+the optional harness version already does. Existing modeled receipts retain
+their value, so this compatibility amendment requires no migration. Do not add
+a second audit table or store prompts, model traffic, raw requests, or
+credentials.
 
 Keep attribution outside the RFC 8785 semantic request and idempotency digest.
 The first amended-profile receipt owns the attribution returned on replay.
@@ -786,20 +791,21 @@ reads, transforms, rejects, or otherwise accommodates pre-amendment rows.
 - Existing MCP-work receipt model and service under
   [`models/mcpwork`](../../../models/mcpwork) and
   [`services/mcpwork`](../../../services/mcpwork).
-- The next free receipt migration and migration registry entry.
 - Issue timeline and Project provenance rendering, locale, and focused browser
   tests.
 
 **Acceptance evidence**
 
-- Every mutation tool rejects absent or invalid `clientInfo.name` and model
-  metadata before receipt lookup and before any native write.
+- Every mutation tool accepts valid standard `clientInfo` without Forge model
+  metadata, and rejects invalid standard client information or malformed
+  supplied model metadata before receipt lookup and before any native write.
 - Legacy initialized sessions and current stateless per-request `clientInfo`
   both populate the same bounded attribution result.
 - A committed receipt and result contain `harness`, optional
-  `harnessVersion`, `model`, and `source: client-reported`.
+  `harnessVersion`, optional `model`, and `source: client-reported`.
 - Same key and semantic request with changed reported labels replays the first
-  operation and original attribution; it does not conflict or execute again.
+  operation and original modeled or model-less attribution; it does not
+  conflict or execute again.
 - Different semantic input still conflicts even when attribution is identical.
 - Registration deletion does not rewrite the receipt's label snapshot.
 - A fresh database produces only the amended receipt schema; no `unknown`,
@@ -807,7 +813,8 @@ reads, transforms, rejects, or otherwise accommodates pre-amendment rows.
 - Database, log, output, and UI tests prove bounded labels are escaped and no
   prompt, raw request, token, or hidden object data is retained or disclosed.
 - Human presentation distinguishes principal authority, authorized client
-  registration, and client-reported harness/model without attestation language.
+  registration, and client-reported harness plus optional model without
+  attestation language.
 - An opposing-family provenance, idempotency, privacy, and spoofing review has
   no unresolved blocker.
 
@@ -850,8 +857,9 @@ provenance answer different questions without conflicting.
 - Registration spam, redirect substitution, consent phishing labels,
   provisional races, cleanup races, wrong audience, PKCE downgrade, disabled
   bootstrap, and disabled mutation have negative tests.
-- Every mutation supplies required client attribution; replay preserves the
-  original labels while native work changes exactly once.
+- Every mutation supplies required standard client attribution; optional model
+  metadata is validated when present, and replay preserves the original labels
+  while native work changes exactly once.
 - Consent, authority settings, and operation history display only facts Forge
   owns and annotations with an explicit client-reported source.
 - Existing general OAuth applications, REST tokens, read-only MCP behavior,
