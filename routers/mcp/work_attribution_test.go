@@ -36,6 +36,10 @@ func TestMutationSchemaRequiresClosedClientAttribution(t *testing.T) {
 		map[string]any{},
 		map[string]any{"harness": "Harness", "model": "Model", "source": "verified"},
 		map[string]any{"harness": "Harness", "model": "", "source": "client-reported"},
+		map[string]any{"source": "client-reported"},
+		map[string]any{"harness": "Harness", "source": "unavailable"},
+		map[string]any{"model": "Model", "source": "unavailable"},
+		map[string]any{"harnessVersion": "1", "model": "Model", "source": "client-reported"},
 		map[string]any{"harness": "Harness", "model": "Model", "source": "client-reported", "prompt": "PRIVATE"},
 		map[string]any{"harness": strings.Repeat("界", 129), "model": "Model", "source": "client-reported"},
 		map[string]any{"harness": "Harness", "harnessVersion": "", "model": "Model", "source": "client-reported"},
@@ -62,6 +66,10 @@ func TestMutationSchemaRequiresClosedClientAttribution(t *testing.T) {
 	wire, err := json.Marshal(output)
 	require.NoError(t, err)
 	assert.True(t, validWorkMutationOutput(wire))
+	output.Operation.ClientAttribution = mcpwork_service.ClientAttribution{Source: "unavailable"}
+	wire, err = json.Marshal(output)
+	require.NoError(t, err)
+	assert.True(t, validWorkMutationOutput(wire))
 }
 
 func TestWorkClientAttributionMetadata(t *testing.T) {
@@ -69,7 +77,6 @@ func TestWorkClientAttributionMetadata(t *testing.T) {
 		name   string
 		mutate func(mcpsdk.Meta)
 	}{
-		{"missing info", func(m mcpsdk.Meta) { delete(m, mcpsdk.MetaKeyClientInfo) }},
 		{"null info", func(m mcpsdk.Meta) { m[mcpsdk.MetaKeyClientInfo] = nil }},
 		{"scalar info", func(m mcpsdk.Meta) { m[mcpsdk.MetaKeyClientInfo] = "hidden-client" }},
 		{"array info", func(m mcpsdk.Meta) { m[mcpsdk.MetaKeyClientInfo] = []any{} }},
@@ -120,9 +127,14 @@ func TestWorkClientAttributionMetadata(t *testing.T) {
 			}
 		})
 	}
+	liveRequest := &mcpsdk.CallToolRequest{Params: &mcpsdk.CallToolParamsRaw{}}
+	got, err := workClientAttribution(liveRequest)
+	require.NoError(t, err)
+	assert.Equal(t, mcpwork_service.ClientAttribution{Source: "unavailable"}, got)
+
 	req := testAttributedRequest()
 	delete(req.Params.Meta, clientAttributionMetaKey)
-	got, err := workClientAttribution(req)
+	got, err = workClientAttribution(req)
 	require.NoError(t, err)
 	assert.Equal(t, "Example Harness", got.Harness)
 	assert.Equal(t, "1", got.HarnessVersion)
@@ -136,6 +148,40 @@ func TestWorkClientAttributionMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Harness", got.Harness)
 	assert.Empty(t, got.HarnessVersion)
+}
+
+func TestMutationWithoutRuntimeAttribution(t *testing.T) {
+	calls := 0
+	mutations := fakeWorkMutationService{begin: func(_ context.Context, _ *user_model.User, authority workMutationAuthority, _ workPlanBeginRequest) (*workMutationExecution, error) {
+		calls++
+		assert.Equal(t, mcpwork_service.ClientAttribution{Source: "unavailable"}, authority.ClientAttribution)
+		assert.EqualValues(t, 1, authority.PrincipalID)
+		assert.EqualValues(t, 8, authority.OAuthApplicationID)
+		assert.EqualValues(t, 9, authority.OAuthGrantID)
+		assert.Equal(t, "work-planning", authority.Profile)
+		assert.Equal(t, "Registered Client", authority.RegisteredClientLabel)
+		assert.Equal(t, "Registered Installation", authority.RegisteredInstallationLabel)
+		execution := committedMutation(mcpwork_model.OutcomeApplied, false)
+		execution.Receipt.ClientAttribution = authority.ClientAttribution
+		return execution, nil
+	}}
+	tools := newWorkMutationTools(newToolExecutor(1, time.Second), mutations, nil, testPrincipal, 1<<20)
+	tools.credential = func(context.Context) (*verifiedOAuthCredential, error) { return testWriteCredential(), nil }
+	request := &mcpsdk.CallToolRequest{Params: &mcpsdk.CallToolParamsRaw{}}
+	_, output, err := tools.beginPlan(t.Context(), request, workPlanBeginRequest{
+		Repository: WorkRepository{Owner: "example", Name: "repo"}, IdempotencyKey: "live-shape-begin-0001",
+		Begin: workPlanBegin{Kind: "new", Title: "Plan"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "applied", output.Status)
+	require.NotNil(t, output.Operation)
+	assert.Equal(t, mcpwork_service.ClientAttribution{Source: "unavailable"}, output.Operation.ClientAttribution)
+	wire, err := json.Marshal(output)
+	require.NoError(t, err)
+	assert.NotContains(t, string(wire), `"harness"`)
+	assert.NotContains(t, string(wire), `"model"`)
+	assert.True(t, validWorkMutationOutput(wire))
+	assert.Equal(t, 1, calls)
 }
 
 func TestOfficialSDKLegacyAttributionFallback(t *testing.T) {

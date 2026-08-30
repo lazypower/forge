@@ -182,11 +182,11 @@ builder owns metadata extraction and validation, receipt snapshots, replay
 behavior, output schema, and human operation provenance. Attribution remains
 client-reported annotation outside authorization and semantic idempotency.
 
-The handoff must prove model-less mutation success, rejection of invalid
-standard attribution or malformed supplied model metadata before receipt lookup
-or mutation, original modeled or model-less attribution on changed-label
-replay, bounded and escaped labels, and no prompt, request, credential, or
-hidden-object retention.
+The handoff must prove mutation success with unavailable runtime attribution,
+rejection of explicitly malformed standard attribution or supplied model
+metadata before receipt lookup or mutation, original attribution source and
+labels on replay, and no prompt, request, credential, or hidden-object
+retention.
 
 ### WP14: amended certification
 
@@ -277,7 +277,7 @@ The final report must include:
 - the OAuth abuse, redirect, expiry, and cleanup matrix;
 - grant-profile and old-credential invalidation evidence;
 - independent two-installation rotation and revocation evidence;
-- standard attribution, optional model, and changed-label replay evidence;
+- visible or unavailable runtime attribution and changed-label replay evidence;
 - clean-slate reconstruction evidence;
 - every opposing-family verdict and classified finding;
 - skipped, unavailable, or unproven environments and actions;

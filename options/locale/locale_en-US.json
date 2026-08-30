@@ -1418,6 +1418,7 @@
   "repo.projects.work_planning.mcp_provenance": "Performed through MCP using @%[1]s's authority. %[2]s",
   "repo.projects.work_planning.mcp_registered_client": "Authorized client (registered metadata):",
   "repo.projects.work_planning.mcp_client_reported": "Client reported:",
+  "repo.projects.work_planning.mcp_runtime_attribution_unavailable": "Runtime attribution unavailable.",
   "repo.projects.work_planning.mcp_attribution_notice": "Client and runtime labels are supplied by the client, not verified by Forge.",
   "repo.projects.work_planning.problem.invalid_input": "The work-plan request is invalid.",
   "repo.projects.work_planning.problem.unavailable": "The work plan is unavailable.",

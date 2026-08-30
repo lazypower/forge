@@ -104,6 +104,25 @@ func TestHumanWorkViewsUsePermissionFilteredProjection(t *testing.T) {
 		}, nil
 	})
 	require.NoError(t, err)
+	unavailableReceipt, err := receipts.Execute(t.Context(), mcpwork_service.Request{
+		Tool: "work_plan.revise", SchemaVersion: "1", IdempotencyKey: "human-work-view-receipt-000000000002",
+		ExpandedInput:     []byte(`{"idempotencyKey":"human-work-view-receipt-000000000002","marker":"unavailable-runtime"}`),
+		ClientAttribution: mcpwork_service.ClientAttribution{Source: "unavailable"},
+		Authority: mcpwork_service.Authority{
+			Profile: "work-planning", RegisteredClientLabel: "Registered Harness", RegisteredInstallationLabel: "Registered installation",
+			PrincipalID: principal.ID, OAuthApplicationID: 703, OAuthGrantID: 704,
+			CredentialJTI: "88888888-8888-4888-8888-888888888888",
+			Audience:      "https://forge.example/mcp", Scope: "read:repository write:issue write:repository",
+		},
+	}, func(context.Context, mcpwork_service.Operation) (mcpwork_service.Completion, error) {
+		return mcpwork_service.Completion{
+			Outcome: mcpwork_model.OutcomeApplied,
+			Artifacts: []mcpwork_service.ArtifactReference{{
+				RepositoryID: publicRepo.ID, Kind: mcpwork_model.ArtifactKindProject, ArtifactID: plan.ID,
+			}},
+		}, nil
+	})
+	require.NoError(t, err)
 
 	planProjection, err := work_service.NewReadService().InspectPlan(t.Context(), viewer, work_service.PlanRequest{
 		Owner: publicRepo.OwnerName, Repository: publicRepo.Name, ProjectID: plan.ID,
@@ -131,11 +150,15 @@ func TestHumanWorkViewsUsePermissionFilteredProjection(t *testing.T) {
 	assert.Equal(t, 0, projectHTML.Find(".work-ready-frontier [data-work-context]").Length())
 	assert.Contains(t, projectHTML.doc.Text(), "Performed through MCP using @"+principal.Name+"'s authority.")
 	assert.NotContains(t, projectHTML.doc.Text(), "performed this")
+	unavailableRuntime := projectHTML.Find(".work-runtime-attribution-unavailable")
+	assert.Equal(t, 1, unavailableRuntime.Length())
+	assert.Equal(t, "Runtime attribution unavailable.", unavailableRuntime.Text())
+	assert.NotContains(t, unavailableRuntime.Text(), "Client reported:")
 	assertHumanWorkMarkupHides(t, projectHTML,
 		hiddenPrerequisite.Title, hiddenPullIssue.Title, hiddenRepo.Name,
 		fmt.Sprintf("/%s/issues/%d", hiddenRepo.FullName(), hiddenPrerequisite.Index),
 		fmt.Sprintf("/%s/pulls/%d", hiddenRepo.FullName(), hiddenPullIssue.Index),
-		receipt.OperationUUID, "human-work-view-receipt-000000000001", "human-view",
+		receipt.OperationUUID, unavailableReceipt.OperationUUID, "human-work-view-receipt-000000000001", "human-work-view-receipt-000000000002", "human-view", "unavailable-runtime",
 		"77777777-7777-4777-8777-777777777777", "https://forge.example/mcp",
 	)
 	assert.Equal(t, 0, projectHTML.Find(`[data-url*="/planning/active"]`).Length())
