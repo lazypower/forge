@@ -236,34 +236,6 @@ func authorizeMCPThroughForge(t *testing.T, client *http.Client, callbackURL str
 	}
 }
 
-func bootstrapMCPClient(t *testing.T, client *http.Client, name, callbackURL string) *oauth2_provider.MCPClientRegistrationResponse {
-	t.Helper()
-	body, err := json.Marshal(oauth2_provider.MCPClientRegistrationRequest{
-		ClientName:              name,
-		RedirectURIs:            []string{callbackURL},
-		TokenEndpointAuthMethod: "none",
-		GrantTypes:              []string{"authorization_code", "refresh_token"},
-		ResponseTypes:           []string{"code"},
-		ApplicationType:         "native",
-	})
-	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(setting.AppURL, "/")+"/login/oauth/register", strings.NewReader(string(body)))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	responseBody, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, string(responseBody))
-	var registration oauth2_provider.MCPClientRegistrationResponse
-	require.NoError(t, json.Unmarshal(responseBody, &registration))
-	assert.NotContains(t, string(responseBody), "client_secret")
-	assert.True(t, strings.HasPrefix(registration.ClientID, "mcp_"))
-	assert.Equal(t, "none", registration.TokenEndpointAuthMethod)
-	return &registration
-}
-
 func assertMCPTokenClaims(t *testing.T, tokenValue, issuer, subject, resource string) *oauth2_provider.Token {
 	t.Helper()
 	token, err := oauth2_provider.ParseToken(tokenValue, oauth2_provider.DefaultSigningKey)
