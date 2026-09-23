@@ -1911,6 +1911,53 @@ func DeleteActionRun(ctx *context.APIContext) {
 	ctx.Status(http.StatusNoContent)
 }
 
+// CancelWorkflowRun cancels a workflow run.
+func CancelWorkflowRun(ctx *context.APIContext) {
+	// swagger:operation POST /repos/{owner}/{repo}/actions/runs/{run}/cancel repository cancelWorkflowRun
+	// ---
+	// summary: Cancel a workflow run
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: owner
+	//   in: path
+	//   description: owner of the repo
+	//   type: string
+	//   required: true
+	// - name: repo
+	//   in: path
+	//   description: name of the repository
+	//   type: string
+	//   required: true
+	// - name: run
+	//   in: path
+	//   description: runid of the workflow run
+	//   type: integer
+	//   required: true
+	// responses:
+	//   "204":
+	//     description: "No Content"
+	//   "400":
+	//     "$ref": "#/responses/error"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	run, jobs := getCurrentRepoActionRunJobsByID(ctx)
+	if ctx.Written() {
+		return
+	}
+	if run.Status.IsDone() {
+		ctx.APIError(http.StatusBadRequest, "this workflow run is already done")
+		return
+	}
+
+	if err := actions_service.CancelRun(ctx, run, jobs); err != nil {
+		ctx.APIErrorInternal(err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 // GetArtifacts Lists all artifacts for a repository.
 func GetArtifacts(ctx *context.APIContext) {
 	// swagger:operation GET /repos/{owner}/{repo}/actions/artifacts repository getArtifacts
