@@ -1,0 +1,103 @@
+name: sync-github
+
+# forge/forge is the fork's authority. lazypower/forge on GitHub is its off-site
+# copy and the only place the release image is built, so this carries main and
+# tags there.
+#
+# main goes once a day rather than on every merge. A mistake on main here has a
+# day to be noticed before it reaches the copy the forge is rebuilt from, and the
+# push is fast-forward only, so a rewritten main fails this job instead of
+# rewriting GitHub. A v* tag goes as soon as it is pushed: a tag is a deliberate
+# release, and GitHub builds the release from it.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# One sync at a time. A tag landing during the daily run waits rather than racing
+# it to the same remote.
+concurrency:
+  group: sync-github
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Mints the OIDC token the deploy key is fetched with.
+  id-token: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    runs-on: forge-container
+    steps:
+      # Full history rather than a shallow fetch: pushing to GitHub needs the
+      # objects behind every new commit, and a shallow clone cannot supply them.
+      - name: Fetch main and tags from the forge
+        env:
+          FORGE_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          authorization="$(printf 'x-access-token:%s' "$FORGE_TOKEN" | base64 | tr -d '\n')"
+          git init -q --bare sync.git
+          git -C sync.git -c "http.extraheader=Authorization: Basic ${authorization}" \
+            fetch -q "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" \
+            '+refs/heads/main:refs/heads/main' '+refs/tags/*:refs/tags/*'
+          git -C sync.git log -1 --format='main %H %s' refs/heads/main
+
+      - name: Fetch the deploy key
+        uses: actions/vault-action@v4
+        with:
+          url: https://vault.nessie-chroma.ts.net
+          method: jwt
+          path: forge-actions
+          role: forge--forge-ci
+          jwtGithubAudience: vault://forge--forge-ci
+          secrets: |
+            forge/data/forge/forge/github private_key | DEPLOY_KEY
+
+      - name: Publish to GitHub
+        env:
+          GITHUB_REMOTE: git@github.com:lazypower/forge.git
+          # GitHub's published ed25519 host key, fingerprint
+          # SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.
+          GITHUB_HOST_KEY: github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+        run: |
+          set -euo pipefail
+          command -v ssh >/dev/null || { echo "::error::no ssh client in this image"; exit 1; }
+
+          keys="$(mktemp -d)"
+          trap 'rm -rf "$keys"' EXIT
+          (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$keys/deploy_key")
+          printf '%s\n' "$GITHUB_HOST_KEY" > "$keys/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keys/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+
+          cd sync.git
+          # A tag is published only if main contains it, so a tag cut on a
+          # branch by mistake stops here instead of becoming a release.
+          on_main() { git merge-base --is-ancestor "refs/tags/$1" refs/heads/main; }
+
+          if [[ $GITHUB_EVENT_NAME == push ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            on_main "$tag" || { echo "::error::$tag is not on main"; exit 1; }
+            git push "$GITHUB_REMOTE" "refs/tags/$tag"
+            exit 0
+          fi
+
+          # Never forced. GitHub refuses a main that does not fast-forward and an
+          # existing tag that would move, and either refusal fails this job.
+          git push "$GITHUB_REMOTE" refs/heads/main:refs/heads/main
+
+          tags=()
+          while read -r tag; do
+            on_main "$tag" || { echo "::error::$tag is not on main"; exit 1; }
+            tags+=("refs/tags/$tag")
+          done < <(git tag)
+          if (( ${#tags[@]} )); then
+            git push "$GITHUB_REMOTE" "${tags[@]}"
+          fi
