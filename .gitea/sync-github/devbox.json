@@ -1,0 +1,4 @@
+{
+  "$schema":  "https://raw.githubusercontent.com/jetify-com/devbox/0.18.0/.schema/devbox.schema.json",
+  "packages": ["openssh@10.0p2"]
+}

@@ -1,0 +1,57 @@
+{
+  "lockfile_version": "1",
+  "packages": {
+    "github:NixOS/nixpkgs/nixpkgs-unstable": {
+      "last_modified": "2026-09-22T05:33:51Z",
+      "resolved": "github:NixOS/nixpkgs/b6c98e9e6633ee64753b594ff4a5febf0367fc00?lastModified=1790055231"
+    },
+    "openssh@10.0p2": {
+      "last_modified": "2025-10-07T08:41:47Z",
+      "resolved": "github:NixOS/nixpkgs/bce5fe2bb998488d8e7e7856315f90496723793c#openssh",
+      "source": "devbox-search",
+      "version": "10.0p2",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/ngnw1fylgcibnzwwk8ai45nziaccywql-openssh-10.0p2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/ngnw1fylgcibnzwwk8ai45nziaccywql-openssh-10.0p2"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/990vb66l0hnpsrbf1n0zsifg8dcrbbyb-openssh-10.0p2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/990vb66l0hnpsrbf1n0zsifg8dcrbbyb-openssh-10.0p2"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/nl3nms2b00fbn5wpam0f18dvgg907j9z-openssh-10.0p2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/nl3nms2b00fbn5wpam0f18dvgg907j9z-openssh-10.0p2"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/v6ja9nv3j6cvfw0bfql877cpxp15zpya-openssh-10.0p2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/v6ja9nv3j6cvfw0bfql877cpxp15zpya-openssh-10.0p2"
+        }
+      }
+    }
+  }
+}
