@@ -31,8 +31,11 @@ func TestAPIActionsWorkflowRun(t *testing.T) {
 	t.Run("ListRepoWorkflows", testAPIActionsListRepoWorkflows)
 	t.Run("DeleteRunCheckPermission", testAPIActionsDeleteRunCheckPermission)
 	t.Run("DeleteRunRunning", testAPIActionsDeleteRunRunning)
-	t.Run("CancelRun", testAPIActionsCancelRun)
 	t.Run("DeleteRunGeneral", testAPIActionsDeleteRunGeneral)
+	t.Run("CancelRun", func(t *testing.T) {
+		defer tests.PrepareTestEnv(t)()
+		testAPIActionsCancelRun(t)
+	})
 
 	t.Run("RerunWorkflowRun", func(t *testing.T) {
 		defer tests.PrepareTestEnv(t)()
@@ -142,9 +145,14 @@ func testAPIActionsCancelRun(t *testing.T) {
 	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 4})
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
 	session := loginUser(t, user.Name)
+	readToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeReadRepository)
 	token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
 
 	req := NewRequest(t, "POST", fmt.Sprintf("/api/v1/repos/%s/actions/runs/793/cancel", repo.FullName())).
+		AddTokenAuth(readToken)
+	MakeRequest(t, req, http.StatusForbidden)
+
+	req = NewRequest(t, "POST", fmt.Sprintf("/api/v1/repos/%s/actions/runs/793/cancel", repo.FullName())).
 		AddTokenAuth(token)
 	MakeRequest(t, req, http.StatusNoContent)
 
