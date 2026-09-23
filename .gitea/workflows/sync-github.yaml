@@ -35,6 +35,12 @@ defaults:
 jobs:
   sync:
     runs-on: forge-container
+    # The shared Nix store and source cache, per forge/runners docs/shared-nix.md,
+    # so the ssh client below resolves from the store rather than downloading.
+    container:
+      volumes:
+        - ci-nix:/nix
+        - ci-nix-cache:/root/.cache/nix
     steps:
       # Full history rather than a shallow fetch: pushing to GitHub needs the
       # objects behind every new commit, and a shallow clone cannot supply them.
@@ -49,6 +55,21 @@ jobs:
             fetch -q "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" \
             '+refs/heads/main:refs/heads/main' '+refs/tags/*:refs/tags/*'
           git -C sync.git log -1 --format='main %H %s' refs/heads/main
+
+      # The job image carries git but no ssh client. The pinned one lives beside
+      # this workflow in .gitea/sync-github, read from the fetched main since the
+      # job has no working tree.
+      - name: Bring an ssh client
+        run: |
+          set -euo pipefail
+          mkdir toolchain
+          for f in devbox.json devbox.lock; do
+            git -C sync.git show "refs/heads/main:.gitea/sync-github/$f" > "toolchain/$f"
+          done
+          ssh_bin="$(devbox run --config toolchain -q -- sh -c 'readlink -f "$(command -v ssh)"')"
+          test -x "$ssh_bin"
+          "$ssh_bin" -V
+          echo "SSH_BIN=$ssh_bin" >> "$GITHUB_ENV"
 
       - name: Fetch the deploy key
         uses: actions/vault-action@v4
@@ -69,13 +90,11 @@ jobs:
           GITHUB_HOST_KEY: github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
         run: |
           set -euo pipefail
-          command -v ssh >/dev/null || { echo "::error::no ssh client in this image"; exit 1; }
-
           keys="$(mktemp -d)"
           trap 'rm -rf "$keys"' EXIT
           (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$keys/deploy_key")
           printf '%s\n' "$GITHUB_HOST_KEY" > "$keys/known_hosts"
-          export GIT_SSH_COMMAND="ssh -i $keys/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+          export GIT_SSH_COMMAND="$SSH_BIN -i $keys/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
 
           cd sync.git
           # A tag is published only if main contains it, so a tag cut on a
