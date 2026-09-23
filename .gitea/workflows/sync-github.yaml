@@ -84,10 +84,14 @@ jobs:
 
       - name: Publish to GitHub
         env:
-          GITHUB_REMOTE: git@github.com:lazypower/forge.git
+          # SSH over 443 through ssh.github.com. The runner's firewall allows
+          # outbound TCP on 80, 443 and 53 only (forge/foundation tofu/main.tf),
+          # so port 22 times out.
+          GITHUB_REMOTE: ssh://git@ssh.github.com:443/lazypower/forge.git
           # GitHub's published ed25519 host key, fingerprint
-          # SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.
-          GITHUB_HOST_KEY: github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+          # SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU. ssh.github.com
+          # presents the same key; known_hosts names it with the port.
+          GITHUB_HOST_KEY: "[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
         run: |
           set -euo pipefail
           keys="$(mktemp -d)"
